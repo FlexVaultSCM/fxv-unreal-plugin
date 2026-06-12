@@ -19,8 +19,8 @@ This file outlines the next steps and technical debt areas for the **FlexVault U
 
 ## 🛠️ Advanced Operations & Future Work
 
-- [ ] **Detailed File History Parsing**:
-  - Enhance `FFlexVaultGetHistoryWorker` (currently stubbed) to fetch the full change logs of specific files. This will map historical SCM revisions in Unreal's Diff tool to individual commits from `fxv history` and `fxv changeinfo`.
+- [x] **Detailed File History Parsing**:
+  - Enhance `FFlexVaultGetSourceControlRevisionInfoWorker` to fetch the full change logs of specific files. This will map historical SCM revisions in Unreal's Diff tool to individual commits from `fxv history` and `fxv changeinfo`.
 - [ ] **Changelists & Branch Switching**:
   - Explore mapping branch lists to Unreal Engine's revision control branch actions.
   - Add menu items to sync to a specific tag/revision or create new branches from the editor.

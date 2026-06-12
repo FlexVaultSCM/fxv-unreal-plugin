@@ -1,5 +1,5 @@
 // Copyright (c) 2025-2026 FlexVault Inc. All Rights Reserved.
-#include "FlexVaultGetHistoryWorker.h"
+#include "FlexVaultGetSourceControlRevisionInfoWorker.h"
 #include "FlexVaultSourceControlCommand.h"
 #include "FlexVaultSourceControlProvider.h"
 #include "FlexVaultSourceControlDeveloperSettings.h"
@@ -10,12 +10,12 @@
 #include "Dom/JsonObject.h"
 #include "Misc/Paths.h"
 
-FName FFlexVaultGetHistoryWorker::GetName() const
+FName FFlexVaultGetSourceControlRevisionInfoWorker::GetName() const
 {
 	return FName("GetSourceControlRevisionInfo");
 }
 
-bool FFlexVaultGetHistoryWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
+bool FFlexVaultGetSourceControlRevisionInfoWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 {
 	const FString WorkspacePath = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
 	const FString BinaryPath = GetDefault<UFlexVaultSourceControlDeveloperSettings>()->BinaryPath;
@@ -195,7 +195,7 @@ bool FFlexVaultGetHistoryWorker::Execute(FFlexVaultSourceControlCommand& InComma
 	return true;
 }
 
-bool FFlexVaultGetHistoryWorker::UpdateStates() const
+bool FFlexVaultGetSourceControlRevisionInfoWorker::UpdateStates() const
 {
 	FFlexVaultSourceControlProvider& Provider = GetSCCProvider();
 	for (const FFlexVaultSourceControlState& State : StatesToUpdate)

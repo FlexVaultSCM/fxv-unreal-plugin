@@ -6,12 +6,12 @@
 #include "FlexVaultSourceControlState.h"
 
 /**
- * Worker for FGetHistory operation.
+ * Worker for FGetSourceControlRevisionInfo operation.
  */
-class FFlexVaultGetHistoryWorker : public IFlexVaultSourceControlWorker
+class FFlexVaultGetSourceControlRevisionInfoWorker : public IFlexVaultSourceControlWorker
 {
 public:
-	FFlexVaultGetHistoryWorker(FFlexVaultSourceControlProvider& InSCCProvider)
+	FFlexVaultGetSourceControlRevisionInfoWorker(FFlexVaultSourceControlProvider& InSCCProvider)
 		: IFlexVaultSourceControlWorker(InSCCProvider)
 	{
 	}

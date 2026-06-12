@@ -285,7 +285,7 @@ TSharedPtr<IFlexVaultSourceControlWorker, ESPMode::ThreadSafe> FFlexVaultSourceC
 	}
 	else if (InOperationName == FName("GetSourceControlRevisionInfo"))
 	{
-		return MakeShared<FFlexVaultGetHistoryWorker>(*this);
+		return MakeShared<FFlexVaultGetSourceControlRevisionInfoWorker>(*this);
 	}
 
 	return nullptr;
