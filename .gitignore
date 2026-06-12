@@ -1,0 +1,49 @@
+# Visual Studio 2015/2017/2019/2022 User-specific files
+.vs/
+
+# Compiled compile-ready version of the project
+# (Unreal Engine will generate these if missing)
+Binaries/
+Build/
+
+# Intermediate files (editor caches, temporary build output, etc.)
+Intermediate/
+DerivedDataCache/
+
+# Saved files (autosaves, settings, logs, etc.)
+Saved/
+
+# IDE/Editor files
+*.sln
+*.suo
+*.opensdf
+*.sdf
+*.VC.db
+*.VC.opendb
+*.xcodeproj
+*.xcworkspace
+CMakeLists.txt
+CMakeLayout.txt
+cmake-build-*/
+.idea/
+.vscode/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Compiled/temporary files
+*.log
+*.pdb
+*.obj
+*.exe
+*.dll
+*.dylib
+*.target
+*.modules
+*.recipe
