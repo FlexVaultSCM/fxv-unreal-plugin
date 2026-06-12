@@ -5,7 +5,6 @@
 UFlexVaultSourceControlDeveloperSettings::UFlexVaultSourceControlDeveloperSettings()
 	: BinaryPath(TEXT(""))
 	, bUseUnattendedMode(true)
-	, bEnableExclusiveLocks(true)
 {
 }
 

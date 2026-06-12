@@ -41,8 +41,4 @@ public:
 	/** Suppress SCM prompts automatically */
 	UPROPERTY(Config, EditAnywhere, Category="FlexVault", meta=(DisplayName="Use Unattended Mode"))
 	bool bUseUnattendedMode;
-
-	/** Enable exclusive locking checks on checkout */
-	UPROPERTY(Config, EditAnywhere, Category="FlexVault", meta=(DisplayName="Enable Exclusive Locks"))
-	bool bEnableExclusiveLocks;
 };
