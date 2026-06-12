@@ -12,7 +12,7 @@
 
 FName FFlexVaultGetHistoryWorker::GetName() const
 {
-	return FName("GetHistory");
+	return FName("GetSourceControlRevisionInfo");
 }
 
 bool FFlexVaultGetHistoryWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
