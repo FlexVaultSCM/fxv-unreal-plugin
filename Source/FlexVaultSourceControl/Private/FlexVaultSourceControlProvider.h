@@ -39,10 +39,10 @@ public:
 	virtual bool CanExecuteOperation(const FSourceControlOperationRef& InOperation) const override;
 	virtual bool CanCancelOperation(const FSourceControlOperationRef& InOperation) const override { return false; }
 	virtual void CancelOperation(const FSourceControlOperationRef& InOperation) override {}
-	virtual bool UsesLocalReadOnlyState() const override { return true; }
+	virtual bool UsesLocalReadOnlyState() const override { return false; }
 	virtual bool UsesChangelists() const override { return false; }
 	virtual bool UsesUncontrolledChangelists() const override { return false; }
-	virtual bool UsesCheckout() const override { return true; }
+	virtual bool UsesCheckout() const override { return false; }
 	virtual bool UsesFileRevisions() const override { return true; }
 	virtual bool UsesSnapshots() const override { return true; }
 	virtual bool AllowsDiffAgainstDepot() const override { return true; }
