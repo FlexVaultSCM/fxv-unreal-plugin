@@ -39,9 +39,12 @@ public:
 	virtual bool CanExecuteOperation(const FSourceControlOperationRef& InOperation) const override;
 	virtual bool CanCancelOperation(const FSourceControlOperationRef& InOperation) const override { return false; }
 	virtual void CancelOperation(const FSourceControlOperationRef& InOperation) override {}
+	// NOTE: Using a Git-like edit-based workflow (files always writable, no checkouts).
+	// We may want to change this later to return true if we want closer behavior matching Perforce (e.g., for exclusive lock coordination).
 	virtual bool UsesLocalReadOnlyState() const override { return false; }
 	virtual bool UsesChangelists() const override { return false; }
 	virtual bool UsesUncontrolledChangelists() const override { return false; }
+	// NOTE: Using a Git-like edit-based workflow. May change this later to return true for Perforce-like checkouts.
 	virtual bool UsesCheckout() const override { return false; }
 	virtual bool UsesFileRevisions() const override { return true; }
 	virtual bool UsesSnapshots() const override { return true; }
