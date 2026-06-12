@@ -88,7 +88,7 @@ bool FFlexVaultGetHistoryWorker::Execute(FFlexVaultSourceControlCommand& InComma
 	// 2. Query file-level details for each commit using `changeinfo`
 	struct FRevDetail
 	{
-		int64 RevisionNumber;
+		int32 RevisionNumber;
 		FString RevisionSpec;
 		FString Description;
 		FString UserName;
@@ -126,7 +126,7 @@ bool FFlexVaultGetHistoryWorker::Execute(FFlexVaultSourceControlCommand& InComma
 					RelPath.ReplaceInline(TEXT("\\"), TEXT("/"));
 
 					FRevDetail Rev;
-					Rev.RevisionNumber = Commit.Revision;
+					Rev.RevisionNumber = (int32)Commit.Revision;
 					Rev.RevisionSpec = ChangeId;
 					Rev.Description = Commit.Description;
 					Rev.UserName = Commit.Author;

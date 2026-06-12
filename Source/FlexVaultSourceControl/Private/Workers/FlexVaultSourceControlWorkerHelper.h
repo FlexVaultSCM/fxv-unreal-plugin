@@ -4,7 +4,7 @@
 #include "CoreMinimal.h"
 #include "SourceControlOperations.h"
 
-class FSourceControlResultInfo;
+struct FSourceControlResultInfo;
 
 /**
  * Common SCM execution helper function
