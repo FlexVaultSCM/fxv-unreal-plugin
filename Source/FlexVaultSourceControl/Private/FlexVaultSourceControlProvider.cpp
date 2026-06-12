@@ -190,7 +190,8 @@ bool FFlexVaultSourceControlProvider::CanExecuteOperation(const FSourceControlOp
 		   OpName == FName("MarkForAdd") ||
 		   OpName == FName("Delete") ||
 		   OpName == FName("Revert") ||
-		   OpName == FName("Sync");
+		   OpName == FName("Sync") ||
+		   OpName == FName("GetHistory");
 }
 
 void FFlexVaultSourceControlProvider::Tick()
@@ -281,6 +282,10 @@ TSharedPtr<IFlexVaultSourceControlWorker, ESPMode::ThreadSafe> FFlexVaultSourceC
 	else if (InOperationName == FName("Sync"))
 	{
 		return MakeShared<FFlexVaultSyncWorker>(*this);
+	}
+	else if (InOperationName == FName("GetHistory"))
+	{
+		return MakeShared<FFlexVaultGetHistoryWorker>(*this);
 	}
 
 	return nullptr;

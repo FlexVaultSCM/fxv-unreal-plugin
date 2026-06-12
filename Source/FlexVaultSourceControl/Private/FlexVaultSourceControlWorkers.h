@@ -151,6 +151,26 @@ public:
 	virtual bool Execute(class FFlexVaultSourceControlCommand& InCommand) override;
 	virtual bool UpdateStates() const override;
 
-private:
+ private:
 	mutable TArray<FString> SyncedFiles;
 };
+
+/**
+ * Worker for FGetHistory operation.
+ */
+class FFlexVaultGetHistoryWorker : public IFlexVaultSourceControlWorker
+{
+public:
+	FFlexVaultGetHistoryWorker(FFlexVaultSourceControlProvider& InSCCProvider)
+		: IFlexVaultSourceControlWorker(InSCCProvider)
+	{
+	}
+
+	virtual FName GetName() const override;
+	virtual bool Execute(class FFlexVaultSourceControlCommand& InCommand) override;
+	virtual bool UpdateStates() const override;
+
+private:
+	mutable TArray<FFlexVaultSourceControlState> StatesToUpdate;
+};
+
