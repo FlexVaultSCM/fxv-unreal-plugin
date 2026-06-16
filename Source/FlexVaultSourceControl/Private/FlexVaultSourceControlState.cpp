@@ -152,11 +152,17 @@ const FDateTime& FFlexVaultSourceControlState::GetTimeStamp() const
 
 bool FFlexVaultSourceControlState::CanCheckIn() const
 {
+	// In FlexVault, checking in corresponds to publishing/submitting local changes (snapshots).
+	// A file can be checked in if it is tracked (source controlled) and is currently up-to-date with
+	// the latest revision from the depot (IsCurrent), which prevents merge conflicts upon commit.
 	return IsSourceControlled() && IsCurrent();
 }
 
 bool FFlexVaultSourceControlState::CanCheckout() const
 {
+	// FlexVault operates on a Git-like "edit-based" workflow where files are always writable
+	// locally, meaning explicit checkouts or locking files before editing are not required.
+	// Therefore, CanCheckout always returns false since the user can edit files directly on disk.
 	return false;
 }
 
@@ -167,6 +173,9 @@ bool FFlexVaultSourceControlState::IsCheckedOut() const
 
 bool FFlexVaultSourceControlState::IsCheckedOutOther(FString* Who) const
 {
+	// In FlexVault, this represents an exclusive remote lock held by another developer.
+	// NOTE: Real-time exclusive locking/coordination on the server is not fully implemented 
+	// in the current version of the plugin/CLI, but is planned for the future.
 	if (Who != nullptr)
 	{
 		*Who = LockedByOtherUser;
@@ -201,6 +210,8 @@ bool FFlexVaultSourceControlState::IsIgnored() const
 
 bool FFlexVaultSourceControlState::CanEdit() const
 {
+	// In an edit-based workflow, files are always editable locally on disk unless
+	// another user holds an exclusive remote lock (CheckedOutOther).
 	return State != EFlexVaultState::CheckedOutOther;
 }
 
@@ -211,6 +222,8 @@ bool FFlexVaultSourceControlState::IsUnknown() const
 
 bool FFlexVaultSourceControlState::IsModified() const
 {
+	// Maps to local changes detected during a workspace status scan (bModified) 
+	// or files that have been snapshotted in the local draft repository (CheckedOut).
 	return bModified || State == EFlexVaultState::CheckedOut;
 }
 
@@ -221,6 +234,8 @@ bool FFlexVaultSourceControlState::CanAdd() const
 
 bool FFlexVaultSourceControlState::CanDelete() const
 {
+	// A file can be marked for deletion only if it is not locked by another user,
+	// is currently tracked by FlexVault, and is up-to-date with the depot revision.
 	return !IsCheckedOutOther() && IsSourceControlled() && IsCurrent();
 }
 

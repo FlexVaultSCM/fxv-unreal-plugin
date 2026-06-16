@@ -114,7 +114,21 @@ ECommandResult::Type FFlexVaultSourceControlProvider::GetState(const TArray<FStr
 
 		if (InStateCacheUsage == EStateCacheUsage::ForceUpdate || State->IsUnknown())
 		{
-			FilesToUpdate.Add(File);
+			// De-duplicate in-flight status requests: do not query if an active status update is already running for this file. Avoid storming the SCM with redundant status requests on large file sets.
+			bool bAlreadyInFlight = false;
+			for (const FFlexVaultSourceControlCommand* Command : CommandQueue)
+			{
+				if (Command->Operation->GetName() == FName("UpdateStatus") && Command->Files.Contains(File))
+				{
+					bAlreadyInFlight = true;
+					break;
+				}
+			}
+
+			if (!bAlreadyInFlight)
+			{
+				FilesToUpdate.Add(File);
+			}
 		}
 	}
 
