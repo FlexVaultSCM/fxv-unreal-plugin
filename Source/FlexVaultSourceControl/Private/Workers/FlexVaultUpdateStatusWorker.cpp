@@ -29,8 +29,9 @@ bool FFlexVaultUpdateStatusWorker::Execute(FFlexVaultSourceControlCommand& InCom
 	int32 DepotRevision = 1;
 	int32 LocalRevision = 1;
 
-	for (const FString& Line : OutputLines)
+	for (const FString& RawLine : OutputLines)
 	{
+		FString Line = RawLine.TrimStartAndEnd();
 		if (Line.StartsWith(TEXT("Local snapshot:")))
 		{
 			TArray<FString> Tokens;
@@ -62,16 +63,19 @@ bool FFlexVaultUpdateStatusWorker::Execute(FFlexVaultSourceControlCommand& InCom
 		else if (Line.StartsWith(TEXT("Modified")))
 		{
 			FString FilePath = Line.RightChop(8).TrimStartAndEnd();
+			FilePath.ReplaceInline(TEXT("\\"), TEXT("/"));
 			ModifiedFiles.Add(FilePath, EFlexVaultState::CheckedOut);
 		}
 		else if (Line.StartsWith(TEXT("Added")))
 		{
 			FString FilePath = Line.RightChop(5).TrimStartAndEnd();
+			FilePath.ReplaceInline(TEXT("\\"), TEXT("/"));
 			ModifiedFiles.Add(FilePath, EFlexVaultState::OpenForAdd);
 		}
 		else if (Line.StartsWith(TEXT("Deleted")))
 		{
 			FString FilePath = Line.RightChop(7).TrimStartAndEnd();
+			FilePath.ReplaceInline(TEXT("\\"), TEXT("/"));
 			ModifiedFiles.Add(FilePath, EFlexVaultState::MarkedForDelete);
 		}
 	}
