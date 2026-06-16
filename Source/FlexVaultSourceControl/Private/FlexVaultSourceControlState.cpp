@@ -152,7 +152,7 @@ const FDateTime& FFlexVaultSourceControlState::GetTimeStamp() const
 
 bool FFlexVaultSourceControlState::CanCheckIn() const
 {
-	return (State == EFlexVaultState::CheckedOut || State == EFlexVaultState::OpenForAdd || State == EFlexVaultState::MarkedForDelete) && IsCurrent();
+	return IsSourceControlled() && IsCurrent();
 }
 
 bool FFlexVaultSourceControlState::CanCheckout() const

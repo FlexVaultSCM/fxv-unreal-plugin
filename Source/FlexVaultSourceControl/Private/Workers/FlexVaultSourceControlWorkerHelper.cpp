@@ -46,18 +46,24 @@ bool RunFlexVaultCommand(
 	}
 
 	FString OutputString;
-	while (FPlatformProcess::IsApplicationRunning(ProcessID) || PipeRead != nullptr)
+	// Wait until the process exits to capture all output and ensure proper sequencing.
+	// Prematurely exiting the loop when the pipe is temporarily empty (which happens during startup)
+	// would orphan the child process and cause a storm of background processes, locking up the CPU.
+	while (FPlatformProcess::IsApplicationRunning(ProcessID))
 	{
 		FString TempData = FPlatformProcess::ReadPipe(PipeRead);
 		if (!TempData.IsEmpty())
 		{
 			OutputString.Append(TempData);
 		}
-		else
-		{
-			break;
-		}
 		FPlatformProcess::Sleep(0.01f);
+	}
+
+	FString TempData = FPlatformProcess::ReadPipe(PipeRead);
+	while (!TempData.IsEmpty())
+	{
+		OutputString.Append(TempData);
+		TempData = FPlatformProcess::ReadPipe(PipeRead);
 	}
 
 	int32 ReturnCode = 0;
