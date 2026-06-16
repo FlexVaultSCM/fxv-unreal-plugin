@@ -157,7 +157,7 @@ bool FFlexVaultSourceControlState::CanCheckIn() const
 
 bool FFlexVaultSourceControlState::CanCheckout() const
 {
-	return (State == EFlexVaultState::ReadOnly) && IsCurrent();
+	return false;
 }
 
 bool FFlexVaultSourceControlState::IsCheckedOut() const
@@ -201,7 +201,7 @@ bool FFlexVaultSourceControlState::IsIgnored() const
 
 bool FFlexVaultSourceControlState::CanEdit() const
 {
-	return State == EFlexVaultState::CheckedOut || State == EFlexVaultState::OpenForAdd || State == EFlexVaultState::NotInRepository;
+	return State != EFlexVaultState::CheckedOutOther;
 }
 
 bool FFlexVaultSourceControlState::IsUnknown() const

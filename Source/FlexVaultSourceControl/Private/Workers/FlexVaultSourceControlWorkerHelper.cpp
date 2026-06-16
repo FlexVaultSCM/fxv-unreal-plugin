@@ -118,7 +118,7 @@ bool RunFlexVaultCommand(
 	}
 	else
 	{
-		UE_LOG(LogFlexVault, Warning, TEXT("\n%s"), *LogBlock);
+		UE_LOG(LogFlexVault, Error, TEXT("\n%s"), *LogBlock);
 	}
 
 	return ReturnCode == 0;

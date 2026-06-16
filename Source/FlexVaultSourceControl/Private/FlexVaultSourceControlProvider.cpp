@@ -15,7 +15,10 @@
 
 #if SOURCE_CONTROL_WITH_SLATE
 #include "Widgets/SNullWidget.h"
+#include "Framework/Notifications/NotificationManager.h"
+#include "Widgets/Notifications/SNotificationList.h"
 #endif
+
 
 #define LOCTEXT_NAMESPACE "FlexVaultSourceControl"
 
@@ -202,6 +205,26 @@ void FFlexVaultSourceControlProvider::Tick()
 		FFlexVaultSourceControlCommand* Command = CommandQueue[Index];
 		if (Command->bExecuteProcessed)
 		{
+#if SOURCE_CONTROL_WITH_SLATE
+			bool bIsLaunchError = false;
+			for (const FText& ErrorMsg : Command->ResultInfo.ErrorMessages)
+			{
+				if (ErrorMsg.ToString().Contains(TEXT("Failed to launch FlexVault SCM executable")))
+				{
+					bIsLaunchError = true;
+					break;
+				}
+			}
+
+			if (bIsLaunchError)
+			{
+				FNotificationInfo Info(LOCTEXT("FlexVaultLaunchErrorNotification", "FlexVault: Failed to launch SCM executable. Please verify your Binary Path in Developer Settings."));
+				Info.ExpireDuration = 5.0f;
+				Info.bUseSuccessFailIcons = true;
+				FSlateNotificationManager::Get().AddNotification(Info);
+			}
+#endif
+
 			Command->ReturnResults();
 			CommandQueue.RemoveAt(Index);
 			delete Command;
