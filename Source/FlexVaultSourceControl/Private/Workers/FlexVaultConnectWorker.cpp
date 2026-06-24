@@ -19,7 +19,7 @@ bool FFlexVaultConnectWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 	const FString BinaryPath = GetDefault<UFlexVaultSourceControlDeveloperSettings>()->BinaryPath;
 
 	TArray<FString> OutputLines;
-	bool bSucceeded = RunFlexVaultCommand(BinaryPath, WorkspacePath, TEXT("status --unattended --no-color"), OutputLines, InCommand.ResultInfo);
+	bool bSucceeded = RunFlexVaultCommand(BinaryPath, WorkspacePath, TEXT("status --unattended --no-color --skip-remote-update --skip-scan"), OutputLines, InCommand.ResultInfo);
 	
 	if (bSucceeded)
 	{
