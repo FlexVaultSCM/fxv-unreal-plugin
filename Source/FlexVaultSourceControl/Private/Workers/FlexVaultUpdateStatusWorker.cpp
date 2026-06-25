@@ -7,6 +7,10 @@
 #include "HAL/PlatformFileManager.h"
 #include "Misc/Paths.h"
 #include "Misc/App.h"
+#include "Dom/JsonObject.h"
+#include "Dom/JsonValue.h"
+#include "Serialization/JsonSerializer.h"
+#include "Serialization/JsonReader.h"
 
 FName FFlexVaultUpdateStatusWorker::GetName() const
 {
@@ -19,67 +23,135 @@ bool FFlexVaultUpdateStatusWorker::Execute(FFlexVaultSourceControlCommand& InCom
 	const FString BinaryPath = GetDefault<UFlexVaultSourceControlDeveloperSettings>()->BinaryPath;
 
 	TArray<FString> OutputLines;
-	bool bSucceeded = RunFlexVaultCommand(BinaryPath, WorkspacePath, TEXT("status --unattended --no-color --skip-remote-update"), OutputLines, InCommand.ResultInfo);
+	bool bSucceeded = RunFlexVaultCommand(
+		BinaryPath,
+		WorkspacePath,
+		TEXT("status --format json --unattended --no-color --skip-remote-update"),
+		OutputLines,
+		InCommand.ResultInfo
+	);
 	if (!bSucceeded)
 	{
 		return false;
 	}
 
-	TMap<FString, EFlexVaultState::Type> ModifiedFiles;
-	int32 DepotRevision = 1;
-	int32 LocalRevision = 1;
+	// RunFlexVaultCommand captures stdout line-by-line; rejoin into a single string for the JSON parser.
+	FString RawJson = FString::Join(OutputLines, TEXT("\n"));
 
-	for (const FString& RawLine : OutputLines)
+	TSharedPtr<FJsonObject> Envelope;
+	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(RawJson);
+	if (!FJsonSerializer::Deserialize(Reader, Envelope) || !Envelope.IsValid())
 	{
-		FString Line = RawLine.TrimStartAndEnd();
-		if (Line.StartsWith(TEXT("Local snapshot:")))
+		InCommand.ResultInfo.ErrorMessages.Add(
+			FText::FromString(TEXT("FlexVault: Failed to parse JSON envelope from 'fxv status --format json'"))
+		);
+		return false;
+	}
+
+	// Navigate: envelope → message → payload
+	const TSharedPtr<FJsonObject>* MessageObj = nullptr;
+	const TSharedPtr<FJsonObject>* PayloadObj = nullptr;
+	if (!Envelope->TryGetObjectField(TEXT("message"), MessageObj) ||
+		!(*MessageObj)->TryGetObjectField(TEXT("payload"), PayloadObj))
+	{
+		InCommand.ResultInfo.ErrorMessages.Add(
+			FText::FromString(TEXT("FlexVault: JSON envelope is missing 'message.payload'"))
+		);
+		return false;
+	}
+
+	const TSharedPtr<FJsonObject>& Payload = *PayloadObj;
+
+	// ── Revision numbers from head_commit ──────────────────────────────────────────────────────────
+	// We report LocalRevNumber from the local_snapshot (draft) and DepotRevNumber from
+	// published_head, when both are present (parented_draft). Fallback to 0 if unavailable
+	// (empty_branch or unparented_draft).
+	int32 LocalRevision = 0;
+	int32 DepotRevision = 0;
+
+	const TSharedPtr<FJsonObject>* HeadCommitObj = nullptr;
+	if (Payload->TryGetObjectField(TEXT("head_commit"), HeadCommitObj))
+	{
+		const TSharedPtr<FJsonObject>* LocalSnapshotObj = nullptr;
+		if ((*HeadCommitObj)->TryGetObjectField(TEXT("local_snapshot"), LocalSnapshotObj))
 		{
-			TArray<FString> Tokens;
-			Line.ParseIntoArray(Tokens, TEXT(" "), true);
-			if (Tokens.Num() > 2)
+			const TSharedPtr<FJsonObject>* CommitObj = nullptr;
+			if ((*LocalSnapshotObj)->TryGetObjectField(TEXT("commit"), CommitObj))
 			{
-				TArray<FString> RevParts;
-				Tokens[2].ParseIntoArray(RevParts, TEXT("."), true);
-				if (RevParts.Num() > 1)
-				{
-					LocalRevision = FCString::Atoi(*RevParts[1]);
-				}
+				(*CommitObj)->TryGetNumberField(TEXT("revision"), LocalRevision);
 			}
 		}
-		else if (Line.StartsWith(TEXT("Branch head:")))
+
+		const TSharedPtr<FJsonObject>* PublishedHeadObj = nullptr;
+		if ((*HeadCommitObj)->TryGetObjectField(TEXT("published_head"), PublishedHeadObj))
 		{
-			TArray<FString> Tokens;
-			Line.ParseIntoArray(Tokens, TEXT(" "), true);
-			if (Tokens.Num() > 2)
+			const TSharedPtr<FJsonObject>* CommitObj = nullptr;
+			if ((*PublishedHeadObj)->TryGetObjectField(TEXT("commit"), CommitObj))
 			{
-				TArray<FString> RevParts;
-				Tokens[2].ParseIntoArray(RevParts, TEXT("."), true);
-				if (RevParts.Num() > 1)
-				{
-					DepotRevision = FCString::Atoi(*RevParts[1]);
-				}
+				(*CommitObj)->TryGetNumberField(TEXT("revision"), DepotRevision);
 			}
-		}
-		else if (Line.StartsWith(TEXT("Modified")))
-		{
-			FString FilePath = Line.RightChop(8).TrimStartAndEnd();
-			FilePath.ReplaceInline(TEXT("\\"), TEXT("/"));
-			ModifiedFiles.Add(FilePath, EFlexVaultState::CheckedOut);
-		}
-		else if (Line.StartsWith(TEXT("Added")))
-		{
-			FString FilePath = Line.RightChop(5).TrimStartAndEnd();
-			FilePath.ReplaceInline(TEXT("\\"), TEXT("/"));
-			ModifiedFiles.Add(FilePath, EFlexVaultState::OpenForAdd);
-		}
-		else if (Line.StartsWith(TEXT("Deleted")))
-		{
-			FString FilePath = Line.RightChop(7).TrimStartAndEnd();
-			FilePath.ReplaceInline(TEXT("\\"), TEXT("/"));
-			ModifiedFiles.Add(FilePath, EFlexVaultState::MarkedForDelete);
 		}
 	}
 
+	// ── File state list ────────────────────────────────────────────────────────────────────────────
+	// Each entry in files[] carries a path (workspace-relative, forward-slash separated) and up to
+	// two optional change axes:
+	//   unpublished_state  — snapshotted but not yet published  → maps to CheckedOut / OpenForAdd / MarkedForDelete
+	//   workspace_state    — working-tree change not yet snapshotted (needs 'fxv snapshot')
+	//                        → same mapping; shown as CheckedOut so the editor prompts the user to commit
+	//
+	// When both axes are present for the same path (e.g. modified in draft AND has working-tree
+	// changes on top) we prefer unpublished_state for the displayed icon, since that represents the
+	// higher-committed state. Workspace-only changes are also surfaced as CheckedOut.
+	TMap<FString, EFlexVaultState::Type> ModifiedFiles;
+
+	const TArray<TSharedPtr<FJsonValue>>* FilesArray = nullptr;
+	if (Payload->TryGetArrayField(TEXT("files"), FilesArray))
+	{
+		for (const TSharedPtr<FJsonValue>& FileValue : *FilesArray)
+		{
+			const TSharedPtr<FJsonObject>* FileObj = nullptr;
+			if (!FileValue->TryGetObject(FileObj))
+			{
+				continue;
+			}
+
+			FString FilePath;
+			if (!(*FileObj)->TryGetStringField(TEXT("path"), FilePath))
+			{
+				continue;
+			}
+
+			// Prefer the unpublished axis (committed to draft); fall back to workspace axis.
+			FString StateStr;
+			bool bHasUnpublished = (*FileObj)->TryGetStringField(TEXT("unpublished_state"), StateStr);
+			if (!bHasUnpublished)
+			{
+				(*FileObj)->TryGetStringField(TEXT("workspace_state"), StateStr);
+			}
+
+			EFlexVaultState::Type MappedState = EFlexVaultState::CheckedOut;
+			if (StateStr == TEXT("added"))
+			{
+				MappedState = EFlexVaultState::OpenForAdd;
+			}
+			else if (StateStr == TEXT("deleted"))
+			{
+				MappedState = EFlexVaultState::MarkedForDelete;
+			}
+			else
+			{
+				// "modified" and "maybe_changed" both map to CheckedOut.
+				MappedState = EFlexVaultState::CheckedOut;
+			}
+
+			// The JSON paths use forward slashes; normalize to match UE's platform separator for lookup.
+			FilePath.ReplaceInline(TEXT("/"), TEXT("\\"));
+			ModifiedFiles.Add(FilePath, MappedState);
+		}
+	}
+
+	// ── Build StatesToUpdate from InCommand.Files ──────────────────────────────────────────────────
 	StatesToUpdate.Empty();
 	for (const FString& File : InCommand.Files)
 	{

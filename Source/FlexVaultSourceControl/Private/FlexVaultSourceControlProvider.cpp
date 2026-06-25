@@ -283,46 +283,49 @@ TUniquePtr<ISourceControlProvider> FFlexVaultSourceControlProvider::Create(const
 {
 	TUniquePtr<FFlexVaultSourceControlProvider> Provider = MakeUnique<FFlexVaultSourceControlProvider>();
 	Provider->OwnerName = InOwnerName;
-	return Provider;
+	// UE 5.8: explicit Release() required — implicit covariant TUniquePtr<Derived>->TUniquePtr<Base> move was tightened.
+	return TUniquePtr<ISourceControlProvider>(Provider.Release());
 }
 
 TSharedPtr<IFlexVaultSourceControlWorker, ESPMode::ThreadSafe> FFlexVaultSourceControlProvider::CreateWorker(const FName& InOperationName)
 {
+	// UE 5.8: MakeShared<T>(*this) fails MSVC template deduction via UE_REWRITE-annotated Forward when
+	// the argument is an lvalue reference. Use explicit TSharedPtr construction from raw pointer instead.
 	if (InOperationName == FName("Connect"))
 	{
-		return MakeShared<FFlexVaultConnectWorker>(*this);
+		return TSharedPtr<IFlexVaultSourceControlWorker, ESPMode::ThreadSafe>(new FFlexVaultConnectWorker(*this));
 	}
 	else if (InOperationName == FName("UpdateStatus"))
 	{
-		return MakeShared<FFlexVaultUpdateStatusWorker>(*this);
+		return TSharedPtr<IFlexVaultSourceControlWorker, ESPMode::ThreadSafe>(new FFlexVaultUpdateStatusWorker(*this));
 	}
 	else if (InOperationName == FName("CheckOut"))
 	{
-		return MakeShared<FFlexVaultCheckOutWorker>(*this);
+		return TSharedPtr<IFlexVaultSourceControlWorker, ESPMode::ThreadSafe>(new FFlexVaultCheckOutWorker(*this));
 	}
 	else if (InOperationName == FName("CheckIn"))
 	{
-		return MakeShared<FFlexVaultCheckInWorker>(*this);
+		return TSharedPtr<IFlexVaultSourceControlWorker, ESPMode::ThreadSafe>(new FFlexVaultCheckInWorker(*this));
 	}
 	else if (InOperationName == FName("MarkForAdd"))
 	{
-		return MakeShared<FFlexVaultMarkForAddWorker>(*this);
+		return TSharedPtr<IFlexVaultSourceControlWorker, ESPMode::ThreadSafe>(new FFlexVaultMarkForAddWorker(*this));
 	}
 	else if (InOperationName == FName("Delete"))
 	{
-		return MakeShared<FFlexVaultDeleteWorker>(*this);
+		return TSharedPtr<IFlexVaultSourceControlWorker, ESPMode::ThreadSafe>(new FFlexVaultDeleteWorker(*this));
 	}
 	else if (InOperationName == FName("Revert"))
 	{
-		return MakeShared<FFlexVaultRevertWorker>(*this);
+		return TSharedPtr<IFlexVaultSourceControlWorker, ESPMode::ThreadSafe>(new FFlexVaultRevertWorker(*this));
 	}
 	else if (InOperationName == FName("Sync"))
 	{
-		return MakeShared<FFlexVaultSyncWorker>(*this);
+		return TSharedPtr<IFlexVaultSourceControlWorker, ESPMode::ThreadSafe>(new FFlexVaultSyncWorker(*this));
 	}
 	else if (InOperationName == FName("GetSourceControlRevisionInfo"))
 	{
-		return MakeShared<FFlexVaultGetSourceControlRevisionInfoWorker>(*this);
+		return TSharedPtr<IFlexVaultSourceControlWorker, ESPMode::ThreadSafe>(new FFlexVaultGetSourceControlRevisionInfoWorker(*this));
 	}
 
 	return nullptr;

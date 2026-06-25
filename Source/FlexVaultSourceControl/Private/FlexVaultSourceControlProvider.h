@@ -49,8 +49,14 @@ public:
 	virtual bool UsesFileRevisions() const override { return true; }
 	virtual bool UsesSnapshots() const override { return true; }
 	virtual bool AllowsDiffAgainstDepot() const override { return true; }
-	virtual TOptional<bool> IsAtLatestRevision() const override { return TOptional<bool>(); }
-	virtual TOptional<int> GetNumLocalChanges() const override { return TOptional<int>(); }
+	// UE 5.8: three new pure virtuals on ISourceControlProvider.
+	// NOTE: Using a Git-like edit-based workflow — no soft revert before delete.
+	virtual bool UsesSoftRevertOnDelete() const override { return false; }
+	// Return empty TOptional (unknown/not applicable) — consistent with the IsAtLatestRevision/GetNumLocalChanges pattern.
+	virtual TOptional<bool> HasChangesToSync() const override { return TOptional<bool>(); }
+	virtual TOptional<bool> HasChangesToCheckIn() const override { return TOptional<bool>(); }
+	// IsAtLatestRevision() and GetNumLocalChanges() are now final in UE 5.8's ISourceControlProvider.
+	// The base class default implementations return TOptional<bool>() / TOptional<int>() — identical behaviour.
 	virtual void Tick() override;
 	virtual TArray<TSharedRef<class ISourceControlLabel>> GetLabels(const FString& InMatchingSpec) const override { return TArray<TSharedRef<class ISourceControlLabel>>(); }
 	virtual TArray<FSourceControlChangelistRef> GetChangelists(EStateCacheUsage::Type InStateCacheUsage) override { return TArray<FSourceControlChangelistRef>(); }

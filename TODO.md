@@ -19,10 +19,11 @@ This file outlines the next steps and technical debt areas for the **FlexVault U
 
 ## 🛠️ Advanced Operations & Future Work
 
-- [x] **Detailed File History Parsing**:
-  - Enhance `FFlexVaultGetSourceControlRevisionInfoWorker` to fetch the full change logs of specific files. This will map historical SCM revisions in Unreal's Diff tool to individual commits from `fxv history` and `fxv changeinfo`.
 - [ ] **Changelists & Branch Switching**:
   - Explore mapping branch lists to Unreal Engine's revision control branch actions.
   - Add menu items to sync to a specific tag/revision or create new branches from the editor.
 - [ ] **Process Pool & Warm Up Optimization**:
   - Spawning `fxv.exe` for every status check on the background thread works well but incurs minor OS process spawn overhead. Explore communicating with the local daemon via named pipes or caching queries in memory if performance becomes a bottleneck in massive workspaces.
+
+
+Support for unity ("Using 'git status' to determine working set for adaptive non-unity build") build discovery
