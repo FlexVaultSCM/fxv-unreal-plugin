@@ -37,7 +37,7 @@ fxv-unreal-plugin/
 
 ## Requirements
 
-- Unreal Engine 5.x
+- Unreal Engine 5.8
 - `fxv` CLI available on your system (set path in **Project Settings → FlexVault Source Control**)
 
 ## Installation
