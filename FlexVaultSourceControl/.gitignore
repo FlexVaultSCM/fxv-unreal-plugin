@@ -1,12 +1,17 @@
-# Visual Studio
+# Visual Studio 2015/2017/2019/2022 User-specific files
 .vs/
 
-# Unreal Engine generated files (will be regenerated if missing)
-FlexVaultSourceControl/Binaries/
-FlexVaultSourceControl/Build/
-FlexVaultSourceControl/Intermediate/
-FlexVaultSourceControl/DerivedDataCache/
-FlexVaultSourceControl/Saved/
+# Compiled compile-ready version of the project
+# (Unreal Engine will generate these if missing)
+Binaries/
+Build/
+
+# Intermediate files (editor caches, temporary build output, etc.)
+Intermediate/
+DerivedDataCache/
+
+# Saved files (autosaves, settings, logs, etc.)
+Saved/
 
 # IDE/Editor files
 *.sln
