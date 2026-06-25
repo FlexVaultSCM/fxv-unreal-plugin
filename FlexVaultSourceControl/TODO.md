@@ -17,6 +17,29 @@ This file outlines the next steps and technical debt areas for the **FlexVault U
 
 ---
 
+## 🔁 Backwards Compatibility (UE 5.x)
+
+The plugin currently targets **Unreal Engine 5.8**. To support older UE 5 releases (5.0–5.7) without forking the codebase, guard any version-divergent call sites with the engine's built-in version macros:
+
+```cpp
+#if ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 5
+    // 5.5+ API (e.g. ISourceControlProvider::Execute overload changes)
+#else
+    // Pre-5.5 fallback
+#endif
+```
+
+- [ ] **Audit API divergence across UE 5.0–5.8**:
+  - Compare `ISourceControlProvider`, `ISourceControlOperation`, and `FSourceControlFileRevision` signatures against each minor release.
+  - Identify any `FSourceControlChangelistPtr` / `ISourceControlChangelist` usage that was introduced mid-cycle (landed in 5.2).
+- [ ] **Wrap divergent call sites with `ENGINE_MINOR_VERSION` guards**:
+  - Use `#if ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= X` blocks rather than duplicating entire files.
+  - Centralise all compat shims in a single header (`FlexVaultSourceControlCompat.h`) so they're easy to prune as older versions are dropped.
+- [ ] **CI matrix**:
+  - Validate compilation against at least UE 5.3, 5.5, and 5.8 once shims are in place.
+
+---
+
 ## 🛠️ Advanced Operations & Future Work
 
 - [ ] **Changelists & Branch Switching**:
