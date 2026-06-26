@@ -117,6 +117,7 @@ bool FFlexVaultGetSourceControlRevisionInfoWorker::Execute(FFlexVaultSourceContr
 		FString Action;
 		FDateTime Date;
 		FString ContentAddress;
+		int64 FileSize;
 	};
 
 	TMap<FString, TArray<FRevDetail>> FileRevisionMap;
@@ -147,13 +148,14 @@ bool FFlexVaultGetSourceControlRevisionInfoWorker::Execute(FFlexVaultSourceContr
 				FString TrimmedLine = Line.TrimStartAndEnd();
 				TArray<FString> Tokens;
 				TrimmedLine.ParseIntoArrayWS(Tokens);
-				if (Tokens.Num() >= 3)
+				if (Tokens.Num() >= 4)
 				{
 					FString ActionStr = Tokens[0];
 					FString HashStr = Tokens[1];
+					int64 ParsedSize = FCString::Atoi64(*Tokens[2]);
 					
-					FString RelPath = Tokens[2];
-					for (int32 i = 3; i < Tokens.Num(); ++i)
+					FString RelPath = Tokens[3];
+					for (int32 i = 4; i < Tokens.Num(); ++i)
 					{
 						RelPath += TEXT(" ") + Tokens[i];
 					}
@@ -164,6 +166,7 @@ bool FFlexVaultGetSourceControlRevisionInfoWorker::Execute(FFlexVaultSourceContr
 					Rev.RevisionSpec = ChangeId;
 					Rev.Description = Commit.Description;
 					Rev.UserName = Commit.Author;
+					Rev.FileSize = ParsedSize;
 					
 					// Map action strings: Added -> Add, Modified -> Edit, Deleted -> Delete
 					if (ActionStr.Equals(TEXT("Added"), ESearchCase::IgnoreCase))
@@ -217,11 +220,12 @@ bool FFlexVaultGetSourceControlRevisionInfoWorker::Execute(FFlexVaultSourceContr
 				Revision->Action = Rev.Action;
 				Revision->Date = Rev.Date;
 				Revision->ContentAddress = Rev.ContentAddress;
-				Revision->FileSize = 0;
+				Revision->FileSize = (int32)Rev.FileSize;
 
 				State.History.Add(Revision);
 			}
 		}
+
 
 		StatesToUpdate.Add(State);
 	}
