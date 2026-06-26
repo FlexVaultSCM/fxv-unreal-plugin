@@ -4,6 +4,7 @@
 #include "FlexVaultSourceControlProvider.h"
 #include "FlexVaultSourceControlDeveloperSettings.h"
 #include "FlexVaultSourceControlWorkerHelper.h"
+#include "SourceControlOperations.h"
 #include "HAL/PlatformFileManager.h"
 #include "GenericPlatform/GenericPlatformFile.h"
 #include "Misc/Paths.h"
@@ -19,8 +20,15 @@ bool FFlexVaultSyncWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 
 	UE_LOG(LogFlexVault, Display, TEXT("FlexVault SCM: Syncing workspace with remote..."));
 
+	TSharedRef<FSync, ESPMode::ThreadSafe> Operation = StaticCastSharedRef<FSync>(InCommand.Operation);
+	FString Params = TEXT("sync --unattended --no-color");
+	if (Operation->GetRevision().Len() > 0)
+	{
+		Params.Appendf(TEXT(" \"%s\""), *Operation->GetRevision());
+	}
+
 	TArray<FString> OutputLines;
-	bool bSucceeded = RunFlexVaultCommand(InCommand.BinaryPath, InCommand.WorkspacePath, TEXT("sync --unattended --no-color"), OutputLines, InCommand.ResultInfo);
+	bool bSucceeded = RunFlexVaultCommand(InCommand.BinaryPath, InCommand.WorkspacePath, Params, OutputLines, InCommand.ResultInfo);
 	
 	if (bSucceeded)
 	{

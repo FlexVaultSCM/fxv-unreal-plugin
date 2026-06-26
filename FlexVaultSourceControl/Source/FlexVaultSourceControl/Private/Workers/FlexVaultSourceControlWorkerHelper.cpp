@@ -10,7 +10,8 @@ bool RunFlexVaultCommand(
 	const FString& InWorkspacePath,
 	const FString& InArgs,
 	TArray<FString>& OutOutputLines,
-	FSourceControlResultInfo& OutResultInfo
+	FSourceControlResultInfo& OutResultInfo,
+	bool bIgnoreError
 )
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(RunFlexVaultCommand);
@@ -122,7 +123,7 @@ bool RunFlexVaultCommand(
 		}
 		LogBlock.Appendf(TEXT("================================================================"));
 
-		if (ReturnCode == 0)
+		if (ReturnCode == 0 || bIgnoreError)
 		{
 			UE_LOG(LogFlexVault, Verbose, TEXT("\n%s"), *LogBlock);
 		}

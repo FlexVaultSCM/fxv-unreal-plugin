@@ -38,6 +38,8 @@ bool FFlexVaultGetSourceControlRevisionInfoWorker::Execute(FFlexVaultSourceContr
 	{
 		FString Branch;
 		int64 Revision;
+		FString CommitType;
+		int64 DraftRevision = -1;
 		FString Description;
 		FString Author;
 		FDateTime Date;
@@ -69,12 +71,33 @@ bool FFlexVaultGetSourceControlRevisionInfoWorker::Execute(FFlexVaultSourceContr
 							if (CommitObj.IsValid())
 							{
 								FCommitMeta Meta;
-								Meta.Branch = CommitObj->GetStringField(TEXT("branch"));
-								Meta.Revision = CommitObj->GetIntegerField(TEXT("revision"));
-								Meta.Description = EntryObj->GetStringField(TEXT("description"));
-								Meta.Author = EntryObj->GetStringField(TEXT("author"));
-								int64 TimestampMillis = EntryObj->GetIntegerField(TEXT("timestamp_millis"));
+								CommitObj->TryGetStringField(TEXT("branch"), Meta.Branch);
+								
+								int64 ParsedRevision = 0;
+								CommitObj->TryGetNumberField(TEXT("revision"), ParsedRevision);
+								Meta.Revision = ParsedRevision;
+
+								CommitObj->TryGetStringField(TEXT("type"), Meta.CommitType);
+								int64 ParsedDraftRevision = -1;
+								if (CommitObj->TryGetNumberField(TEXT("draft_revision"), ParsedDraftRevision))
+								{
+									Meta.DraftRevision = ParsedDraftRevision;
+								}
+
+								EntryObj->TryGetStringField(TEXT("description"), Meta.Description);
+								// TODO: Clean up expected author schema once CLI/backend consistently outputs a unified field (e.g. 'author')
+								if (!EntryObj->TryGetStringField(TEXT("author_display_name"), Meta.Author))
+								{
+									if (!EntryObj->TryGetStringField(TEXT("author"), Meta.Author))
+									{
+										EntryObj->TryGetStringField(TEXT("author_id"), Meta.Author);
+									}
+								}
+
+								int64 TimestampMillis = 0;
+								EntryObj->TryGetNumberField(TEXT("timestamp_millis"), TimestampMillis);
 								Meta.Date = FDateTime::FromUnixTimestamp(TimestampMillis / 1000);
+
 								Commits.Add(Meta);
 							}
 						}
@@ -100,12 +123,24 @@ bool FFlexVaultGetSourceControlRevisionInfoWorker::Execute(FFlexVaultSourceContr
 
 	for (const FCommitMeta& Commit : Commits)
 	{
-		FString ChangeId = FString::Printf(TEXT("%s.%lld"), *Commit.Branch, Commit.Revision);
+		FString ChangeId;
+		if (Commit.CommitType.Equals(TEXT("draft"), ESearchCase::IgnoreCase) && Commit.DraftRevision >= 0)
+		{
+			ChangeId = FString::Printf(TEXT("%s.%lld.%lld"), *Commit.Branch, Commit.Revision, Commit.DraftRevision);
+		}
+		else
+		{
+			ChangeId = FString::Printf(TEXT("%s.%lld"), *Commit.Branch, Commit.Revision);
+		}
+
 		FString ChangeInfoParams = FString::Printf(TEXT("changeinfo %s -e --unattended --no-color"), *ChangeId);
 		TArray<FString> ChangeInfoOutput;
 		FSourceControlResultInfo TempResultInfo;
 
-		if (RunFlexVaultCommand(InCommand.BinaryPath, InCommand.WorkspacePath, ChangeInfoParams, ChangeInfoOutput, TempResultInfo))
+		// Suppress SCM Error logging for changeinfo on old/deleted draft revisions. When drafts (e.g. main.1.1) 
+		// are published, they are promoted to a permanent published revision (e.g. main.2) and the local draft metadata/assets 
+		// are pruned from the draft store, meaning changeinfo will return exit code 1.
+		if (RunFlexVaultCommand(InCommand.BinaryPath, InCommand.WorkspacePath, ChangeInfoParams, ChangeInfoOutput, TempResultInfo, true))
 		{
 			for (const FString& Line : ChangeInfoOutput)
 			{

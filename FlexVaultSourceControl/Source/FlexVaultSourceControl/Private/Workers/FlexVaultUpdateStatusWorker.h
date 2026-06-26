@@ -8,6 +8,8 @@
 /**
  * Worker for FUpdateStatus operation.
  */
+class FFlexVaultSourceControlRevision;
+
 class FFlexVaultUpdateStatusWorker : public IFlexVaultSourceControlWorker
 {
 public:
@@ -28,4 +30,7 @@ private:
 	mutable int32 DepotRevision = 0;
 	mutable int32 LocalRevision = 0;
 	mutable FString WorkspacePath;
+
+	// History details cached during Execute() if ShouldUpdateHistory() was requested
+	mutable TMap<FString, TArray<TSharedRef<class FFlexVaultSourceControlRevision, ESPMode::ThreadSafe>>> FileHistories;
 };

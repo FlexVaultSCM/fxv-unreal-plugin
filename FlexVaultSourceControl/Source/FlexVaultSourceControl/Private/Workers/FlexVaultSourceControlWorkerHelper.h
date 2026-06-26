@@ -14,5 +14,6 @@ bool RunFlexVaultCommand(
 	const FString& InWorkspacePath,
 	const FString& InArgs,
 	TArray<FString>& OutOutputLines,
-	FSourceControlResultInfo& OutResultInfo
+	FSourceControlResultInfo& OutResultInfo,
+	bool bIgnoreError = false
 );
