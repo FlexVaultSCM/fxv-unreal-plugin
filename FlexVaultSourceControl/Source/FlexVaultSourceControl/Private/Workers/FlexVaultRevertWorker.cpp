@@ -13,7 +13,7 @@ FName FFlexVaultRevertWorker::GetName() const
 bool FFlexVaultRevertWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 {
 	// TODO: Implement revert command when the CLI supports it.
-	InCommand.ResultInfo.ErrorMessages.Add(TEXT("Revert is not yet implemented."));
+	InCommand.ResultInfo.ErrorMessages.Add(FText::FromString(TEXT("Revert is not yet implemented.")));
 	return false;
 }
 

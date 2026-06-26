@@ -50,6 +50,7 @@ bool RunFlexVaultCommand(
 
 	FString OutputString;
 	while (FPlatformProcess::IsProcRunning(Process))
+	{
 		FString TempData = FPlatformProcess::ReadPipe(PipeRead);
 		if (!TempData.IsEmpty())
 		{
