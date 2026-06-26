@@ -7,7 +7,15 @@
 //   2. Implementing SFlexVaultSourceControlSettings Slate widget for graphical configuration.
 //   3. Resolving historical file diff revision logs via parsing history details.
 #include "FlexVaultSourceControlCommand.h"
-#include "FlexVaultSourceControlWorkers.h"
+#include "Workers/FlexVaultConnectWorker.h"
+#include "Workers/FlexVaultUpdateStatusWorker.h"
+#include "Workers/FlexVaultCheckOutWorker.h"
+#include "Workers/FlexVaultCheckInWorker.h"
+#include "Workers/FlexVaultMarkForAddWorker.h"
+#include "Workers/FlexVaultDeleteWorker.h"
+#include "Workers/FlexVaultRevertWorker.h"
+#include "Workers/FlexVaultSyncWorker.h"
+#include "Workers/FlexVaultGetSourceControlRevisionInfoWorker.h"
 #include "SourceControlOperations.h"
 #include "SourceControlHelpers.h"
 #include "Misc/QueuedThreadPool.h"
