@@ -22,3 +22,8 @@ FName UFlexVaultSourceControlDeveloperSettings::GetSectionName() const
 {
 	return TEXT("FlexVault");
 }
+
+FString UFlexVaultSourceControlDeveloperSettings::GetEffectiveBinaryPath() const
+{
+	return !BinaryPath.IsEmpty() ? BinaryPath : TEXT("fxv");
+}

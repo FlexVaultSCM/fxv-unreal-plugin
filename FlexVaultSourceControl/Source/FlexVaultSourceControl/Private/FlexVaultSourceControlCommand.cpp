@@ -56,12 +56,8 @@ ECommandResult::Type FFlexVaultSourceControlCommand::ReturnResults()
 	// Forward execution logs and message notifications
 	Operation->AppendResultInfo(ResultInfo);
 
-	ECommandResult::Type Result = bCommandSuccessful ? ECommandResult::Failed : ECommandResult::Failed;
-	if (bCommandSuccessful)
-	{
-		Result = ECommandResult::Succeeded;
-	}
-	else if (IsCanceled())
+	ECommandResult::Type Result = bCommandSuccessful ? ECommandResult::Succeeded : ECommandResult::Failed;
+	if (!bCommandSuccessful && IsCanceled())
 	{
 		Result = ECommandResult::Cancelled;
 	}

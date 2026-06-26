@@ -77,18 +77,21 @@ bool FFlexVaultSourceControlRevision::Get(FString& InOutFilename, EConcurrency::
 
 	TArray<uint8> BinaryData;
 	// Read standard output stream
-	while (FPlatformProcess::IsApplicationRunning(ProcessID) || PipeRead != nullptr)
+	while (FPlatformProcess::IsProcRunning(Process))
 	{
 		TArray<uint8> TempData;
-		if (FPlatformProcess::ReadPipeToArray(PipeRead, TempData))
+		if (FPlatformProcess::ReadPipeToArray(PipeRead, TempData) && TempData.Num() > 0)
 		{
 			BinaryData.Append(TempData);
 		}
-		else
-		{
-			break;
-		}
 		FPlatformProcess::Sleep(0.01f);
+	}
+
+	// Drain any remaining data after the process exits.
+	TArray<uint8> TempData;
+	while (FPlatformProcess::ReadPipeToArray(PipeRead, TempData) && TempData.Num() > 0)
+	{
+		BinaryData.Append(TempData);
 	}
 
 	FPlatformProcess::CloseProc(Process);

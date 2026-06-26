@@ -218,10 +218,7 @@ bool FFlexVaultGetSourceControlRevisionInfoWorker::Execute(FFlexVaultSourceContr
 				Revision->Description = Rev.Description;
 				Revision->UserName = Rev.UserName;
 				Revision->Action = Rev.Action;
-				Revision->Date = Rev.Date;
-				Revision->ContentAddress = Rev.ContentAddress;
-				Revision->FileSize = (int32)Rev.FileSize;
-
+				Revision->FileSize = (int32)FMath::Min<int64>(Rev.FileSize, (int64)MAX_int32);
 				State.History.Add(Revision);
 			}
 		}

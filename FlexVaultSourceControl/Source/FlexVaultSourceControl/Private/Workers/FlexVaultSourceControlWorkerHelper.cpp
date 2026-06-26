@@ -49,11 +49,7 @@ bool RunFlexVaultCommand(
 	}
 
 	FString OutputString;
-	// Wait until the process exits to capture all output and ensure proper sequencing.
-	// Prematurely exiting the loop when the pipe is temporarily empty (which happens during startup)
-	// would orphan the child process and cause a storm of background processes, locking up the CPU.
-	while (FPlatformProcess::IsApplicationRunning(ProcessID))
-	{
+	while (FPlatformProcess::IsProcRunning(Process))
 		FString TempData = FPlatformProcess::ReadPipe(PipeRead);
 		if (!TempData.IsEmpty())
 		{
@@ -81,7 +77,7 @@ bool RunFlexVaultCommand(
 		Line.TrimStartAndEndInline();
 	}
 
-	if (ReturnCode != 0)
+	if (ReturnCode != 0 && !bIgnoreError)
 	{
 		OutResultInfo.ErrorMessages.Add(FText::Format(LOCTEXT("FlexVaultCommandError", "FlexVault CLI command failed with exit code: {0}"), FText::AsNumber(ReturnCode)));
 	}

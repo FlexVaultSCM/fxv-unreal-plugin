@@ -361,8 +361,7 @@ TSharedPtr<IFlexVaultSourceControlWorker, ESPMode::ThreadSafe> FFlexVaultSourceC
 ECommandResult::Type FFlexVaultSourceControlProvider::IssueCommand(FFlexVaultSourceControlCommand& InCommand, const bool bSynchronous)
 {
 	InCommand.WorkspacePath = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
-	InCommand.BinaryPath = GetDefault<UFlexVaultSourceControlDeveloperSettings>()->BinaryPath;
-
+	InCommand.BinaryPath = GetDefault<UFlexVaultSourceControlDeveloperSettings>()->GetEffectiveBinaryPath();
 	if (bSynchronous)
 	{
 		InCommand.DoWork();
