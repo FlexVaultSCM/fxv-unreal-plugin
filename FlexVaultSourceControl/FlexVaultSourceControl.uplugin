@@ -1,0 +1,26 @@
+{
+	"FileVersion" : 3,
+	"Version" : 1,
+	"VersionName" : "1.0",
+	"FriendlyName" : "FlexVault",
+	"Description" : "FlexVault source control management integration",
+	"EngineVersion" : "5.8.0",
+	"Category" : "Source Control",
+	"CreatedBy" : "FlexVault Inc.",
+	"CreatedByURL" : "https://fxv.dev",
+	"DocsURL" : "",
+	"MarketplaceURL" : "",
+	"SupportURL" : "",
+	"EnabledByDefault" : true,
+	"CanContainContent" : false,
+	"IsBetaVersion" : false,
+	"Installed" : false,
+	"Modules" :
+	[
+		{
+			"Name" : "FlexVaultSourceControl",
+			"Type" : "UncookedOnly",
+			"LoadingPhase" : "EarliestPossible"
+		}
+	]
+}
