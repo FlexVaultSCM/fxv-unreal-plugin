@@ -37,10 +37,8 @@ bool FFlexVaultSourceControlRevision::Get(FString& InOutFilename, EConcurrency::
 		AbsoluteFileName = FPaths::ConvertRelativePathToFull(TempFileName);
 	}
 
-	// Resolve the repository directory (located under the project's SCM workspace)
 	const FString RepoPath = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir() / TEXT(".fxv_workspace/draft_repo"));
-	const FString BinaryPath = GetDefault<UFlexVaultSourceControlDeveloperSettings>()->BinaryPath;
-
+	const FString BinaryPath = GetDefault<UFlexVaultSourceControlDeveloperSettings>()->GetEffectiveBinaryPath();
 	UE_LOG(LogFlexVault, Verbose, TEXT("Initiating FlexVault SCM Command (Get Revision): %s repo dump-object \"%s\" \"%s\""), *BinaryPath, *RepoPath, *ContentAddress);
 	double StartTime = FPlatformTime::Seconds();
 
