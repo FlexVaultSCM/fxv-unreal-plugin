@@ -15,6 +15,8 @@ FName FFlexVaultSyncWorker::GetName() const
 
 bool FFlexVaultSyncWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(FFlexVaultSyncWorker::Execute);
+
 	UE_LOG(LogFlexVault, Display, TEXT("FlexVault SCM: Syncing workspace with remote..."));
 
 	TArray<FString> OutputLines;

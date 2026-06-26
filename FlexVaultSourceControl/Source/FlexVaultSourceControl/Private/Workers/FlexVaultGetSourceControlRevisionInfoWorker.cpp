@@ -17,6 +17,8 @@ FName FFlexVaultGetSourceControlRevisionInfoWorker::GetName() const
 
 bool FFlexVaultGetSourceControlRevisionInfoWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(FFlexVaultGetSourceControlRevisionInfoWorker::Execute);
+
 	StatesToUpdate.Empty();
 
 	if (InCommand.Files.Num() == 0)

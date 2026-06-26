@@ -15,6 +15,8 @@ FName FFlexVaultRevertWorker::GetName() const
 
 bool FFlexVaultRevertWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(FFlexVaultRevertWorker::Execute);
+
 	UE_LOG(LogFlexVault, Display, TEXT("FlexVault SCM: Reverting %d files..."), InCommand.Files.Num());
 
 	TArray<FString> OutputLines;

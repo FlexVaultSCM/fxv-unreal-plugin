@@ -13,6 +13,8 @@ bool RunFlexVaultCommand(
 	FSourceControlResultInfo& OutResultInfo
 )
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(RunFlexVaultCommand);
+
 	UE_LOG(LogFlexVault, Verbose, TEXT("Initiating FlexVault SCM Command: %s %s (Working Dir: %s)"), *InBinaryPath, *InArgs, *InWorkspacePath);
 	double StartTime = FPlatformTime::Seconds();
 

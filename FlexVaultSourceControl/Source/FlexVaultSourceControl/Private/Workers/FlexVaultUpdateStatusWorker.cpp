@@ -19,6 +19,8 @@ FName FFlexVaultUpdateStatusWorker::GetName() const
 
 bool FFlexVaultUpdateStatusWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(FFlexVaultUpdateStatusWorker::Execute);
+
 	WorkspacePath = InCommand.WorkspacePath;
 
 	if (InCommand.Files.Num() > 0)

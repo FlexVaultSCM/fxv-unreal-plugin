@@ -18,6 +18,8 @@ FName FFlexVaultConnectWorker::GetName() const
 
 bool FFlexVaultConnectWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(FFlexVaultConnectWorker::Execute);
+
 	TArray<FString> OutputLines;
 	bool bSucceeded = RunFlexVaultCommand(InCommand.BinaryPath, InCommand.WorkspacePath, TEXT("status --format json --unattended --no-color --skip-remote-update --skip-scan"), OutputLines, InCommand.ResultInfo);
 	

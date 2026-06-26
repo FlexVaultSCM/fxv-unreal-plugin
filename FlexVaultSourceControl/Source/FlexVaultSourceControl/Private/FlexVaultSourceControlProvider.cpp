@@ -13,6 +13,7 @@
 #include "Misc/QueuedThreadPool.h"
 #include "Misc/ScopeRWLock.h"
 #include "Misc/Paths.h"
+#include "Async/Async.h"
 
 #if SOURCE_CONTROL_WITH_SLATE
 #include "Widgets/SNullWidget.h"
@@ -102,6 +103,8 @@ const FName& FFlexVaultSourceControlProvider::GetName() const
 
 ECommandResult::Type FFlexVaultSourceControlProvider::GetState(const TArray<FString>& InFiles, TArray<FSourceControlStateRef>& OutState, EStateCacheUsage::Type InStateCacheUsage)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(FFlexVaultSourceControlProvider::GetState);
+
 	if (InFiles.Num() == 0)
 	{
 		return ECommandResult::Failed;
@@ -174,6 +177,8 @@ ECommandResult::Type FFlexVaultSourceControlProvider::Execute(
 	const FSourceControlOperationComplete& InOperationCompleteDelegate
 )
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(FFlexVaultSourceControlProvider::Execute);
+
 	if (!IsEnabled() && InOperation->GetName() != FName("Connect"))
 	{
 		return ECommandResult::Failed;
@@ -214,37 +219,52 @@ bool FFlexVaultSourceControlProvider::CanExecuteOperation(const FSourceControlOp
 
 void FFlexVaultSourceControlProvider::Tick()
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(FFlexVaultSourceControlProvider::Tick);
+
 	// Process completed background tasks on main game thread
+	TArray<FFlexVaultSourceControlCommand*> CompletedCommands;
+
 	for (int32 Index = 0; Index < CommandQueue.Num(); ++Index)
 	{
 		FFlexVaultSourceControlCommand* Command = CommandQueue[Index];
 		if (Command->bExecuteProcessed)
 		{
-#if SOURCE_CONTROL_WITH_SLATE
-			bool bIsLaunchError = false;
-			for (const FText& ErrorMsg : Command->ResultInfo.ErrorMessages)
-			{
-				if (ErrorMsg.ToString().Contains(TEXT("Failed to launch FlexVault SCM executable")))
-				{
-					bIsLaunchError = true;
-					break;
-				}
-			}
-
-			if (bIsLaunchError)
-			{
-				FNotificationInfo Info(LOCTEXT("FlexVaultLaunchErrorNotification", "FlexVault: Failed to launch SCM executable. Please verify your Binary Path in Developer Settings."));
-				Info.ExpireDuration = 5.0f;
-				Info.bUseSuccessFailIcons = true;
-				FSlateNotificationManager::Get().AddNotification(Info);
-			}
-#endif
-
-			Command->ReturnResults();
+			CompletedCommands.Add(Command);
 			CommandQueue.RemoveAt(Index);
-			delete Command;
 			--Index;
 		}
+	}
+
+	for (FFlexVaultSourceControlCommand* Command : CompletedCommands)
+	{
+#if SOURCE_CONTROL_WITH_SLATE
+		bool bIsLaunchError = false;
+		for (const FText& ErrorMsg : Command->ResultInfo.ErrorMessages)
+		{
+			if (ErrorMsg.ToString().Contains(TEXT("Failed to launch FlexVault SCM executable")))
+			{
+				bIsLaunchError = true;
+				break;
+			}
+		}
+
+		if (bIsLaunchError)
+		{
+			FNotificationInfo Info(LOCTEXT("FlexVaultLaunchErrorNotification", "FlexVault: Failed to launch SCM executable. Please verify your Binary Path in Developer Settings."));
+			Info.ExpireDuration = 5.0f;
+			Info.bUseSuccessFailIcons = true;
+			FSlateNotificationManager::Get().AddNotification(Info);
+		}
+#endif
+
+		// Defer ReturnResults and command deletion to the next game thread tick.
+		// This ensures that any Slate modals or dialogs spawned during SCM callbacks
+		// are created in a clean callstack, preventing Slate rendering or focus lockup.
+		AsyncTask(ENamedThreads::GameThread, [Command]()
+		{
+			Command->ReturnResults();
+			delete Command;
+		});
 	}
 }
 

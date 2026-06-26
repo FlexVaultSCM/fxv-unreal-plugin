@@ -18,6 +18,8 @@ FName FFlexVaultCheckInWorker::GetName() const
 
 bool FFlexVaultCheckInWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(FFlexVaultCheckInWorker::Execute);
+
 	FString Description = TEXT("Unreal Engine Commit");
 	TSharedRef<FCheckIn, ESPMode::ThreadSafe> Operation = StaticCastSharedRef<FCheckIn>(InCommand.Operation);
 	if (!Operation->GetDescription().IsEmpty())
