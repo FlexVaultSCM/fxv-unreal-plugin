@@ -18,18 +18,32 @@ bool FFlexVaultSyncWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(FFlexVaultSyncWorker::Execute);
 
-	UE_LOG(LogFlexVault, Display, TEXT("FlexVault SCM: Syncing workspace with remote..."));
-
 	TSharedRef<FSync, ESPMode::ThreadSafe> Operation = StaticCastSharedRef<FSync>(InCommand.Operation);
+
 	FString Params = TEXT("sync --unattended --no-color");
 	if (Operation->GetRevision().Len() > 0)
 	{
 		Params.Appendf(TEXT(" \"%s\""), *Operation->GetRevision());
 	}
 
+	// When specific files are requested, scope the CLI command to those files.
+	// An empty file list means "sync the entire workspace".
+	if (InCommand.Files.Num() > 0)
+	{
+		UE_LOG(LogFlexVault, Display, TEXT("FlexVault SCM: Syncing %d file(s) with remote..."), InCommand.Files.Num());
+		for (const FString& File : InCommand.Files)
+		{
+			Params.Appendf(TEXT(" \"%s\""), *File);
+		}
+	}
+	else
+	{
+		UE_LOG(LogFlexVault, Display, TEXT("FlexVault SCM: Syncing workspace with remote..."));
+	}
+
 	TArray<FString> OutputLines;
 	bool bSucceeded = RunFlexVaultCommand(InCommand.BinaryPath, InCommand.WorkspacePath, Params, OutputLines, InCommand.ResultInfo);
-	
+
 	if (bSucceeded)
 	{
 		SyncedFiles = InCommand.Files;
@@ -41,20 +55,36 @@ bool FFlexVaultSyncWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 bool FFlexVaultSyncWorker::UpdateStates() const
 {
 	FFlexVaultSourceControlProvider& Provider = GetSCCProvider();
-	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
 
-	for (const FString& File : SyncedFiles)
+	if (SyncedFiles.Num() > 0)
 	{
-		TSharedRef<FFlexVaultSourceControlState, ESPMode::ThreadSafe> State = Provider.GetStateInternal(File);
-		State->SetState(EFlexVaultState::ReadOnly);
-		State->bModified = false;
-		State->TimeStamp = FDateTime::Now();
+		// File-scoped sync: we know exactly which files changed, update only those entries.
+		IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
 
-		if (Provider.UsesLocalReadOnlyState())
+		for (const FString& File : SyncedFiles)
 		{
-			PlatformFile.SetReadOnly(*File, true);
+			TSharedRef<FFlexVaultSourceControlState, ESPMode::ThreadSafe> State = Provider.GetStateInternal(File);
+			State->SetState(EFlexVaultState::ReadOnly);
+			State->bModified = false;
+			State->TimeStamp = FDateTime::Now();
+
+			if (Provider.UsesLocalReadOnlyState())
+			{
+				PlatformFile.SetReadOnly(*File, true);
+			}
 		}
+
+		UE_LOG(LogFlexVault, Display, TEXT("FlexVault SCM: Synced %d file(s) to latest revision."), SyncedFiles.Num());
 	}
-	UE_LOG(LogFlexVault, Display, TEXT("FlexVault SCM: Synced %d files to latest revision."), SyncedFiles.Num());
-	return SyncedFiles.Num() > 0;
+	else
+	{
+		// Workspace-wide sync: the CLI may have touched any file in the workspace.
+		// Flush the entire cache so the next GetState() call triggers a fresh
+		// UpdateStatus query rather than returning stale data.
+		Provider.InvalidateStateCache();
+
+		UE_LOG(LogFlexVault, Display, TEXT("FlexVault SCM: Workspace sync complete — state cache invalidated."));
+	}
+
+	return true;
 }

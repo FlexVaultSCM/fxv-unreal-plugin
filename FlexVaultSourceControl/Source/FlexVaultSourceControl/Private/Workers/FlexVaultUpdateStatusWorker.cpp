@@ -414,7 +414,7 @@ bool FFlexVaultUpdateStatusWorker::UpdateStates() const
 	// Ensure all modified/added/deleted files discovered by SCM status are present in the cache
 	for (const auto& Entry : ModifiedFiles)
 	{
-		FString AbsoluteFile = FPaths::ConvertRelativePathToFull(WorkspacePath / Entry.Key);
+		FString AbsoluteFile = FPaths::ConvertRelativePathToFull(FPaths::Combine(WorkspacePath, Entry.Key));
 		Provider.GetStateInternal(AbsoluteFile);
 	}
 	

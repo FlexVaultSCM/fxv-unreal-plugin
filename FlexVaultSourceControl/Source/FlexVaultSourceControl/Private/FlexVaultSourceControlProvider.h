@@ -73,6 +73,11 @@ public:
 	TSharedRef<FFlexVaultSourceControlState, ESPMode::ThreadSafe> GetStateInternal(const FString& InFilename);
 	bool RemoveFileFromCache(const FString& Filename);
 
+	/** Flush all cached file states. Call after workspace-wide operations (e.g. full sync)
+	 *  whose scope cannot be bounded to a known file list. The next GetState() call will
+	 *  trigger a fresh UpdateStatus query for any requested file. */
+	void InvalidateStateCache();
+
 private:
 	virtual TUniquePtr<ISourceControlProvider> Create(const FStringView& OwnerName, const FSourceControlInitSettings& InInitialSettings) const override;
 

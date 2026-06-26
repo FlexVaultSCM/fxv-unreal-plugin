@@ -314,6 +314,12 @@ bool FFlexVaultSourceControlProvider::RemoveFileFromCache(const FString& Filenam
 	return StateCache.Remove(NormalizedFilename) > 0;
 }
 
+void FFlexVaultSourceControlProvider::InvalidateStateCache()
+{
+	FWriteScopeLock WriteLock(StateCacheLock);
+	StateCache.Empty();
+}
+
 TUniquePtr<ISourceControlProvider> FFlexVaultSourceControlProvider::Create(const FStringView& InOwnerName, const FSourceControlInitSettings& InInitialSettings) const
 {
 	TUniquePtr<FFlexVaultSourceControlProvider> Provider = MakeUnique<FFlexVaultSourceControlProvider>();
