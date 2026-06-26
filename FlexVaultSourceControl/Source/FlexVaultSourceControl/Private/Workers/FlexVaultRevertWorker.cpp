@@ -2,11 +2,8 @@
 #include "FlexVaultRevertWorker.h"
 #include "FlexVaultSourceControlCommand.h"
 #include "FlexVaultSourceControlProvider.h"
-#include "FlexVaultSourceControlDeveloperSettings.h"
-#include "FlexVaultSourceControlWorkerHelper.h"
 #include "HAL/PlatformFileManager.h"
 #include "GenericPlatform/GenericPlatformFile.h"
-#include "Misc/Paths.h"
 
 FName FFlexVaultRevertWorker::GetName() const
 {
@@ -15,19 +12,9 @@ FName FFlexVaultRevertWorker::GetName() const
 
 bool FFlexVaultRevertWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 {
-	TRACE_CPUPROFILER_EVENT_SCOPE(FFlexVaultRevertWorker::Execute);
-
-	UE_LOG(LogFlexVault, Display, TEXT("FlexVault SCM: Reverting %d files..."), InCommand.Files.Num());
-
-	TArray<FString> OutputLines;
-	bool bSucceeded = RunFlexVaultCommand(InCommand.BinaryPath, InCommand.WorkspacePath, TEXT("sync --unattended --no-color"), OutputLines, InCommand.ResultInfo);
-	
-	if (bSucceeded)
-	{
-		RevertedFiles = InCommand.Files;
-	}
-
-	return bSucceeded;
+	// TODO: Implement revert command when the CLI supports it.
+	InCommand.ResultInfo.ErrorMessages.Add(TEXT("Revert is not yet implemented."));
+	return false;
 }
 
 bool FFlexVaultRevertWorker::UpdateStates() const
