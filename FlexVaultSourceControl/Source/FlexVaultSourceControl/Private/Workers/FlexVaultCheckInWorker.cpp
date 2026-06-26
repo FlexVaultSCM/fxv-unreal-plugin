@@ -18,9 +18,6 @@ FName FFlexVaultCheckInWorker::GetName() const
 
 bool FFlexVaultCheckInWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 {
-	const FString WorkspacePath = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
-	const FString BinaryPath = GetDefault<UFlexVaultSourceControlDeveloperSettings>()->BinaryPath;
-
 	FString Description = TEXT("Unreal Engine Commit");
 	TSharedRef<FCheckIn, ESPMode::ThreadSafe> Operation = StaticCastSharedRef<FCheckIn>(InCommand.Operation);
 	if (!Operation->GetDescription().IsEmpty())
@@ -28,10 +25,12 @@ bool FFlexVaultCheckInWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 		Description = Operation->GetDescription().ToString();
 	}
 
+	UE_LOG(LogFlexVault, Display, TEXT("FlexVault SCM: Checking in %d files with description: '%s'"), InCommand.Files.Num(), *Description);
+
 	TArray<FString> OutputLines;
 	// 1. Snapshot changes locally
 	FString SnapshotParams = FString::Printf(TEXT("snapshot -d \"%s\" --unattended --no-color"), *Description);
-	bool bSnapshotOk = RunFlexVaultCommand(BinaryPath, WorkspacePath, SnapshotParams, OutputLines, InCommand.ResultInfo);
+	bool bSnapshotOk = RunFlexVaultCommand(InCommand.BinaryPath, InCommand.WorkspacePath, SnapshotParams, OutputLines, InCommand.ResultInfo);
 	if (!bSnapshotOk)
 	{
 		return false;
@@ -39,7 +38,7 @@ bool FFlexVaultCheckInWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 
 	// 2. Publish snapshots to remote CAS
 	FString PublishParams = FString::Printf(TEXT("publish -d \"%s\" --unattended --no-color"), *Description);
-	bool bPublishOk = RunFlexVaultCommand(BinaryPath, WorkspacePath, PublishParams, OutputLines, InCommand.ResultInfo);
+	bool bPublishOk = RunFlexVaultCommand(InCommand.BinaryPath, InCommand.WorkspacePath, PublishParams, OutputLines, InCommand.ResultInfo);
 	if (!bPublishOk)
 	{
 		return false;
@@ -67,6 +66,7 @@ bool FFlexVaultCheckInWorker::UpdateStates() const
 			PlatformFile.SetReadOnly(*File, true);
 		}
 	}
+	UE_LOG(LogFlexVault, Display, TEXT("FlexVault SCM: Successfully checked in %d files."), CommittedFiles.Num());
 	return CommittedFiles.Num() > 0;
 }
 

@@ -15,11 +15,10 @@ FName FFlexVaultRevertWorker::GetName() const
 
 bool FFlexVaultRevertWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 {
-	const FString WorkspacePath = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
-	const FString BinaryPath = GetDefault<UFlexVaultSourceControlDeveloperSettings>()->BinaryPath;
+	UE_LOG(LogFlexVault, Display, TEXT("FlexVault SCM: Reverting %d files..."), InCommand.Files.Num());
 
 	TArray<FString> OutputLines;
-	bool bSucceeded = RunFlexVaultCommand(BinaryPath, WorkspacePath, TEXT("sync --unattended --no-color"), OutputLines, InCommand.ResultInfo);
+	bool bSucceeded = RunFlexVaultCommand(InCommand.BinaryPath, InCommand.WorkspacePath, TEXT("sync --unattended --no-color"), OutputLines, InCommand.ResultInfo);
 	
 	if (bSucceeded)
 	{
@@ -47,5 +46,6 @@ bool FFlexVaultRevertWorker::UpdateStates() const
 			PlatformFile.SetReadOnly(*File, true);
 		}
 	}
+	UE_LOG(LogFlexVault, Display, TEXT("FlexVault SCM: Successfully reverted %d files."), RevertedFiles.Num());
 	return RevertedFiles.Num() > 0;
 }

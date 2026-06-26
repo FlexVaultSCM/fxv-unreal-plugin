@@ -12,6 +12,7 @@
 #include "SourceControlHelpers.h"
 #include "Misc/QueuedThreadPool.h"
 #include "Misc/ScopeRWLock.h"
+#include "Misc/Paths.h"
 
 #if SOURCE_CONTROL_WITH_SLATE
 #include "Widgets/SNullWidget.h"
@@ -256,10 +257,13 @@ TSharedRef<class SWidget> FFlexVaultSourceControlProvider::MakeSettingsWidget() 
 
 TSharedRef<FFlexVaultSourceControlState, ESPMode::ThreadSafe> FFlexVaultSourceControlProvider::GetStateInternal(const FString& InFilename)
 {
+	FString NormalizedFilename = InFilename;
+	NormalizedFilename.ReplaceInline(TEXT("\\"), TEXT("/"));
+
 	TSharedRef<FFlexVaultSourceControlState, ESPMode::ThreadSafe>* State;
 	{
 		FReadScopeLock ReadLock(StateCacheLock);
-		State = StateCache.Find(InFilename);
+		State = StateCache.Find(NormalizedFilename);
 	}
 
 	if (State != nullptr)
@@ -268,15 +272,18 @@ TSharedRef<FFlexVaultSourceControlState, ESPMode::ThreadSafe> FFlexVaultSourceCo
 	}
 
 	FWriteScopeLock WriteLock(StateCacheLock);
-	TSharedRef<FFlexVaultSourceControlState, ESPMode::ThreadSafe> NewState = MakeShared<FFlexVaultSourceControlState>(InFilename);
-	StateCache.Add(InFilename, NewState);
+	TSharedRef<FFlexVaultSourceControlState, ESPMode::ThreadSafe> NewState = MakeShared<FFlexVaultSourceControlState>(NormalizedFilename);
+	StateCache.Add(NormalizedFilename, NewState);
 	return NewState;
 }
 
 bool FFlexVaultSourceControlProvider::RemoveFileFromCache(const FString& Filename)
 {
+	FString NormalizedFilename = Filename;
+	NormalizedFilename.ReplaceInline(TEXT("\\"), TEXT("/"));
+
 	FWriteScopeLock WriteLock(StateCacheLock);
-	return StateCache.Remove(Filename) > 0;
+	return StateCache.Remove(NormalizedFilename) > 0;
 }
 
 TUniquePtr<ISourceControlProvider> FFlexVaultSourceControlProvider::Create(const FStringView& InOwnerName, const FSourceControlInitSettings& InInitialSettings) const
@@ -333,6 +340,9 @@ TSharedPtr<IFlexVaultSourceControlWorker, ESPMode::ThreadSafe> FFlexVaultSourceC
 
 ECommandResult::Type FFlexVaultSourceControlProvider::IssueCommand(FFlexVaultSourceControlCommand& InCommand, const bool bSynchronous)
 {
+	InCommand.WorkspacePath = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
+	InCommand.BinaryPath = GetDefault<UFlexVaultSourceControlDeveloperSettings>()->BinaryPath;
+
 	if (bSynchronous)
 	{
 		InCommand.DoWork();

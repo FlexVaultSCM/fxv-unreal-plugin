@@ -36,5 +36,6 @@ bool FFlexVaultDeleteWorker::UpdateStates() const
 		State->bModified = true;
 		State->TimeStamp = FDateTime::Now();
 	}
+	UE_LOG(LogFlexVault, Display, TEXT("FlexVault SCM: Marked %d files for delete."), DeletedFiles.Num());
 	return DeletedFiles.Num() > 0;
 }

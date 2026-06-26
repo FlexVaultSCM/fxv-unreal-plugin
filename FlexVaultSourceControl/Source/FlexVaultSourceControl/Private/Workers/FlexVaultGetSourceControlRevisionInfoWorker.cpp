@@ -17,9 +17,6 @@ FName FFlexVaultGetSourceControlRevisionInfoWorker::GetName() const
 
 bool FFlexVaultGetSourceControlRevisionInfoWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 {
-	const FString WorkspacePath = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
-	const FString BinaryPath = GetDefault<UFlexVaultSourceControlDeveloperSettings>()->BinaryPath;
-
 	StatesToUpdate.Empty();
 
 	if (InCommand.Files.Num() == 0)
@@ -29,7 +26,7 @@ bool FFlexVaultGetSourceControlRevisionInfoWorker::Execute(FFlexVaultSourceContr
 
 	// 1. Fetch branch history (limit to 30 most recent changes to keep execution fast)
 	TArray<FString> OutputLines;
-	bool bSucceeded = RunFlexVaultCommand(BinaryPath, WorkspacePath, TEXT("history --format json --num 30 --unattended --no-color"), OutputLines, InCommand.ResultInfo);
+	bool bSucceeded = RunFlexVaultCommand(InCommand.BinaryPath, InCommand.WorkspacePath, TEXT("history --format json --num 30 --unattended --no-color"), OutputLines, InCommand.ResultInfo);
 	if (!bSucceeded)
 	{
 		return false;
@@ -106,7 +103,7 @@ bool FFlexVaultGetSourceControlRevisionInfoWorker::Execute(FFlexVaultSourceContr
 		TArray<FString> ChangeInfoOutput;
 		FSourceControlResultInfo TempResultInfo;
 
-		if (RunFlexVaultCommand(BinaryPath, WorkspacePath, ChangeInfoParams, ChangeInfoOutput, TempResultInfo))
+		if (RunFlexVaultCommand(InCommand.BinaryPath, InCommand.WorkspacePath, ChangeInfoParams, ChangeInfoOutput, TempResultInfo))
 		{
 			for (const FString& Line : ChangeInfoOutput)
 			{
@@ -163,7 +160,7 @@ bool FFlexVaultGetSourceControlRevisionInfoWorker::Execute(FFlexVaultSourceContr
 	for (const FString& File : InCommand.Files)
 	{
 		FString RelativePath = File;
-		FPaths::MakePathRelativeTo(RelativePath, *WorkspacePath);
+		FPaths::MakePathRelativeTo(RelativePath, *InCommand.WorkspacePath);
 		RelativePath.ReplaceInline(TEXT("\\"), TEXT("/"));
 
 		FFlexVaultSourceControlState State(File);

@@ -22,4 +22,10 @@ public:
 
 private:
 	mutable TArray<FFlexVaultSourceControlState> StatesToUpdate;
+
+	// Repository-wide status results cached during Execute() to update all states on the main thread
+	mutable TMap<FString, EFlexVaultState::Type> ModifiedFiles;
+	mutable int32 DepotRevision = 0;
+	mutable int32 LocalRevision = 0;
+	mutable FString WorkspacePath;
 };

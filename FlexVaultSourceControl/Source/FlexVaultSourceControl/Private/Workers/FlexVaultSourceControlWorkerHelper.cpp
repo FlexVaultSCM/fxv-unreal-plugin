@@ -83,48 +83,51 @@ bool RunFlexVaultCommand(
 		OutResultInfo.ErrorMessages.Add(FText::Format(LOCTEXT("FlexVaultCommandError", "FlexVault CLI command failed with exit code: {0}"), FText::AsNumber(ReturnCode)));
 	}
 
-	double ElapsedTime = FPlatformTime::Seconds() - StartTime;
-
-	// Build atomic log block
-	FString LogBlock;
-	LogBlock.Appendf(TEXT("================================================================\n"));
-	LogBlock.Appendf(TEXT("FlexVault SCM CLI Command Execution Report:\n"));
-	LogBlock.Appendf(TEXT("  Command:        %s %s\n"), *InBinaryPath, *InArgs);
-	LogBlock.Appendf(TEXT("  Working Dir:    %s\n"), *InWorkspacePath);
-	LogBlock.Appendf(TEXT("  Execution Time: %.4f seconds\n"), ElapsedTime);
-	LogBlock.Appendf(TEXT("  Exit Code:      %d\n"), ReturnCode);
-	LogBlock.Appendf(TEXT("  Status:         %s\n"), ReturnCode == 0 ? TEXT("SUCCESS") : TEXT("FAILED"));
-
-	if (OutOutputLines.Num() > 0)
+	if (ReturnCode != 0 || !LogFlexVault.IsSuppressed(ELogVerbosity::Verbose))
 	{
-		LogBlock.Appendf(TEXT("  Stdout Output (%d lines):\n"), OutOutputLines.Num());
-		for (const FString& Line : OutOutputLines)
+		double ElapsedTime = FPlatformTime::Seconds() - StartTime;
+
+		// Build atomic log block
+		FString LogBlock;
+		LogBlock.Appendf(TEXT("================================================================\n"));
+		LogBlock.Appendf(TEXT("FlexVault SCM CLI Command Execution Report:\n"));
+		LogBlock.Appendf(TEXT("  Command:        %s %s\n"), *InBinaryPath, *InArgs);
+		LogBlock.Appendf(TEXT("  Working Dir:    %s\n"), *InWorkspacePath);
+		LogBlock.Appendf(TEXT("  Execution Time: %.4f seconds\n"), ElapsedTime);
+		LogBlock.Appendf(TEXT("  Exit Code:      %d\n"), ReturnCode);
+		LogBlock.Appendf(TEXT("  Status:         %s\n"), ReturnCode == 0 ? TEXT("SUCCESS") : TEXT("FAILED"));
+
+		if (OutOutputLines.Num() > 0)
 		{
-			LogBlock.Appendf(TEXT("    %s\n"), *Line);
+			LogBlock.Appendf(TEXT("  Stdout Output (%d lines):\n"), OutOutputLines.Num());
+			for (const FString& Line : OutOutputLines)
+			{
+				LogBlock.Appendf(TEXT("    %s\n"), *Line);
+			}
 		}
-	}
-	else
-	{
-		LogBlock.Append(TEXT("  Stdout Output:  [Empty]\n"));
-	}
-
-	if (OutResultInfo.ErrorMessages.Num() > 0)
-	{
-		LogBlock.Appendf(TEXT("  Errors/Warnings:\n"));
-		for (const FText& Err : OutResultInfo.ErrorMessages)
+		else
 		{
-			LogBlock.Appendf(TEXT("    %s\n"), *Err.ToString());
+			LogBlock.Append(TEXT("  Stdout Output:  [Empty]\n"));
 		}
-	}
-	LogBlock.Appendf(TEXT("================================================================"));
 
-	if (ReturnCode == 0)
-	{
-		UE_LOG(LogFlexVault, Verbose, TEXT("\n%s"), *LogBlock);
-	}
-	else
-	{
-		UE_LOG(LogFlexVault, Error, TEXT("\n%s"), *LogBlock);
+		if (OutResultInfo.ErrorMessages.Num() > 0)
+		{
+			LogBlock.Appendf(TEXT("  Errors/Warnings:\n"));
+			for (const FText& Err : OutResultInfo.ErrorMessages)
+			{
+				LogBlock.Appendf(TEXT("    %s\n"), *Err.ToString());
+			}
+		}
+		LogBlock.Appendf(TEXT("================================================================"));
+
+		if (ReturnCode == 0)
+		{
+			UE_LOG(LogFlexVault, Verbose, TEXT("\n%s"), *LogBlock);
+		}
+		else
+		{
+			UE_LOG(LogFlexVault, Error, TEXT("\n%s"), *LogBlock);
+		}
 	}
 
 	return ReturnCode == 0;

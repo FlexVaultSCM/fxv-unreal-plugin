@@ -19,13 +19,27 @@ FName FFlexVaultUpdateStatusWorker::GetName() const
 
 bool FFlexVaultUpdateStatusWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 {
-	const FString WorkspacePath = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
-	const FString BinaryPath = GetDefault<UFlexVaultSourceControlDeveloperSettings>()->BinaryPath;
+	WorkspacePath = InCommand.WorkspacePath;
+
+	if (InCommand.Files.Num() > 0)
+	{
+		FString TargetFilesStr = FString::Join(InCommand.Files, TEXT(", "));
+		UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault: Executing UpdateStatus command for target files: %s"), *TargetFilesStr);
+	}
+	else
+	{
+		UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault: Executing UpdateStatus command (no specific files targeted)"));
+	}
+
+	// Reset cached repository-wide SCM status fields
+	LocalRevision = 0;
+	DepotRevision = 0;
+	ModifiedFiles.Empty();
 
 	TArray<FString> OutputLines;
 	bool bSucceeded = RunFlexVaultCommand(
-		BinaryPath,
-		WorkspacePath,
+		InCommand.BinaryPath,
+		InCommand.WorkspacePath,
 		TEXT("status --format json --unattended --no-color --skip-remote-update"),
 		OutputLines,
 		InCommand.ResultInfo
@@ -63,12 +77,6 @@ bool FFlexVaultUpdateStatusWorker::Execute(FFlexVaultSourceControlCommand& InCom
 	const TSharedPtr<FJsonObject>& Payload = *PayloadObj;
 
 	// ── Revision numbers from head_commit ──────────────────────────────────────────────────────────
-	// We report LocalRevNumber from the local_snapshot (draft) and DepotRevNumber from
-	// published_head, when both are present (parented_draft). Fallback to 0 if unavailable
-	// (empty_branch or unparented_draft).
-	int32 LocalRevision = 0;
-	int32 DepotRevision = 0;
-
 	const TSharedPtr<FJsonObject>* HeadCommitObj = nullptr;
 	if (Payload->TryGetObjectField(TEXT("head_commit"), HeadCommitObj))
 	{
@@ -92,19 +100,9 @@ bool FFlexVaultUpdateStatusWorker::Execute(FFlexVaultSourceControlCommand& InCom
 			}
 		}
 	}
+	UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault: Parsed head_commit metadata. LocalRevision: %d, DepotRevision: %d"), LocalRevision, DepotRevision);
 
 	// ── File state list ────────────────────────────────────────────────────────────────────────────
-	// Each entry in files[] carries a path (workspace-relative, forward-slash separated) and up to
-	// two optional change axes:
-	//   unpublished_state  — snapshotted but not yet published  → maps to CheckedOut / OpenForAdd / MarkedForDelete
-	//   workspace_state    — working-tree change not yet snapshotted (needs 'fxv snapshot')
-	//                        → same mapping; shown as CheckedOut so the editor prompts the user to commit
-	//
-	// When both axes are present for the same path (e.g. modified in draft AND has working-tree
-	// changes on top) we prefer unpublished_state for the displayed icon, since that represents the
-	// higher-committed state. Workspace-only changes are also surfaced as CheckedOut.
-	TMap<FString, EFlexVaultState::Type> ModifiedFiles;
-
 	const TArray<TSharedPtr<FJsonValue>>* FilesArray = nullptr;
 	if (Payload->TryGetArrayField(TEXT("files"), FilesArray))
 	{
@@ -145,9 +143,10 @@ bool FFlexVaultUpdateStatusWorker::Execute(FFlexVaultSourceControlCommand& InCom
 				MappedState = EFlexVaultState::CheckedOut;
 			}
 
-			// The JSON paths use forward slashes; normalize to match UE's platform separator for lookup.
-			FilePath.ReplaceInline(TEXT("/"), TEXT("\\"));
+			// Keep paths using forward slashes for internal consistency.
+			FilePath.ReplaceInline(TEXT("\\"), TEXT("/"));
 			ModifiedFiles.Add(FilePath, MappedState);
+			UE_LOG(LogFlexVault, VeryVerbose, TEXT("FlexVault: Parsed modified file: %s (MappedState: %d, SourceStateStr: %s)"), *FilePath, (int32)MappedState, *StateStr);
 		}
 	}
 
@@ -155,22 +154,23 @@ bool FFlexVaultUpdateStatusWorker::Execute(FFlexVaultSourceControlCommand& InCom
 	StatesToUpdate.Empty();
 	for (const FString& File : InCommand.Files)
 	{
-		FString RelativePath = File;
+		FString RelativePath = FPaths::ConvertRelativePathToFull(File);
 		FPaths::MakePathRelativeTo(RelativePath, *WorkspacePath);
+		RelativePath.ReplaceInline(TEXT("\\"), TEXT("/"));
 
 		FFlexVaultSourceControlState State(File);
 		State.DepotRevNumber = DepotRevision;
 		State.LocalRevNumber = LocalRevision;
 		State.TimeStamp = FDateTime::Now();
 
-		if (FApp::IsUnattended() || !FPlatformFileManager::Get().GetPlatformFile().FileExists(*File))
-		{
-			State.SetState(EFlexVaultState::NotInRepository);
-		}
-		else if (EFlexVaultState::Type* FoundState = ModifiedFiles.Find(RelativePath))
+		if (const EFlexVaultState::Type* FoundState = ModifiedFiles.Find(RelativePath))
 		{
 			State.SetState(*FoundState);
 			State.bModified = true;
+		}
+		else if (!FPlatformFileManager::Get().GetPlatformFile().FileExists(*File))
+		{
+			State.SetState(EFlexVaultState::NotInRepository);
 		}
 		else
 		{
@@ -181,16 +181,50 @@ bool FFlexVaultUpdateStatusWorker::Execute(FFlexVaultSourceControlCommand& InCom
 		StatesToUpdate.Add(State);
 	}
 
+	UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault: Finished processing fxv output. Found %d modified files in repository. Queued %d requested files for state updates."), ModifiedFiles.Num(), StatesToUpdate.Num());
+
 	return true;
 }
 
 bool FFlexVaultUpdateStatusWorker::UpdateStates() const
 {
 	FFlexVaultSourceControlProvider& Provider = GetSCCProvider();
-	for (const FFlexVaultSourceControlState& State : StatesToUpdate)
+	
+	// Since `fxv status` queries the entire repository at once, we update the status
+	// of EVERY file currently tracked in the Provider's cache to synchronize the entire editor UI state.
+	TArray<FSourceControlStateRef> CachedStates = Provider.GetCachedStateByPredicate([](const FSourceControlStateRef&){ return true; });
+	UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault: UpdateStates() synchronizing all %d cached states with repository SCM status."), CachedStates.Num());
+	
+	for (const FSourceControlStateRef& StateRef : CachedStates)
 	{
-		TSharedRef<FFlexVaultSourceControlState, ESPMode::ThreadSafe> CachedState = Provider.GetStateInternal(State.LocalFilename);
-		CachedState->Update(State, &State.TimeStamp);
+		FFlexVaultSourceControlState* CachedState = static_cast<FFlexVaultSourceControlState*>(&StateRef.Get());
+		FString File = CachedState->LocalFilename;
+		FString RelativePath = FPaths::ConvertRelativePathToFull(File);
+		FPaths::MakePathRelativeTo(RelativePath, *WorkspacePath);
+		RelativePath.ReplaceInline(TEXT("\\"), TEXT("/"));
+
+		FFlexVaultSourceControlState NewState(File);
+		NewState.DepotRevNumber = DepotRevision;
+		NewState.LocalRevNumber = LocalRevision;
+		NewState.TimeStamp = FDateTime::Now();
+
+		if (const EFlexVaultState::Type* FoundState = ModifiedFiles.Find(RelativePath))
+		{
+			NewState.SetState(*FoundState);
+			NewState.bModified = true;
+		}
+		else if (!FPlatformFileManager::Get().GetPlatformFile().FileExists(*File))
+		{
+			NewState.SetState(EFlexVaultState::NotInRepository);
+		}
+		else
+		{
+			NewState.SetState(EFlexVaultState::ReadOnly);
+			NewState.bModified = false;
+		}
+
+		CachedState->Update(NewState, &NewState.TimeStamp);
 	}
-	return StatesToUpdate.Num() > 0;
+
+	return CachedStates.Num() > 0;
 }

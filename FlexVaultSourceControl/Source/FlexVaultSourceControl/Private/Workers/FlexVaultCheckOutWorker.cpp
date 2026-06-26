@@ -36,5 +36,6 @@ bool FFlexVaultCheckOutWorker::UpdateStates() const
 		State->bModified = true;
 		State->TimeStamp = FDateTime::Now();
 	}
+	UE_LOG(LogFlexVault, Display, TEXT("FlexVault SCM: Checked out %d files for editing."), CheckedOutFiles.Num());
 	return CheckedOutFiles.Num() > 0;
 }

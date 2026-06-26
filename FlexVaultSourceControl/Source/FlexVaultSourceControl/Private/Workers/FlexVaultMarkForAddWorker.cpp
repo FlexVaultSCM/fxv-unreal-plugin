@@ -24,5 +24,6 @@ bool FFlexVaultMarkForAddWorker::UpdateStates() const
 		State->bModified = true;
 		State->TimeStamp = FDateTime::Now();
 	}
+	UE_LOG(LogFlexVault, Display, TEXT("FlexVault SCM: Marked %d files for add."), AddedFiles.Num());
 	return AddedFiles.Num() > 0;
 }

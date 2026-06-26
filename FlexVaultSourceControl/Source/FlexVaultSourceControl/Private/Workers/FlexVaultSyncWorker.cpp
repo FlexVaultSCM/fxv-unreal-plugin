@@ -15,11 +15,10 @@ FName FFlexVaultSyncWorker::GetName() const
 
 bool FFlexVaultSyncWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 {
-	const FString WorkspacePath = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
-	const FString BinaryPath = GetDefault<UFlexVaultSourceControlDeveloperSettings>()->BinaryPath;
+	UE_LOG(LogFlexVault, Display, TEXT("FlexVault SCM: Syncing workspace with remote..."));
 
 	TArray<FString> OutputLines;
-	bool bSucceeded = RunFlexVaultCommand(BinaryPath, WorkspacePath, TEXT("sync --unattended --no-color"), OutputLines, InCommand.ResultInfo);
+	bool bSucceeded = RunFlexVaultCommand(InCommand.BinaryPath, InCommand.WorkspacePath, TEXT("sync --unattended --no-color"), OutputLines, InCommand.ResultInfo);
 	
 	if (bSucceeded)
 	{
@@ -46,5 +45,6 @@ bool FFlexVaultSyncWorker::UpdateStates() const
 			PlatformFile.SetReadOnly(*File, true);
 		}
 	}
+	UE_LOG(LogFlexVault, Display, TEXT("FlexVault SCM: Synced %d files to latest revision."), SyncedFiles.Num());
 	return SyncedFiles.Num() > 0;
 }

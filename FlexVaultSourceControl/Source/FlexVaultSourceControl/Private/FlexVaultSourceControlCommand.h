@@ -49,6 +49,12 @@ public:
 	/** File list to operate on */
 	TArray<FString> Files;
 
+	/** Path to the CLI binary, resolved on the main thread */
+	FString BinaryPath;
+
+	/** Path to the workspace directory, resolved on the main thread */
+	FString WorkspacePath;
+
 	/** Standard output message logging collections */
 	FSourceControlResultInfo ResultInfo;
 };
