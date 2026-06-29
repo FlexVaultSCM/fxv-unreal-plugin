@@ -370,4 +370,65 @@ TSharedRef<FFlexVaultSourceControlRevision, ESPMode::ThreadSafe> CreateFlexVault
 	return Revision;
 }
 
+bool QueryFlexVaultFileHistoryDetails(
+	const FString& InBinaryPath,
+	const FString& InWorkspacePath,
+	TMap<FString, TArray<FFlexVaultRevisionDetail>>& OutFileRevisionMap,
+	FSourceControlResultInfo& OutResultInfo
+)
+{
+	TArray<FString> HistoryArgs = {
+		TEXT("history"),
+		TEXT("--format"),
+		TEXT("json"),
+		TEXT("--unattended"),
+		TEXT("--no-color")
+	};
+	TArray<FString> OutputLines;
+	bool bSucceeded = RunFlexVaultCommand(InBinaryPath, InWorkspacePath, HistoryArgs, OutputLines, OutResultInfo);
+	if (!bSucceeded)
+	{
+		return false;
+	}
+
+	TArray<FFlexVaultCommitMeta> Commits;
+	if (!ParseFlexVaultHistory(OutputLines, Commits, OutResultInfo))
+	{
+		return false;
+	}
+
+	for (const FFlexVaultCommitMeta& Commit : Commits)
+	{
+		FString ChangeId;
+		if (Commit.CommitType.Equals(TEXT("draft"), ESearchCase::IgnoreCase) && Commit.DraftRevision.IsSet())
+		{
+			ChangeId = FString::Printf(TEXT("%s.%llu.%llu"), *Commit.Branch, Commit.PublishedRevision.Get(0), Commit.DraftRevision.GetValue());
+		}
+		else
+		{
+			ChangeId = FString::Printf(TEXT("%s.%llu"), *Commit.Branch, Commit.PublishedRevision.Get(0));
+		}
+
+		TArray<FString> ChangeInfoArgs = {
+			TEXT("changeinfo"),
+			ChangeId,
+			TEXT("-e"),
+			TEXT("--unattended"),
+			TEXT("--no-color")
+		};
+		TArray<FString> ChangeInfoOutput;
+		FSourceControlResultInfo TempResultInfo;
+
+		// Suppress SCM Error logging for changeinfo on old/deleted draft revisions. When drafts (e.g. main.1.1) 
+		// are published, they are promoted to a permanent published revision (e.g. main.2) and the local draft metadata/assets 
+		// are pruned from the draft store, meaning changeinfo will return exit code 1.
+		if (RunFlexVaultCommand(InBinaryPath, InWorkspacePath, ChangeInfoArgs, ChangeInfoOutput, TempResultInfo, true))
+		{
+			ParseFlexVaultChangeInfo(ChangeInfoOutput, Commit, ChangeId, OutFileRevisionMap);
+		}
+	}
+
+	return true;
+}
+
 #undef LOCTEXT_NAMESPACE

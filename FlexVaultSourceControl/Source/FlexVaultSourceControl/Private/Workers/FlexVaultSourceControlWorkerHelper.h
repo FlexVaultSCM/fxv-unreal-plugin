@@ -73,3 +73,13 @@ TSharedRef<class FFlexVaultSourceControlRevision, ESPMode::ThreadSafe> CreateFle
 	class FFlexVaultSourceControlProvider& InProvider,
 	const FString& InFileName
 );
+
+/**
+ * Queries the full commit history and details for each commit, populating the file revision map.
+ */
+bool QueryFlexVaultFileHistoryDetails(
+	const FString& InBinaryPath,
+	const FString& InWorkspacePath,
+	TMap<FString, TArray<FFlexVaultRevisionDetail>>& OutFileRevisionMap,
+	FSourceControlResultInfo& OutResultInfo
+);
