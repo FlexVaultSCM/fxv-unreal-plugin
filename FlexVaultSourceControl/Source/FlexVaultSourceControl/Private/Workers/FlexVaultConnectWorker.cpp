@@ -13,7 +13,7 @@
 
 FName FFlexVaultConnectWorker::GetName() const
 {
-	return FName("Connect");
+	return FlexVaultSourceControlConstants::Connect;
 }
 
 bool FFlexVaultConnectWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
@@ -53,37 +53,8 @@ bool FFlexVaultConnectWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 		}
 
 		// Parse program metadata version and verify compatibility (requires 0.1.x)
-		const TSharedPtr<FJsonObject>* ProgramObj = nullptr;
-		FString CliVersionStr;
-		if (!Envelope->TryGetObjectField(TEXT("program"), ProgramObj) ||
-			!(*ProgramObj)->TryGetStringField(TEXT("version"), CliVersionStr))
+		if (!CheckFlexVaultVersion(Envelope, InCommand.ResultInfo))
 		{
-			InCommand.ResultInfo.ErrorMessages.Add(
-				LOCTEXT("ConnectMissingVersion", "FlexVault: Unable to determine CLI version from status output (missing program.version).")
-			);
-			return false;
-		}
-
-		TArray<FString> VersionParts;
-		CliVersionStr.ParseIntoArray(VersionParts, TEXT("."));
-		if (VersionParts.Num() < 2)
-		{
-			InCommand.ResultInfo.ErrorMessages.Add(FText::Format(
-				LOCTEXT("ConnectInvalidVersion", "Invalid FlexVault CLI version string '{0}'. The plugin requires version 0.1.x."),
-				FText::FromString(CliVersionStr)
-			));
-			return false;
-		}
-
-		int32 Major = FCString::Atoi(*VersionParts[0]);
-		int32 Minor = FCString::Atoi(*VersionParts[1]);
-
-		if (Major != 0 || Minor != 1)
-		{
-			InCommand.ResultInfo.ErrorMessages.Add(FText::Format(
-				LOCTEXT("ConnectVersionMismatch", "Incompatible FlexVault CLI version '{0}'. The plugin requires version 0.1.x."),
-				FText::FromString(CliVersionStr)
-			));
 			return false;
 		}
 

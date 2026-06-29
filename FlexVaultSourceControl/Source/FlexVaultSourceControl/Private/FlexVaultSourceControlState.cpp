@@ -261,6 +261,7 @@ void FFlexVaultSourceControlState::Update(const FFlexVaultSourceControlState& In
 	if (InOther.State != EFlexVaultState::DontCare)
 	{
 		State = InOther.State;
+		bModified = InOther.bModified;
 	}
 
 	if (InOther.DepotRevNumber != INVALID_REVISION)
@@ -273,7 +274,6 @@ void FFlexVaultSourceControlState::Update(const FFlexVaultSourceControlState& In
 		LocalRevNumber = InOther.LocalRevNumber;
 	}
 
-	bModified |= InOther.bModified;
 	bBinary = InOther.bBinary;
 	bExclusiveCheckout = InOther.bExclusiveCheckout;
 

@@ -16,7 +16,7 @@
 
 FName FFlexVaultUpdateStatusWorker::GetName() const
 {
-	return FName("UpdateStatus");
+	return FlexVaultSourceControlConstants::UpdateStatus;
 }
 
 bool FFlexVaultUpdateStatusWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
@@ -233,6 +233,7 @@ bool FFlexVaultUpdateStatusWorker::UpdateStates() const
 	TArray<FSourceControlStateRef> CachedStates = Provider.GetCachedStateByPredicate([](const FSourceControlStateRef&){ return true; });
 	UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault: UpdateStates() synchronizing all %d cached states with repository SCM status."), CachedStates.Num());
 	
+	bool bStatesUpdated = false;
 	for (const FSourceControlStateRef& StateRef : CachedStates)
 	{
 		FFlexVaultSourceControlState* CachedState = static_cast<FFlexVaultSourceControlState*>(&StateRef.Get());
@@ -240,23 +241,38 @@ bool FFlexVaultUpdateStatusWorker::UpdateStates() const
 		FString RelativePath = GetRelativeWorkspacePath(File, WorkspacePath);
 
 		FFlexVaultSourceControlState NewState(File);
-		NewState.DepotRevNumber = DepotRevision;
-		NewState.LocalRevNumber = LocalRevision;
 		NewState.TimeStamp = FDateTime::Now();
 
-		if (const EFlexVaultState::Type* FoundState = ModifiedFiles.Find(RelativePath))
+		// Update the state based on whether the file is under the FlexVault workspace or not.
+		// This prevents unnecessary SCM change notifications and asset reloads in the Unreal Editor.
+		const bool bIsUnderWorkspace = FPaths::IsUnderDirectory(File, WorkspacePath);
+		if (bIsUnderWorkspace)
 		{
-			NewState.SetState(*FoundState);
-			NewState.bModified = true;
-		}
-		else if (!FPlatformFileManager::Get().GetPlatformFile().FileExists(*File))
-		{
-			NewState.SetState(EFlexVaultState::NotInRepository);
+			NewState.DepotRevNumber = DepotRevision;
+			NewState.LocalRevNumber = LocalRevision;
+
+			if (const EFlexVaultState::Type* FoundState = ModifiedFiles.Find(RelativePath))
+			{
+				NewState.SetState(*FoundState);
+				NewState.bModified = true;
+			}
+			else if (!FPlatformFileManager::Get().GetPlatformFile().FileExists(*File))
+			{
+				NewState.SetState(EFlexVaultState::NotInRepository);
+			}
+			else
+			{
+				NewState.SetState(EFlexVaultState::Unchanged);
+				NewState.bModified = false;
+			}
 		}
 		else
 		{
-			NewState.SetState(EFlexVaultState::Unchanged);
-			NewState.bModified = false;
+			// This file is outside the FlexVault workspace (e.g. an Engine plugin or Editor asset).
+			// Do NOT modify its SCM state. It starts as DontCare and must stay that way.
+			// Transitioning it to NotInRepository would be detected as a state change, causing
+			// Unreal to broadcast SCM change notifications and reload engine assets unnecessarily.
+			continue;
 		}
 
 		if (const auto* FoundHistory = FileHistories.Find(File))
@@ -264,8 +280,24 @@ bool FFlexVaultUpdateStatusWorker::UpdateStates() const
 			NewState.History = *FoundHistory;
 		}
 
-		CachedState->Update(NewState, &NewState.TimeStamp);
+		// Only perform update and register changes if the state has actually changed.
+		if (CachedState->State != NewState.State ||
+			CachedState->bModified != NewState.bModified ||
+			CachedState->DepotRevNumber != NewState.DepotRevNumber ||
+			CachedState->LocalRevNumber != NewState.LocalRevNumber ||
+			CachedState->History.Num() != NewState.History.Num())
+		{
+			UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault SCM state changed for: %s (UnderWorkspace: %d)\n"
+				"  Old: State=%d, bModified=%d, DepotRev=%d, LocalRev=%d, HistoryCount=%d\n"
+				"  New: State=%d, bModified=%d, DepotRev=%d, LocalRev=%d, HistoryCount=%d"),
+				*File, bIsUnderWorkspace,
+				(int32)CachedState->State, CachedState->bModified, CachedState->DepotRevNumber, CachedState->LocalRevNumber, CachedState->History.Num(),
+				(int32)NewState.State, NewState.bModified, NewState.DepotRevNumber, NewState.LocalRevNumber, NewState.History.Num());
+
+			CachedState->Update(NewState, &NewState.TimeStamp);
+			bStatesUpdated = true;
+		}
 	}
 
-	return CachedStates.Num() > 0;
+	return bStatesUpdated;
 }

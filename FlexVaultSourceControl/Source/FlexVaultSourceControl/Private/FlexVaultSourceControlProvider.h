@@ -7,6 +7,19 @@
 #include "ISourceControlState.h"
 #include "FlexVaultSourceControlState.h"
 
+namespace FlexVaultSourceControlConstants
+{
+	extern const FName Connect;
+	extern const FName UpdateStatus;
+	extern const FName CheckOut;
+	extern const FName CheckIn;
+	extern const FName MarkForAdd;
+	extern const FName Delete;
+	extern const FName Revert;
+	extern const FName Sync;
+	extern const FName GetSourceControlRevisionInfo;
+}
+
 class FFlexVaultSourceControlCommand;
 class IFlexVaultSourceControlWorker;
 

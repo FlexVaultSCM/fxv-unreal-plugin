@@ -7,7 +7,7 @@
 
 FName FFlexVaultCheckOutWorker::GetName() const
 {
-	return FName("CheckOut");
+	return FlexVaultSourceControlConstants::CheckOut;
 }
 
 bool FFlexVaultCheckOutWorker::Execute(FFlexVaultSourceControlCommand& InCommand)

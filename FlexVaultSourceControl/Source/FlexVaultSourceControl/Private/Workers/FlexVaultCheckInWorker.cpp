@@ -13,7 +13,7 @@
 
 FName FFlexVaultCheckInWorker::GetName() const
 {
-	return FName("CheckIn");
+	return FlexVaultSourceControlConstants::CheckIn;
 }
 
 bool FFlexVaultCheckInWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
@@ -78,6 +78,7 @@ bool FFlexVaultCheckInWorker::UpdateStates() const
 		State->SetState(EFlexVaultState::Unchanged);
 		State->bModified = false;
 		State->TimeStamp = FDateTime::Now();
+		UE_LOG(LogFlexVault, Log, TEXT("FlexVault CheckIn: Updated state for committed file: %s"), *File);
 
 		// Lock back to read-only in the filesystem if configured
 		if (Provider.UsesLocalReadOnlyState())

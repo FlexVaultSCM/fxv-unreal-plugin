@@ -2,10 +2,6 @@
 
 #include "FlexVaultSourceControlProvider.h"
 #include "FlexVaultSourceControlDeveloperSettings.h"
-// TODO: Refer to the plugin root TODO.md for pending work, including:
-//   1. Replacing the lock manager stub in checkouts with real remote lock server coordination.
-//   2. Implementing SFlexVaultSourceControlSettings Slate widget for graphical configuration.
-//   3. Resolving historical file diff revision logs via parsing history details.
 #include "FlexVaultSourceControlCommand.h"
 #include "Workers/FlexVaultConnectWorker.h"
 #include "Workers/FlexVaultUpdateStatusWorker.h"
@@ -33,6 +29,19 @@
 #define LOCTEXT_NAMESPACE "FlexVaultSourceControl"
 
 DEFINE_LOG_CATEGORY(LogFlexVault);
+
+namespace FlexVaultSourceControlConstants
+{
+	const FName Connect(TEXT("Connect"));
+	const FName UpdateStatus(TEXT("UpdateStatus"));
+	const FName CheckOut(TEXT("CheckOut"));
+	const FName CheckIn(TEXT("CheckIn"));
+	const FName MarkForAdd(TEXT("MarkForAdd"));
+	const FName Delete(TEXT("Delete"));
+	const FName Revert(TEXT("Revert"));
+	const FName Sync(TEXT("Sync"));
+	const FName GetSourceControlRevisionInfo(TEXT("GetSourceControlRevisionInfo"));
+}
 
 static FName ProviderName("FlexVault");
 
@@ -130,7 +139,7 @@ ECommandResult::Type FFlexVaultSourceControlProvider::GetState(const TArray<FStr
 			bool bAlreadyInFlight = false;
 			for (const FFlexVaultSourceControlCommand* Command : CommandQueue)
 			{
-				if (Command->Operation->GetName() == FName("UpdateStatus") && Command->Files.Contains(File))
+				if (Command->Operation->GetName() == FlexVaultSourceControlConstants::UpdateStatus && Command->Files.Contains(File))
 				{
 					bAlreadyInFlight = true;
 					break;
@@ -187,7 +196,7 @@ ECommandResult::Type FFlexVaultSourceControlProvider::Execute(
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(FFlexVaultSourceControlProvider::Execute);
 
-	if (!IsEnabled() && InOperation->GetName() != FName("Connect"))
+	if (!IsEnabled() && InOperation->GetName() != FlexVaultSourceControlConstants::Connect)
 	{
 		return ECommandResult::Failed;
 	}
@@ -214,15 +223,15 @@ ECommandResult::Type FFlexVaultSourceControlProvider::Execute(
 bool FFlexVaultSourceControlProvider::CanExecuteOperation(const FSourceControlOperationRef& InOperation) const
 {
 	FName OpName = InOperation->GetName();
-	return OpName == FName("Connect") ||
-		   OpName == FName("UpdateStatus") ||
-		   OpName == FName("CheckOut") ||
-		   OpName == FName("CheckIn") ||
-		   OpName == FName("MarkForAdd") ||
-		   OpName == FName("Delete") ||
-		   OpName == FName("Revert") ||
-		   OpName == FName("Sync") ||
-		   OpName == FName("GetSourceControlRevisionInfo");
+	return OpName == FlexVaultSourceControlConstants::Connect ||
+		   OpName == FlexVaultSourceControlConstants::UpdateStatus ||
+		   OpName == FlexVaultSourceControlConstants::CheckOut ||
+		   OpName == FlexVaultSourceControlConstants::CheckIn ||
+		   OpName == FlexVaultSourceControlConstants::MarkForAdd ||
+		   OpName == FlexVaultSourceControlConstants::Delete ||
+		   OpName == FlexVaultSourceControlConstants::Revert ||
+		   OpName == FlexVaultSourceControlConstants::Sync ||
+		   OpName == FlexVaultSourceControlConstants::GetSourceControlRevisionInfo;
 }
 
 void FFlexVaultSourceControlProvider::Tick()
@@ -332,39 +341,39 @@ TSharedPtr<IFlexVaultSourceControlWorker, ESPMode::ThreadSafe> FFlexVaultSourceC
 {
 	// UE 5.8: MakeShared<T>(*this) fails MSVC template deduction via UE_REWRITE-annotated Forward when
 	// the argument is an lvalue reference. Use explicit TSharedPtr construction from raw pointer instead.
-	if (InOperationName == FName("Connect"))
+	if (InOperationName == FlexVaultSourceControlConstants::Connect)
 	{
 		return TSharedPtr<IFlexVaultSourceControlWorker, ESPMode::ThreadSafe>(new FFlexVaultConnectWorker(*this));
 	}
-	else if (InOperationName == FName("UpdateStatus"))
+	else if (InOperationName == FlexVaultSourceControlConstants::UpdateStatus)
 	{
 		return TSharedPtr<IFlexVaultSourceControlWorker, ESPMode::ThreadSafe>(new FFlexVaultUpdateStatusWorker(*this));
 	}
-	else if (InOperationName == FName("CheckOut"))
+	else if (InOperationName == FlexVaultSourceControlConstants::CheckOut)
 	{
 		return TSharedPtr<IFlexVaultSourceControlWorker, ESPMode::ThreadSafe>(new FFlexVaultCheckOutWorker(*this));
 	}
-	else if (InOperationName == FName("CheckIn"))
+	else if (InOperationName == FlexVaultSourceControlConstants::CheckIn)
 	{
 		return TSharedPtr<IFlexVaultSourceControlWorker, ESPMode::ThreadSafe>(new FFlexVaultCheckInWorker(*this));
 	}
-	else if (InOperationName == FName("MarkForAdd"))
+	else if (InOperationName == FlexVaultSourceControlConstants::MarkForAdd)
 	{
 		return TSharedPtr<IFlexVaultSourceControlWorker, ESPMode::ThreadSafe>(new FFlexVaultMarkForAddWorker(*this));
 	}
-	else if (InOperationName == FName("Delete"))
+	else if (InOperationName == FlexVaultSourceControlConstants::Delete)
 	{
 		return TSharedPtr<IFlexVaultSourceControlWorker, ESPMode::ThreadSafe>(new FFlexVaultDeleteWorker(*this));
 	}
-	else if (InOperationName == FName("Revert"))
+	else if (InOperationName == FlexVaultSourceControlConstants::Revert)
 	{
 		return TSharedPtr<IFlexVaultSourceControlWorker, ESPMode::ThreadSafe>(new FFlexVaultRevertWorker(*this));
 	}
-	else if (InOperationName == FName("Sync"))
+	else if (InOperationName == FlexVaultSourceControlConstants::Sync)
 	{
 		return TSharedPtr<IFlexVaultSourceControlWorker, ESPMode::ThreadSafe>(new FFlexVaultSyncWorker(*this));
 	}
-	else if (InOperationName == FName("GetSourceControlRevisionInfo"))
+	else if (InOperationName == FlexVaultSourceControlConstants::GetSourceControlRevisionInfo)
 	{
 		return TSharedPtr<IFlexVaultSourceControlWorker, ESPMode::ThreadSafe>(new FFlexVaultGetSourceControlRevisionInfoWorker(*this));
 	}

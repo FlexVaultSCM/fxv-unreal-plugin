@@ -42,6 +42,14 @@ bool RunFlexVaultCommand(
 );
 
 /**
+ * Verifies that the FlexVault CLI version in the JSON envelope is compatible (requires 0.1.x).
+ */
+bool CheckFlexVaultVersion(
+	const TSharedPtr<class FJsonObject>& InEnvelope,
+	FSourceControlResultInfo& OutResultInfo
+);
+
+/**
  * Parses the JSON output of 'fxv history' into commit metadata structures.
  */
 bool ParseFlexVaultHistory(

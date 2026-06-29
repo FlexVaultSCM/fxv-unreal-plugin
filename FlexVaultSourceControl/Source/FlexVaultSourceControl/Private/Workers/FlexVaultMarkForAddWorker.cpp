@@ -5,7 +5,7 @@
 
 FName FFlexVaultMarkForAddWorker::GetName() const
 {
-	return FName("MarkForAdd");
+	return FlexVaultSourceControlConstants::MarkForAdd;
 }
 
 bool FFlexVaultMarkForAddWorker::Execute(FFlexVaultSourceControlCommand& InCommand)

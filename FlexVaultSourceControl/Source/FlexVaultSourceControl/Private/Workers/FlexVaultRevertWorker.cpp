@@ -7,7 +7,7 @@
 
 FName FFlexVaultRevertWorker::GetName() const
 {
-	return FName("Revert");
+	return FlexVaultSourceControlConstants::Revert;
 }
 
 bool FFlexVaultRevertWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
@@ -37,6 +37,7 @@ bool FFlexVaultRevertWorker::UpdateStates() const
 		State->SetState(EFlexVaultState::Unchanged);
 		State->bModified = false;
 		State->TimeStamp = FDateTime::Now();
+		UE_LOG(LogFlexVault, Log, TEXT("FlexVault Revert: Updated state for reverted file: %s"), *File);
 
 		// Enforce read-only state in the filesystem if configured
 		if (Provider.UsesLocalReadOnlyState())

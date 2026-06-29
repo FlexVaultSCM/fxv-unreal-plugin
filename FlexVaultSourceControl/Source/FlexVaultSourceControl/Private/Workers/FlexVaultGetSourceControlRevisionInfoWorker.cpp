@@ -12,7 +12,7 @@
 
 FName FFlexVaultGetSourceControlRevisionInfoWorker::GetName() const
 {
-	return FName("GetSourceControlRevisionInfo");
+	return FlexVaultSourceControlConstants::GetSourceControlRevisionInfo;
 }
 
 bool FFlexVaultGetSourceControlRevisionInfoWorker::Execute(FFlexVaultSourceControlCommand& InCommand)

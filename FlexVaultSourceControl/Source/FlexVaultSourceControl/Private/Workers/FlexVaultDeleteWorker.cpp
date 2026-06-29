@@ -8,7 +8,7 @@
 
 FName FFlexVaultDeleteWorker::GetName() const
 {
-	return FName("Delete");
+	return FlexVaultSourceControlConstants::Delete;
 }
 
 bool FFlexVaultDeleteWorker::Execute(FFlexVaultSourceControlCommand& InCommand)

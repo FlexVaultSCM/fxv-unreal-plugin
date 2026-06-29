@@ -11,7 +11,7 @@
 
 FName FFlexVaultSyncWorker::GetName() const
 {
-	return FName("Sync");
+	return FlexVaultSourceControlConstants::Sync;
 }
 
 bool FFlexVaultSyncWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
@@ -82,6 +82,7 @@ bool FFlexVaultSyncWorker::UpdateStates() const
 			State->SetState(EFlexVaultState::Unchanged);
 			State->bModified = false;
 			State->TimeStamp = FDateTime::Now();
+			UE_LOG(LogFlexVault, Log, TEXT("FlexVault Sync: Updated state for synced file: %s"), *File);
 
 			if (Provider.UsesLocalReadOnlyState())
 			{
