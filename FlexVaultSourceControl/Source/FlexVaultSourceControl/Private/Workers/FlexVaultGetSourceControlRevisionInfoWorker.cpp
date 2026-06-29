@@ -96,13 +96,11 @@ bool FFlexVaultGetSourceControlRevisionInfoWorker::Execute(FFlexVaultSourceContr
 								}
 
 								EntryObj->TryGetStringField(TEXT("description"), Meta.Description);
-								// TODO: Clean up expected author schema once CLI/backend consistently outputs a unified field (e.g. 'author')
+								// author_id is the canonical identifier and author_display_name is the display name.
+								// We prefer author_display_name for display, with a fallback to author_id.
 								if (!EntryObj->TryGetStringField(TEXT("author_display_name"), Meta.Author))
 								{
-									if (!EntryObj->TryGetStringField(TEXT("author"), Meta.Author))
-									{
-										EntryObj->TryGetStringField(TEXT("author_id"), Meta.Author);
-									}
+									EntryObj->TryGetStringField(TEXT("author_id"), Meta.Author);
 								}
 
 								int64 TimestampMillis = 0;
@@ -154,6 +152,7 @@ bool FFlexVaultGetSourceControlRevisionInfoWorker::Execute(FFlexVaultSourceContr
 		// are pruned from the draft store, meaning changeinfo will return exit code 1.
 		if (RunFlexVaultCommand(InCommand.BinaryPath, InCommand.WorkspacePath, ChangeInfoParams, ChangeInfoOutput, TempResultInfo, true))
 		{
+			// TEMP: Plaintext parsing of changeinfo output is temporary until the SCM CLI supports structured JSON output for changeinfo
 			for (const FString& Line : ChangeInfoOutput)
 			{
 				FString TrimmedLine = Line.TrimStartAndEnd();
