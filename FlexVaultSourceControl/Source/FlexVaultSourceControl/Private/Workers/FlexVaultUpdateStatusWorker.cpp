@@ -212,41 +212,7 @@ bool FFlexVaultUpdateStatusWorker::Execute(FFlexVaultSourceControlCommand& InCom
 		}
 	}
 
-	// ── Build StatesToUpdate from InCommand.Files ──────────────────────────────────────────────────
-	StatesToUpdate.Empty();
-	for (const FString& File : InCommand.Files)
-	{
-		FString RelativePath = GetRelativeWorkspacePath(File, WorkspacePath);
-
-		FFlexVaultSourceControlState State(File);
-		State.DepotRevNumber = DepotRevision;
-		State.LocalRevNumber = LocalRevision;
-		State.TimeStamp = FDateTime::Now();
-
-		if (const EFlexVaultState::Type* FoundState = ModifiedFiles.Find(RelativePath))
-		{
-			State.SetState(*FoundState);
-			State.bModified = true;
-		}
-		else if (!FPlatformFileManager::Get().GetPlatformFile().FileExists(*File))
-		{
-			State.SetState(EFlexVaultState::NotInRepository);
-		}
-		else
-		{
-			State.SetState(EFlexVaultState::ReadOnly);
-			State.bModified = false;
-		}
-
-		if (const auto* FoundHistory = FileHistories.Find(File))
-		{
-			State.History = *FoundHistory;
-		}
-
-		StatesToUpdate.Add(State);
-	}
-
-	UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault: Finished processing fxv output. Found %d modified files in repository. Queued %d requested files for state updates."), ModifiedFiles.Num(), StatesToUpdate.Num());
+	UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault: Finished processing fxv output. Found %d modified files in repository."), ModifiedFiles.Num());
 
 	return true;
 }
