@@ -37,103 +37,24 @@ bool FFlexVaultGetSourceControlRevisionInfoWorker::Execute(FFlexVaultSourceContr
 		return true;
 	}
 
-	// 1. Fetch branch history (limit to 30 most recent changes to keep execution fast)
+	// 1. Fetch entire branch history to display the complete revision timeline in the editor
 	TArray<FString> OutputLines;
-	bool bSucceeded = RunFlexVaultCommand(InCommand.BinaryPath, InCommand.WorkspacePath, TEXT("history --format json --num 30 --unattended --no-color"), OutputLines, InCommand.ResultInfo);
+	bool bSucceeded = RunFlexVaultCommand(InCommand.BinaryPath, InCommand.WorkspacePath, TEXT("history --format json --unattended --no-color"), OutputLines, InCommand.ResultInfo);
 	if (!bSucceeded)
 	{
 		return false;
 	}
 
-	struct FCommitMeta
+	TArray<FFlexVaultCommitMeta> Commits;
+	if (!ParseFlexVaultHistory(OutputLines, Commits, InCommand.ResultInfo))
 	{
-		FString Branch;
-		TOptional<uint64> PublishedRevision;
-		FString CommitType;
-		TOptional<uint64> DraftRevision;
-		FString Description;
-		FString Author;
-		FDateTime Date;
-	};
-
-	TArray<FCommitMeta> Commits;
-
-	// Parse JSON output
-	FString OutputString = FString::Join(OutputLines, TEXT("\n"));
-	TSharedPtr<FJsonObject> JsonEnvelope;
-	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(OutputString);
-	if (FJsonSerializer::Deserialize(Reader, JsonEnvelope) && JsonEnvelope.IsValid())
-	{
-		TSharedPtr<FJsonObject> MessageObj = JsonEnvelope->GetObjectField(TEXT("message"));
-		if (MessageObj.IsValid())
-		{
-			TSharedPtr<FJsonObject> PayloadObj = MessageObj->GetObjectField(TEXT("payload"));
-			if (PayloadObj.IsValid())
-			{
-				const TArray<TSharedPtr<FJsonValue>>* EntriesArray;
-				if (PayloadObj->TryGetArrayField(TEXT("entries"), EntriesArray))
-				{
-					for (const TSharedPtr<FJsonValue>& EntryVal : *EntriesArray)
-					{
-						TSharedPtr<FJsonObject> EntryObj = EntryVal->AsObject();
-						if (EntryObj.IsValid())
-						{
-							TSharedPtr<FJsonObject> CommitObj = EntryObj->GetObjectField(TEXT("commit"));
-							if (CommitObj.IsValid())
-							{
-								FCommitMeta Meta;
-								CommitObj->TryGetStringField(TEXT("branch"), Meta.Branch);
-								
-								uint64 ParsedRevision = 0;
-								if (CommitObj->TryGetNumberField(TEXT("revision"), ParsedRevision))
-								{
-									Meta.PublishedRevision = ParsedRevision;
-								}
-
-								CommitObj->TryGetStringField(TEXT("type"), Meta.CommitType);
-								uint64 ParsedDraftRevision = 0;
-								if (CommitObj->TryGetNumberField(TEXT("draft_revision"), ParsedDraftRevision))
-								{
-									Meta.DraftRevision = ParsedDraftRevision;
-								}
-
-								EntryObj->TryGetStringField(TEXT("description"), Meta.Description);
-								// author_id is the canonical identifier and author_display_name is the display name.
-								// We prefer author_display_name for display, with a fallback to author_id.
-								if (!EntryObj->TryGetStringField(TEXT("author_display_name"), Meta.Author))
-								{
-									EntryObj->TryGetStringField(TEXT("author_id"), Meta.Author);
-								}
-
-								int64 TimestampMillis = 0;
-								EntryObj->TryGetNumberField(TEXT("timestamp_millis"), TimestampMillis);
-								Meta.Date = FDateTime::FromUnixTimestamp(TimestampMillis / 1000);
-
-								Commits.Add(Meta);
-							}
-						}
-					}
-				}
-			}
-		}
+		return false;
 	}
 
 	// 2. Query file-level details for each commit using `changeinfo`
-	struct FRevDetail
-	{
-		int32 RevisionNumber;
-		FString RevisionSpec;
-		FString Description;
-		FString UserName;
-		FString Action; // TODO : Map FlexVault action strings to Unreal's standard action strings (Add, Edit, Delete)
-		FDateTime Date;
-		FString ContentAddress;
-		int64 FileSize;
-	};
+	TMap<FString, TArray<FFlexVaultRevisionDetail>> FileRevisionMap;
 
-	TMap<FString, TArray<FRevDetail>> FileRevisionMap;
-
-	for (const FCommitMeta& Commit : Commits)
+	for (const FFlexVaultCommitMeta& Commit : Commits)
 	{
 		FString ChangeId;
 		if (Commit.CommitType.Equals(TEXT("draft"), ESearchCase::IgnoreCase) && Commit.DraftRevision.IsSet())
@@ -154,56 +75,7 @@ bool FFlexVaultGetSourceControlRevisionInfoWorker::Execute(FFlexVaultSourceContr
 		// are pruned from the draft store, meaning changeinfo will return exit code 1.
 		if (RunFlexVaultCommand(InCommand.BinaryPath, InCommand.WorkspacePath, ChangeInfoParams, ChangeInfoOutput, TempResultInfo, true))
 		{
-			// TODO: Plaintext parsing of changeinfo output is temporary until the SCM CLI supports structured JSON output for changeinfo
-			for (const FString& Line : ChangeInfoOutput)
-			{
-				FString TrimmedLine = Line.TrimStartAndEnd();
-				TArray<FString> Tokens;
-				TrimmedLine.ParseIntoArrayWS(Tokens);
-				if (Tokens.Num() >= 4)
-				{
-					FString ActionStr = Tokens[0];
-					FString HashStr = Tokens[1];
-					int64 ParsedSize = FCString::Atoi64(*Tokens[2]);
-					
-					FString RelPath = Tokens[3];
-					for (int32 i = 4; i < Tokens.Num(); ++i)
-					{
-						RelPath += TEXT(" ") + Tokens[i];
-					}
-					RelPath.ReplaceInline(TEXT("\\"), TEXT("/"));
-
-					FRevDetail Rev;
-					Rev.RevisionNumber = (int32)Commit.PublishedRevision.Get(0);
-					Rev.RevisionSpec = ChangeId;
-					Rev.Description = Commit.Description;
-					Rev.UserName = Commit.Author;
-					Rev.FileSize = ParsedSize;
-					
-					// Map action strings: Added -> Add, Modified -> Edit, Deleted -> Delete
-					if (ActionStr.Equals(TEXT("Added"), ESearchCase::IgnoreCase))
-					{
-						Rev.Action = TEXT("Add");
-					}
-					else if (ActionStr.Equals(TEXT("Modified"), ESearchCase::IgnoreCase))
-					{
-						Rev.Action = TEXT("Edit");
-					}
-					else if (ActionStr.Equals(TEXT("Deleted"), ESearchCase::IgnoreCase))
-					{
-						Rev.Action = TEXT("Delete");
-					}
-					else
-					{
-						Rev.Action = ActionStr;
-					}
-
-					Rev.Date = Commit.Date;
-					Rev.ContentAddress = FString::Printf(TEXT("CONTENT:%s"), *HashStr);
-
-					FileRevisionMap.FindOrAdd(RelPath.ToLower()).Add(Rev);
-				}
-			}
+			ParseFlexVaultChangeInfo(ChangeInfoOutput, Commit, ChangeId, FileRevisionMap);
 		}
 	}
 
@@ -218,10 +90,10 @@ bool FFlexVaultGetSourceControlRevisionInfoWorker::Execute(FFlexVaultSourceContr
 		FFlexVaultSourceControlState State(File);
 		State.TimeStamp = FDateTime::Now();
 
-		const TArray<FRevDetail>* RevisionsPtr = FileRevisionMap.Find(RelativePath.ToLower());
+		const TArray<FFlexVaultRevisionDetail>* RevisionsPtr = FileRevisionMap.Find(RelativePath.ToLower());
 		if (RevisionsPtr != nullptr)
 		{
-			for (const FRevDetail& Rev : *RevisionsPtr)
+			for (const FFlexVaultRevisionDetail& Rev : *RevisionsPtr)
 			{
 				TSharedRef<FFlexVaultSourceControlRevision, ESPMode::ThreadSafe> Revision = MakeShared<FFlexVaultSourceControlRevision>(Provider);
 				Revision->FileName = File;
@@ -230,11 +102,12 @@ bool FFlexVaultGetSourceControlRevisionInfoWorker::Execute(FFlexVaultSourceContr
 				Revision->Description = Rev.Description;
 				Revision->UserName = Rev.UserName;
 				Revision->Action = Rev.Action;
+				Revision->Date = Rev.Date;
+				Revision->ContentAddress = Rev.ContentAddress;
 				Revision->FileSize = (int32)FMath::Min<int64>(Rev.FileSize, (int64)MAX_int32);
 				State.History.Add(Revision);
 			}
 		}
-
 
 		StatesToUpdate.Add(State);
 	}
