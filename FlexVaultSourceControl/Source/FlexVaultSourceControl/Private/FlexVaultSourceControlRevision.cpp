@@ -17,12 +17,20 @@ FFlexVaultSourceControlRevision::FFlexVaultSourceControlRevision(FFlexVaultSourc
 {
 }
 
+// Called when retrieving historical file content for SCM operations (e.g., diffing 
+// historical revisions in the history visualizer, opening past asset versions, or reverting).
 bool FFlexVaultSourceControlRevision::Get(FString& InOutFilename, EConcurrency::Type InConcurrency) const
 {
 	if (ContentAddress.IsEmpty())
 	{
 		return false;
 	}
+
+	// TODO: Replace this function with a workspace-aware SCM command (e.g., `fxv cat`).
+	// The current implementation uses `repo dump-object` against the local `draft_repo` directory,
+	// which will fail for published objects not cached locally and can mess up the local snapshot state.
+	// Returning false early until this function is revisited with a proper workspace integration.
+	return false;
 
 	FString AbsoluteFileName;
 	if (InOutFilename.Len() > 0)
@@ -31,6 +39,9 @@ bool FFlexVaultSourceControlRevision::Get(FString& InOutFilename, EConcurrency::
 	}
 	else
 	{
+		// Unreal Engine passes an empty InOutFilename when it wants the source control provider
+		// to write the revision to a temporary file (e.g. for diffing). In this case, we
+		// generate a unique temporary file path within the engine's diff directory.
 		const FString File = FString::Printf(TEXT("%s-Rev-%s-"), *FPaths::GetBaseFilename(FileName), *Revision);
 		const FString Extension = TEXT(".") + FPaths::GetExtension(FileName);
 		const FString TempFileName = FPaths::CreateTempFilename(*FPaths::DiffDir(), *File, *Extension);
