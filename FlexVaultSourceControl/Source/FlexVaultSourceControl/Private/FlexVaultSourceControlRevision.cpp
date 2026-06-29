@@ -32,6 +32,7 @@ bool FFlexVaultSourceControlRevision::Get(FString& InOutFilename, EConcurrency::
 	// Returning false early until this function is revisited with a proper workspace integration.
 	return false;
 
+#if 0
 	FString AbsoluteFileName;
 	if (InOutFilename.Len() > 0)
 	{
@@ -141,6 +142,7 @@ bool FFlexVaultSourceControlRevision::Get(FString& InOutFilename, EConcurrency::
 	}
 
 	return false;
+#endif
 }
 
 const FString& FFlexVaultSourceControlRevision::GetFilename() const
@@ -148,6 +150,12 @@ const FString& FFlexVaultSourceControlRevision::GetFilename() const
 	return FileName;
 }
 
+// NOTE: RevisionNumber alone does not fully map to a FlexVault revision.
+// A fully qualified FlexVault revision requires taking into account the branch name, 
+// the published revision number, and the optional draft revision number (e.g., "main.1.2").
+// Because ISourceControlRevision::GetRevisionNumber() is a pure virtual function (= 0) in the 
+// Unreal SCM interface, we must implement it (e.g., for SCM UI sorting), but it is lossy.
+// Use GetRevision() to get the full branch-relative revision string instead.
 int32 FFlexVaultSourceControlRevision::GetRevisionNumber() const
 {
 	return RevisionNumber;
@@ -184,6 +192,8 @@ const FDateTime& FFlexVaultSourceControlRevision::GetDate() const
 	return Date;
 }
 
+// NOTE: Pure virtual override required by ISourceControlRevision. 
+// Lossy integer representation of the revision (equivalent to Perforce/SVN changelists). See GetRevisionNumber() for details.
 int32 FFlexVaultSourceControlRevision::GetCheckInIdentifier() const
 {
 	return RevisionNumber;
