@@ -12,12 +12,19 @@ bool FFlexVaultMarkForAddWorker::Execute(FFlexVaultSourceControlCommand& InComma
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(FFlexVaultMarkForAddWorker::Execute);
 
-	// FlexVault Mapping:
-	// FlexVault automatically detects untracked filesystem files as potential additions 
-	// (excluding paths ignored via '.fxvignore') during directory scans.
-	// Because of this, marking files for addition does not need to invoke any CLI command.
-	// Instead, the plugin transitions the file's provider status to 'EFlexVaultState::OpenForAdd'.
-	// These files will automatically be staged and chunked during the next local 'fxv snapshot'.
+	// FlexVault SCM Mapping & Unreal Integration:
+	// 1. Unreal SCM Interface Requirement: Unreal Engine Editor explicitly invokes the "MarkForAdd" 
+	//    operation when a developer creates a new asset, imports content, or right-clicks an untracked 
+	//    asset in the Content Browser and selects "Add To Source Control". Implementing this worker is 
+	//    mandatory to satisfy the engine SCM API and prevent editor errors.
+	// 2. No CLI Stage Command Required: Unlike Git ('git add') or Perforce ('p4 add'), FlexVault 
+	//    automatically discovers new/untracked files during its normal directory scans (excluding paths 
+	//    ignored by '.fxvignore') and stages them automatically on the next 'fxv snapshot'. Thus, no 
+	//    external CLI command is executed here.
+	// 3. UI Synchronization: The primary function of this worker is to immediately transition the file's 
+	//    cached state in the provider's memory to 'EFlexVaultState::OpenForAdd'. This instantly updates 
+	//    the Content Browser UI (displaying the green '+' icon) without requiring a slow, full 
+	//    repository-wide status scan.
 
 	AddedFiles = InCommand.Files;
 	return AddedFiles.Num() > 0;
