@@ -12,6 +12,16 @@ FName FFlexVaultDeleteWorker::GetName() const
 
 bool FFlexVaultDeleteWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(FFlexVaultDeleteWorker::Execute);
+
+	// FlexVault Mapping:
+	// FlexVault automatically tracks deletions by comparing the working directory structure
+	// against the repository commit tree
+	// Because of this, deleting a file does not require invoking any CLI command.
+	// We simply delete the file from the local filesystem (via 'PlatformFile.DeleteFile').
+	// The next 'fxv status' or 'fxv snapshot' execution will automatically identify and register
+	// the file as deleted.
+
 	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
 
 	DeletedFiles.Empty();

@@ -10,6 +10,15 @@ FName FFlexVaultMarkForAddWorker::GetName() const
 
 bool FFlexVaultMarkForAddWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(FFlexVaultMarkForAddWorker::Execute);
+
+	// FlexVault Mapping:
+	// FlexVault automatically detects untracked filesystem files as potential additions 
+	// (excluding paths ignored via '.fxvignore') during directory scans.
+	// Because of this, marking files for addition does not need to invoke any CLI command.
+	// Instead, the plugin transitions the file's provider status to 'EFlexVaultState::OpenForAdd'.
+	// These files will automatically be staged and chunked during the next local 'fxv snapshot'.
+
 	AddedFiles = InCommand.Files;
 	return AddedFiles.Num() > 0;
 }

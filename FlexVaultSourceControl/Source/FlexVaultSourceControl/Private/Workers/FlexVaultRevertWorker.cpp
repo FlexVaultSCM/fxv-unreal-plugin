@@ -12,6 +12,15 @@ FName FFlexVaultRevertWorker::GetName() const
 
 bool FFlexVaultRevertWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(FFlexVaultRevertWorker::Execute);
+
+	// FlexVault Mapping:
+	// Reverting files in a workspace maps to checking out the specific file paths at their 
+	// current branch head revision, downloading their original content,
+	// and overwriting the local modified working copy.
+	// Currently, file-level checkout/revert is not fully implemented in the FlexVault CLI
+	// workspace layer exposed to the plugin. Thus, this worker serves as a placeholder.
+
 	// TODO: Implement revert command when the CLI supports it.
 	InCommand.ResultInfo.ErrorMessages.Add(FText::FromString(TEXT("Revert is not yet implemented.")));
 	return false;

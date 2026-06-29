@@ -23,6 +23,22 @@ bool FFlexVaultUpdateStatusWorker::Execute(FFlexVaultSourceControlCommand& InCom
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(FFlexVaultUpdateStatusWorker::Execute);
 
+	// FlexVault Mapping:
+	// Updating repository status maps to running 'fxv status --format json' to obtain the
+	// workspace status. FlexVault's status includes:
+	// 1. 'head_commit': Contains 'local_snapshot' (local drafts) and 'published_head' (remote head).
+	//    - We map 'local_snapshot.commit.revision' to 'LocalRevision'.
+	//    - We map 'published_head.commit.revision' to 'DepotRevision'.
+	// 2. 'files': A list of all modified, added, or deleted files.
+	//    - We check 'unpublished_state' first (if the change is committed locally as a draft).
+	//    - If not present, we check 'workspace_state' (for uncommitted workspace changes).
+	//    - Statuses like 'added' map to 'OpenForAdd', 'deleted' to 'MarkedForDelete', and
+	//      'modified'/'maybe_changed' map to 'CheckedOut'.
+	// 
+	// Since 'fxv status' scans the entire directory workspace to find changes, in UpdateStates()
+	// we update and synchronize ALL cached files in the provider's state cache so the Unreal Editor
+	// UI accurately reflects the SCM state of all assets.
+
 	WorkspacePath = InCommand.WorkspacePath;
 
 	if (InCommand.Files.Num() > 0)

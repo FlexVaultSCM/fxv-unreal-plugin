@@ -62,6 +62,7 @@ The plugin currently targets **Unreal Engine 5.8**. To support older UE 5 releas
   - Unreal's `ISourceControlRevision` interface stores `FileSize` as `int32`, capping displayable sizes at ~2.1 GB. The CLI reports sizes as `int64`. Files larger than this limit will silently display incorrect sizes in the History panel. Track upstream (`ISourceControlRevision`) for a widened type, or display a clamped/formatted value with a tooltip for oversized assets.
 - [ ] **Process Pool & Warm Up Optimization**:
   - Spawning `fxv.exe` for every status check on the background thread works well but incurs minor OS process spawn overhead. Explore communicating with the local daemon via named pipes or caching queries in memory if performance becomes a bottleneck in massive workspaces.
+- [ ] Support for unity ("Using 'git status' to determine working set for adaptive non-unity build") build discovery
 
-
-Support for unity ("Using 'git status' to determine working set for adaptive non-unity build") build discovery
+## Known Issues
+- [ ] Submitting results in prolonged reloading, likely due to cache invalidation and full workspace syncing

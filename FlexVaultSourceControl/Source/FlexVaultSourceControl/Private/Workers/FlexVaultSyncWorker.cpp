@@ -18,6 +18,17 @@ bool FFlexVaultSyncWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(FFlexVaultSyncWorker::Execute);
 
+	// FlexVault Mapping:
+	// Syncing in Unreal maps directly to the 'fxv sync' CLI command.
+	// This command performs several tasks:
+	// 1. Fetches any newly published metadata/snapshots.
+	// 2. Downloads missing chunks from remote if they aren't cached locally.
+	// 3. Reconstructs files from chunks and writes them to the working directory.
+	// 
+	// If specific files are passed, the sync is scoped to only those files. If no files are specified,
+	// the entire workspace is updated. If a revision/branch spec is provided (e.g., 'main.4'), 
+	// the workspace synchronizes to that point-in-time state.
+
 	TSharedRef<FSync, ESPMode::ThreadSafe> Operation = StaticCastSharedRef<FSync>(InCommand.Operation);
 
 	FString Params = TEXT("sync --unattended --no-color");

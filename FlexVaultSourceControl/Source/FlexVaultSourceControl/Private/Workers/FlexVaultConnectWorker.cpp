@@ -20,6 +20,12 @@ bool FFlexVaultConnectWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(FFlexVaultConnectWorker::Execute);
 
+	// FlexVault Mapping:
+	// This acts as a fast, non-blocking check to confirm that:
+	// 1. The 'fxv' CLI binary is present and executable.
+	// 2. The working directory is a valid initialized FlexVault workspace.
+	// 3. The CLI version (parsed from output JSON payload) is compatible with this plugin (0.1.x).
+
 	TArray<FString> OutputLines;
 	bool bSucceeded = RunFlexVaultCommand(InCommand.BinaryPath, InCommand.WorkspacePath, TEXT("status --format json --unattended --no-color --skip-remote-update --skip-scan"), OutputLines, InCommand.ResultInfo);
 	

@@ -12,6 +12,14 @@ FName FFlexVaultCheckOutWorker::GetName() const
 
 bool FFlexVaultCheckOutWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(FFlexVaultCheckOutWorker::Execute);
+
+	// FlexVault Mapping:
+	// FlexVault uses an optimistic snapshot-based SCM model rather than a central lock/checkout system.
+	// Therefore, checking out a file from Unreal Engine does not trigger any remote or local CLI command.
+	// Instead, the plugin simply clears the file system's "Read-Only" attribute locally so the user can edit it.
+	// Any modifications will be auto-detected by 'fxv status' or 'fxv snapshot' during the next scan.
+
 	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
 
 	CheckedOutFiles.Empty();

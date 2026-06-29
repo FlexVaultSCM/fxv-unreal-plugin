@@ -20,6 +20,11 @@ bool FFlexVaultCheckInWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(FFlexVaultCheckInWorker::Execute);
 
+	// FlexVault Mapping:
+	// Unreal Engine's single "Check In" (Submit/Commit) operation is mapped to a two-phase process:
+	// 1. 'fxv snapshot': Creates a local, point-in-time draft commit in the local repository.
+	// 2. 'fxv publish': Promotes the local draft commits
+
 	FString Description = TEXT("Unreal Engine Commit");
 	TSharedRef<FCheckIn, ESPMode::ThreadSafe> Operation = StaticCastSharedRef<FCheckIn>(InCommand.Operation);
 	if (!Operation->GetDescription().IsEmpty())
