@@ -195,9 +195,9 @@ bool FFlexVaultUpdateStatusWorker::Execute(FFlexVaultSourceControlCommand& InCom
 			struct FCommitMeta
 			{
 				FString Branch;
-				int64 Revision;
+				TOptional<uint64> PublishedRevision;
 				FString CommitType;
-				int64 DraftRevision = -1;
+				TOptional<uint64> DraftRevision;
 				FString Description;
 				FString Author;
 				FDateTime Date;
@@ -230,12 +230,14 @@ bool FFlexVaultUpdateStatusWorker::Execute(FFlexVaultSourceControlCommand& InCom
 										FCommitMeta Meta;
 										CommitObj->TryGetStringField(TEXT("branch"), Meta.Branch);
 										
-										int64 ParsedRevision = 0;
-										CommitObj->TryGetNumberField(TEXT("revision"), ParsedRevision);
-										Meta.Revision = ParsedRevision;
+										uint64 ParsedRevision = 0;
+										if (CommitObj->TryGetNumberField(TEXT("revision"), ParsedRevision))
+										{
+											Meta.PublishedRevision = ParsedRevision;
+										}
 
 										CommitObj->TryGetStringField(TEXT("type"), Meta.CommitType);
-										int64 ParsedDraftRevision = -1;
+										uint64 ParsedDraftRevision = 0;
 										if (CommitObj->TryGetNumberField(TEXT("draft_revision"), ParsedDraftRevision))
 										{
 											Meta.DraftRevision = ParsedDraftRevision;
@@ -279,13 +281,13 @@ bool FFlexVaultUpdateStatusWorker::Execute(FFlexVaultSourceControlCommand& InCom
 			for (const FCommitMeta& Commit : Commits)
 			{
 				FString ChangeId;
-				if (Commit.CommitType.Equals(TEXT("draft"), ESearchCase::IgnoreCase) && Commit.DraftRevision >= 0)
+				if (Commit.CommitType.Equals(TEXT("draft"), ESearchCase::IgnoreCase) && Commit.DraftRevision.IsSet())
 				{
-					ChangeId = FString::Printf(TEXT("%s.%lld.%lld"), *Commit.Branch, Commit.Revision, Commit.DraftRevision);
+					ChangeId = FString::Printf(TEXT("%s.%llu.%llu"), *Commit.Branch, Commit.PublishedRevision.Get(0), Commit.DraftRevision.GetValue());
 				}
 				else
 				{
-					ChangeId = FString::Printf(TEXT("%s.%lld"), *Commit.Branch, Commit.Revision);
+					ChangeId = FString::Printf(TEXT("%s.%llu"), *Commit.Branch, Commit.PublishedRevision.Get(0));
 				}
 
 				FString ChangeInfoParams = FString::Printf(TEXT("changeinfo %s -e --unattended --no-color"), *ChangeId);
@@ -317,7 +319,7 @@ bool FFlexVaultUpdateStatusWorker::Execute(FFlexVaultSourceControlCommand& InCom
 							RelPath.ReplaceInline(TEXT("\\"), TEXT("/"));
 
 							FRevDetail Rev;
-							Rev.RevisionNumber = (int32)Commit.Revision;
+							Rev.RevisionNumber = (int32)Commit.PublishedRevision.Get(0);
 							Rev.RevisionSpec = ChangeId;
 							Rev.Description = Commit.Description;
 							Rev.UserName = Commit.Author;
