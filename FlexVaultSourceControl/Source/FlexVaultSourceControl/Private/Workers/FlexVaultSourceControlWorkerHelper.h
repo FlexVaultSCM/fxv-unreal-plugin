@@ -59,3 +59,17 @@ bool ParseFlexVaultChangeInfo(
 	const FString& InChangeId,
 	TMap<FString, TArray<FFlexVaultRevisionDetail>>& OutFileRevisionMap
 );
+
+/**
+ * Helper to compute clean Unix-style workspace relative path.
+ */
+FString GetRelativeWorkspacePath(const FString& InFile, const FString& InWorkspacePath);
+
+/**
+ * Creates and populates an FFlexVaultSourceControlRevision instance from a revision detail.
+ */
+TSharedRef<class FFlexVaultSourceControlRevision, ESPMode::ThreadSafe> CreateFlexVaultRevision(
+	const FFlexVaultRevisionDetail& InDetail,
+	class FFlexVaultSourceControlProvider& InProvider,
+	const FString& InFileName
+);

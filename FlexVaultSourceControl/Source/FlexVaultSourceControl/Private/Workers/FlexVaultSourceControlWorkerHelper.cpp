@@ -1,7 +1,9 @@
 // Copyright (c) 2025-2026 FlexVault Inc. All Rights Reserved.
 #include "FlexVaultSourceControlWorkerHelper.h"
 #include "FlexVaultSourceControlProvider.h"
+#include "FlexVaultSourceControlRevision.h"
 #include "HAL/PlatformProcess.h"
+#include "Misc/Paths.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "Serialization/JsonSerializer.h"
@@ -272,6 +274,33 @@ bool ParseFlexVaultChangeInfo(
 		}
 	}
 	return true;
+}
+
+FString GetRelativeWorkspacePath(const FString& InFile, const FString& InWorkspacePath)
+{
+	FString RelativePath = InFile;
+	FPaths::MakePathRelativeTo(RelativePath, *InWorkspacePath);
+	RelativePath.ReplaceInline(TEXT("\\"), TEXT("/"));
+	return RelativePath;
+}
+
+TSharedRef<FFlexVaultSourceControlRevision, ESPMode::ThreadSafe> CreateFlexVaultRevision(
+	const FFlexVaultRevisionDetail& InDetail,
+	FFlexVaultSourceControlProvider& InProvider,
+	const FString& InFileName
+)
+{
+	TSharedRef<FFlexVaultSourceControlRevision, ESPMode::ThreadSafe> Revision = MakeShared<FFlexVaultSourceControlRevision>(InProvider);
+	Revision->FileName = InFileName;
+	Revision->RevisionNumber = InDetail.RevisionNumber;
+	Revision->Revision = InDetail.RevisionSpec;
+	Revision->Description = InDetail.Description;
+	Revision->UserName = InDetail.UserName;
+	Revision->Action = InDetail.Action;
+	Revision->Date = InDetail.Date;
+	Revision->ContentAddress = InDetail.ContentAddress;
+	Revision->FileSize = (int32)FMath::Min<int64>(InDetail.FileSize, (int64)MAX_int32);
+	return Revision;
 }
 
 #undef LOCTEXT_NAMESPACE

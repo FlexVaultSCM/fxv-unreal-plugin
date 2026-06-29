@@ -225,9 +225,7 @@ bool FFlexVaultUpdateStatusWorker::Execute(FFlexVaultSourceControlCommand& InCom
 				FFlexVaultSourceControlProvider& Provider = GetSCCProvider();
 				for (const FString& File : InCommand.Files)
 				{
-					FString RelativePath = File;
-					FPaths::MakePathRelativeTo(RelativePath, *InCommand.WorkspacePath);
-					RelativePath.ReplaceInline(TEXT("\\"), TEXT("/"));
+					FString RelativePath = GetRelativeWorkspacePath(File, InCommand.WorkspacePath);
 
 					TArray<TSharedRef<FFlexVaultSourceControlRevision, ESPMode::ThreadSafe>> History;
 					const TArray<FFlexVaultRevisionDetail>* RevisionsPtr = FileRevisionMap.Find(RelativePath.ToLower());
@@ -235,18 +233,7 @@ bool FFlexVaultUpdateStatusWorker::Execute(FFlexVaultSourceControlCommand& InCom
 					{
 						for (const FFlexVaultRevisionDetail& Rev : *RevisionsPtr)
 						{
-							TSharedRef<FFlexVaultSourceControlRevision, ESPMode::ThreadSafe> Revision = MakeShared<FFlexVaultSourceControlRevision>(Provider);
-							Revision->FileName = File;
-							Revision->RevisionNumber = Rev.RevisionNumber;
-							Revision->Revision = Rev.RevisionSpec;
-							Revision->Description = Rev.Description;
-							Revision->UserName = Rev.UserName;
-							Revision->Action = Rev.Action;
-							Revision->Date = Rev.Date;
-							Revision->ContentAddress = Rev.ContentAddress;
-							Revision->FileSize = (int32)FMath::Min<int64>(Rev.FileSize, (int64)MAX_int32);
-
-							History.Add(Revision);
+							History.Add(CreateFlexVaultRevision(Rev, Provider, File));
 						}
 					}
 					FileHistories.Add(File, History);
@@ -259,9 +246,7 @@ bool FFlexVaultUpdateStatusWorker::Execute(FFlexVaultSourceControlCommand& InCom
 	StatesToUpdate.Empty();
 	for (const FString& File : InCommand.Files)
 	{
-		FString RelativePath = FPaths::ConvertRelativePathToFull(File);
-		FPaths::MakePathRelativeTo(RelativePath, *WorkspacePath);
-		RelativePath.ReplaceInline(TEXT("\\"), TEXT("/"));
+		FString RelativePath = GetRelativeWorkspacePath(File, WorkspacePath);
 
 		FFlexVaultSourceControlState State(File);
 		State.DepotRevNumber = DepotRevision;
@@ -316,9 +301,7 @@ bool FFlexVaultUpdateStatusWorker::UpdateStates() const
 	{
 		FFlexVaultSourceControlState* CachedState = static_cast<FFlexVaultSourceControlState*>(&StateRef.Get());
 		FString File = CachedState->LocalFilename;
-		FString RelativePath = FPaths::ConvertRelativePathToFull(File);
-		FPaths::MakePathRelativeTo(RelativePath, *WorkspacePath);
-		RelativePath.ReplaceInline(TEXT("\\"), TEXT("/"));
+		FString RelativePath = GetRelativeWorkspacePath(File, WorkspacePath);
 
 		FFlexVaultSourceControlState NewState(File);
 		NewState.DepotRevNumber = DepotRevision;

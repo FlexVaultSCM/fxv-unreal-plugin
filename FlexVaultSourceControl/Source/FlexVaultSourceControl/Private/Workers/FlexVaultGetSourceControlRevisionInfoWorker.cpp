@@ -21,7 +21,7 @@ bool FFlexVaultGetSourceControlRevisionInfoWorker::Execute(FFlexVaultSourceContr
 
 	// FlexVault Mapping:
 	// Fetching file revision information in FlexVault maps to a two-phase command flow:
-	// 1. 'fxv history --format json --num 30': Queries the commit history log. FlexVault commits are 
+	// 1. 'fxv history --format json': Queries the commit history log. FlexVault commits are 
 	//    represented as branch-relative revisions: published commits ('branch.revision', e.g., 'main.1') 
 	//    and local drafts ('branch.revision.draft_revision', e.g., 'main.1.1').
 	// 2. 'fxv changeinfo <change_id> -e': Runs for each commit to retrieve the detailed file actions
@@ -83,9 +83,7 @@ bool FFlexVaultGetSourceControlRevisionInfoWorker::Execute(FFlexVaultSourceContr
 	FFlexVaultSourceControlProvider& Provider = GetSCCProvider();
 	for (const FString& File : InCommand.Files)
 	{
-		FString RelativePath = File;
-		FPaths::MakePathRelativeTo(RelativePath, *InCommand.WorkspacePath);
-		RelativePath.ReplaceInline(TEXT("\\"), TEXT("/"));
+		FString RelativePath = GetRelativeWorkspacePath(File, InCommand.WorkspacePath);
 
 		FFlexVaultSourceControlState State(File);
 		State.TimeStamp = FDateTime::Now();
@@ -95,17 +93,7 @@ bool FFlexVaultGetSourceControlRevisionInfoWorker::Execute(FFlexVaultSourceContr
 		{
 			for (const FFlexVaultRevisionDetail& Rev : *RevisionsPtr)
 			{
-				TSharedRef<FFlexVaultSourceControlRevision, ESPMode::ThreadSafe> Revision = MakeShared<FFlexVaultSourceControlRevision>(Provider);
-				Revision->FileName = File;
-				Revision->RevisionNumber = Rev.RevisionNumber;
-				Revision->Revision = Rev.RevisionSpec;
-				Revision->Description = Rev.Description;
-				Revision->UserName = Rev.UserName;
-				Revision->Action = Rev.Action;
-				Revision->Date = Rev.Date;
-				Revision->ContentAddress = Rev.ContentAddress;
-				Revision->FileSize = (int32)FMath::Min<int64>(Rev.FileSize, (int64)MAX_int32);
-				State.History.Add(Revision);
+				State.History.Add(CreateFlexVaultRevision(Rev, Provider, File));
 			}
 		}
 
