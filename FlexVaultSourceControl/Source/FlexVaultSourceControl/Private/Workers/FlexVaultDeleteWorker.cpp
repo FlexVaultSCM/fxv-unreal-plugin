@@ -25,10 +25,17 @@ bool FFlexVaultDeleteWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 	// 1. Snapshot before deleting to safeguard against irrevocable data loss of dirty files.
 	TArray<FString> SnapshotOutputLines;
 	FSourceControlResultInfo SnapshotResultInfo;
+	TArray<FString> SnapshotArgs = {
+		TEXT("snapshot"),
+		TEXT("-d"),
+		TEXT("Auto-backup before asset deletion"),
+		TEXT("--unattended"),
+		TEXT("--no-color")
+	};
 	RunFlexVaultCommand(
 		InCommand.BinaryPath,
 		InCommand.WorkspacePath,
-		TEXT("snapshot -d \"Auto-backup before asset deletion\" --unattended --no-color"),
+		SnapshotArgs,
 		SnapshotOutputLines,
 		SnapshotResultInfo,
 		true // Ignore errors to ensure filesystem deletion still proceeds

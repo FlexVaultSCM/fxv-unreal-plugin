@@ -27,7 +27,16 @@ bool FFlexVaultConnectWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 	// 3. The CLI version (parsed from output JSON payload) is compatible with this plugin (0.1.x).
 
 	TArray<FString> OutputLines;
-	bool bSucceeded = RunFlexVaultCommand(InCommand.BinaryPath, InCommand.WorkspacePath, TEXT("status --format json --unattended --no-color --skip-remote-update --skip-scan"), OutputLines, InCommand.ResultInfo);
+	TArray<FString> StatusArgs = {
+		TEXT("status"),
+		TEXT("--format"),
+		TEXT("json"),
+		TEXT("--unattended"),
+		TEXT("--no-color"),
+		TEXT("--skip-remote-update"),
+		TEXT("--skip-scan")
+	};
+	bool bSucceeded = RunFlexVaultCommand(InCommand.BinaryPath, InCommand.WorkspacePath, StatusArgs, OutputLines, InCommand.ResultInfo);
 	
 	if (bSucceeded)
 	{

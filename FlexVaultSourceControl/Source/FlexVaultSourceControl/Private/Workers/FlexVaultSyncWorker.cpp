@@ -31,10 +31,14 @@ bool FFlexVaultSyncWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 
 	TSharedRef<FSync, ESPMode::ThreadSafe> Operation = StaticCastSharedRef<FSync>(InCommand.Operation);
 
-	FString Params = TEXT("sync --unattended --no-color");
+	TArray<FString> SyncArgs = {
+		TEXT("sync"),
+		TEXT("--unattended"),
+		TEXT("--no-color")
+	};
 	if (Operation->GetRevision().Len() > 0)
 	{
-		Params.Appendf(TEXT(" \"%s\""), *Operation->GetRevision());
+		SyncArgs.Add(Operation->GetRevision());
 	}
 
 	// When specific files are requested, scope the CLI command to those files.
@@ -44,7 +48,7 @@ bool FFlexVaultSyncWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 		UE_LOG(LogFlexVault, Display, TEXT("FlexVault SCM: Syncing %d file(s) with remote..."), InCommand.Files.Num());
 		for (const FString& File : InCommand.Files)
 		{
-			Params.Appendf(TEXT(" \"%s\""), *File);
+			SyncArgs.Add(File);
 		}
 	}
 	else
@@ -53,7 +57,7 @@ bool FFlexVaultSyncWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 	}
 
 	TArray<FString> OutputLines;
-	bool bSucceeded = RunFlexVaultCommand(InCommand.BinaryPath, InCommand.WorkspacePath, Params, OutputLines, InCommand.ResultInfo);
+	bool bSucceeded = RunFlexVaultCommand(InCommand.BinaryPath, InCommand.WorkspacePath, SyncArgs, OutputLines, InCommand.ResultInfo);
 
 	if (bSucceeded)
 	{

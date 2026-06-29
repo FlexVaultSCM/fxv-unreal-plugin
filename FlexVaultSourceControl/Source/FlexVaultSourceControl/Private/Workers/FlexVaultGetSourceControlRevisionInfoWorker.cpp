@@ -38,8 +38,15 @@ bool FFlexVaultGetSourceControlRevisionInfoWorker::Execute(FFlexVaultSourceContr
 	}
 
 	// 1. Fetch entire branch history to display the complete revision timeline in the editor
+	TArray<FString> HistoryArgs = {
+		TEXT("history"),
+		TEXT("--format"),
+		TEXT("json"),
+		TEXT("--unattended"),
+		TEXT("--no-color")
+	};
 	TArray<FString> OutputLines;
-	bool bSucceeded = RunFlexVaultCommand(InCommand.BinaryPath, InCommand.WorkspacePath, TEXT("history --format json --unattended --no-color"), OutputLines, InCommand.ResultInfo);
+	bool bSucceeded = RunFlexVaultCommand(InCommand.BinaryPath, InCommand.WorkspacePath, HistoryArgs, OutputLines, InCommand.ResultInfo);
 	if (!bSucceeded)
 	{
 		return false;
@@ -66,14 +73,20 @@ bool FFlexVaultGetSourceControlRevisionInfoWorker::Execute(FFlexVaultSourceContr
 			ChangeId = FString::Printf(TEXT("%s.%llu"), *Commit.Branch, Commit.PublishedRevision.Get(0));
 		}
 
-		FString ChangeInfoParams = FString::Printf(TEXT("changeinfo %s -e --unattended --no-color"), *ChangeId);
+		TArray<FString> ChangeInfoArgs = {
+			TEXT("changeinfo"),
+			ChangeId,
+			TEXT("-e"),
+			TEXT("--unattended"),
+			TEXT("--no-color")
+		};
 		TArray<FString> ChangeInfoOutput;
 		FSourceControlResultInfo TempResultInfo;
 
 		// Suppress SCM Error logging for changeinfo on old/deleted draft revisions. When drafts (e.g. main.1.1) 
 		// are published, they are promoted to a permanent published revision (e.g. main.2) and the local draft metadata/assets 
 		// are pruned from the draft store, meaning changeinfo will return exit code 1.
-		if (RunFlexVaultCommand(InCommand.BinaryPath, InCommand.WorkspacePath, ChangeInfoParams, ChangeInfoOutput, TempResultInfo, true))
+		if (RunFlexVaultCommand(InCommand.BinaryPath, InCommand.WorkspacePath, ChangeInfoArgs, ChangeInfoOutput, TempResultInfo, true))
 		{
 			ParseFlexVaultChangeInfo(ChangeInfoOutput, Commit, ChangeId, FileRevisionMap);
 		}

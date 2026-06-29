@@ -11,10 +11,76 @@
 
 #define LOCTEXT_NAMESPACE "FlexVaultSourceControl"
 
+static FString EscapeCommandLineArg(const FString& InArg)
+{
+	// 1. Determine if the argument needs to be quoted.
+	//    Under Windows command line parsing rules (CommandLineToArgvW), arguments containing
+	//    spaces, tabs, newlines, vertical tabs, or double quotes must be enclosed in double quotes.
+	//    Empty arguments must also be quoted so they are not omitted.
+	bool bNeedsQuotes = InArg.IsEmpty() || InArg.Contains(TEXT(" ")) || InArg.Contains(TEXT("\t")) || InArg.Contains(TEXT("\n")) || InArg.Contains(TEXT("\v")) || InArg.Contains(TEXT("\""));
+	if (!bNeedsQuotes)
+	{
+		return InArg;
+	}
+
+	// 2. Construct the quoted and escaped argument string.
+	//    Windows command line escaping has unique rules for backslashes:
+	//    - Backslashes are interpreted literally UNLESS they are followed by a double quote.
+	//    - If backslashes are followed by a double quote, they must be doubled to escape themselves,
+	//      so the quote can then be escaped as \" (yielding 2N + 1 backslashes overall).
+	//    - Trailing backslashes before the closing quote must also be doubled so they don't escape the closing quote.
+	//    To implement this cleanly, we do a single-pass scan keeping track of consecutive backslashes.
+	FString Result = TEXT("\""); // Open the enclosing quote
+	int32 BackslashCount = 0;
+
+	for (int32 i = 0; i < InArg.Len(); ++i)
+	{
+		TCHAR Char = InArg[i];
+		if (Char == '\\')
+		{
+			// Accumulate backslashes until we hit a character that determines their meaning
+			BackslashCount++;
+		}
+		else if (Char == '\"')
+		{
+			// Double the accumulated backslashes because they precede a quote,
+			// then write the escaped quote \" itself
+			Result.Append(FString::ChrN(BackslashCount * 2, '\\'));
+			Result.Append(TEXT("\\\""));
+			BackslashCount = 0;
+		}
+		else
+		{
+			// Write accumulated backslashes literally because they do not precede a quote
+			Result.Append(FString::ChrN(BackslashCount, '\\'));
+			Result.AppendChar(Char);
+			BackslashCount = 0;
+		}
+	}
+
+	// Double any trailing backslashes so they do not escape the closing quote
+	Result.Append(FString::ChrN(BackslashCount * 2, '\\'));
+	Result.Append(TEXT("\"")); // Close the enclosing quote
+
+	return Result;
+}
+
+static FString JoinCommandLineArgs(const TArray<FString>& InArgs)
+{
+	// Process each argument individually and escape it if necessary.
+	TArray<FString> EscapedArgs;
+	for (const FString& Arg : InArgs)
+	{
+		EscapedArgs.Add(EscapeCommandLineArg(Arg));
+	}
+	// Join all escaped arguments with spaces to form a single flat command line string.
+	return FString::Join(EscapedArgs, TEXT(" "));
+}
+
 bool RunFlexVaultCommand(
 	const FString& InBinaryPath,
 	const FString& InWorkspacePath,
-	const FString& InArgs,
+	const TArray<FString>& InArgs,
 	TArray<FString>& OutOutputLines,
 	FSourceControlResultInfo& OutResultInfo,
 	bool bIgnoreError
@@ -22,7 +88,8 @@ bool RunFlexVaultCommand(
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(RunFlexVaultCommand);
 
-	UE_LOG(LogFlexVault, Verbose, TEXT("Initiating FlexVault SCM Command: %s %s (Working Dir: %s)"), *InBinaryPath, *InArgs, *InWorkspacePath);
+	FString EscapedArgs = JoinCommandLineArgs(InArgs);
+	UE_LOG(LogFlexVault, Verbose, TEXT("Initiating FlexVault SCM Command: %s %s (Working Dir: %s)"), *InBinaryPath, *EscapedArgs, *InWorkspacePath);
 	double StartTime = FPlatformTime::Seconds();
 
 	void* PipeRead = nullptr;
@@ -36,7 +103,7 @@ bool RunFlexVaultCommand(
 	uint32 ProcessID = 0;
 	FProcHandle Process = FPlatformProcess::CreateProc(
 		*InBinaryPath,
-		*InArgs,
+		*EscapedArgs,
 		false, // bLaunchDetached
 		true,  // bLaunchHidden
 		true,  // bLaunchReallyHidden
@@ -97,7 +164,7 @@ bool RunFlexVaultCommand(
 		FString LogBlock;
 		LogBlock.Appendf(TEXT("================================================================\n"));
 		LogBlock.Appendf(TEXT("FlexVault SCM CLI Command Execution Report:\n"));
-		LogBlock.Appendf(TEXT("  Command:        %s %s\n"), *InBinaryPath, *InArgs);
+		LogBlock.Appendf(TEXT("  Command:        %s %s\n"), *InBinaryPath, *EscapedArgs);
 		LogBlock.Appendf(TEXT("  Working Dir:    %s\n"), *InWorkspacePath);
 		LogBlock.Appendf(TEXT("  Execution Time: %.4f seconds\n"), ElapsedTime);
 		LogBlock.Appendf(TEXT("  Exit Code:      %d\n"), ReturnCode);

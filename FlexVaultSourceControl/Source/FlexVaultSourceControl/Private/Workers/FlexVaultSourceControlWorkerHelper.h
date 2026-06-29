@@ -35,7 +35,7 @@ struct FFlexVaultRevisionDetail
 bool RunFlexVaultCommand(
 	const FString& InBinaryPath,
 	const FString& InWorkspacePath,
-	const FString& InArgs,
+	const TArray<FString>& InArgs,
 	TArray<FString>& OutOutputLines,
 	FSourceControlResultInfo& OutResultInfo,
 	bool bIgnoreError = false

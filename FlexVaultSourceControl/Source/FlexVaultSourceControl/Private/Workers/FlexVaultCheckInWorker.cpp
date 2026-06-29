@@ -34,22 +34,30 @@ bool FFlexVaultCheckInWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 
 	UE_LOG(LogFlexVault, Display, TEXT("FlexVault SCM: Checking in %d files with description: '%s'"), InCommand.Files.Num(), *Description);
 
-	// Escape double quotes in description to avoid command line argument breaks or shell injection.
-	// TODO: Transition RunFlexVaultCommand to take parameter arrays/list of args instead of a single Printf'd command line.
-	FString EscapedDescription = Description.Replace(TEXT("\""), TEXT("\\\""));
-
 	TArray<FString> OutputLines;
 	// 1. Snapshot changes locally
-	FString SnapshotParams = FString::Printf(TEXT("snapshot -d \"%s\" --unattended --no-color"), *EscapedDescription);
-	bool bSnapshotOk = RunFlexVaultCommand(InCommand.BinaryPath, InCommand.WorkspacePath, SnapshotParams, OutputLines, InCommand.ResultInfo);
+	TArray<FString> SnapshotArgs = {
+		TEXT("snapshot"),
+		TEXT("-d"),
+		Description,
+		TEXT("--unattended"),
+		TEXT("--no-color")
+	};
+	bool bSnapshotOk = RunFlexVaultCommand(InCommand.BinaryPath, InCommand.WorkspacePath, SnapshotArgs, OutputLines, InCommand.ResultInfo);
 	if (!bSnapshotOk)
 	{
 		return false;
 	}
 
 	// 2. Publish snapshots to remote CAS
-	FString PublishParams = FString::Printf(TEXT("publish -d \"%s\" --unattended --no-color"), *EscapedDescription);
-	bool bPublishOk = RunFlexVaultCommand(InCommand.BinaryPath, InCommand.WorkspacePath, PublishParams, OutputLines, InCommand.ResultInfo);
+	TArray<FString> PublishArgs = {
+		TEXT("publish"),
+		TEXT("-d"),
+		Description,
+		TEXT("--unattended"),
+		TEXT("--no-color")
+	};
+	bool bPublishOk = RunFlexVaultCommand(InCommand.BinaryPath, InCommand.WorkspacePath, PublishArgs, OutputLines, InCommand.ResultInfo);
 	if (!bPublishOk)
 	{
 		return false;

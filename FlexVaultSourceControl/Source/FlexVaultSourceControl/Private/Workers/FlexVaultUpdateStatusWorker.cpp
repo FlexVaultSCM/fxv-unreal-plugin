@@ -58,10 +58,18 @@ bool FFlexVaultUpdateStatusWorker::Execute(FFlexVaultSourceControlCommand& InCom
 	FileHistories.Empty();
 
 	TArray<FString> OutputLines;
+	TArray<FString> StatusArgs = {
+		TEXT("status"),
+		TEXT("--format"),
+		TEXT("json"),
+		TEXT("--unattended"),
+		TEXT("--no-color"),
+		TEXT("--skip-remote-update")
+	};
 	bool bSucceeded = RunFlexVaultCommand(
 		InCommand.BinaryPath,
 		InCommand.WorkspacePath,
-		TEXT("status --format json --unattended --no-color --skip-remote-update"),
+		StatusArgs,
 		OutputLines,
 		InCommand.ResultInfo
 	);
@@ -182,11 +190,18 @@ bool FFlexVaultUpdateStatusWorker::Execute(FFlexVaultSourceControlCommand& InCom
 	TSharedRef<FUpdateStatus, ESPMode::ThreadSafe> Operation = StaticCastSharedRef<FUpdateStatus>(InCommand.Operation);
 	if (Operation->ShouldUpdateHistory() && InCommand.Files.Num() > 0)
 	{
+		TArray<FString> HistoryArgs = {
+			TEXT("history"),
+			TEXT("--format"),
+			TEXT("json"),
+			TEXT("--unattended"),
+			TEXT("--no-color")
+		};
 		TArray<FString> HistoryOutputLines;
 		bool bHistorySucceeded = RunFlexVaultCommand(
 			InCommand.BinaryPath,
 			InCommand.WorkspacePath,
-			TEXT("history --format json --unattended --no-color"),
+			HistoryArgs,
 			HistoryOutputLines,
 			InCommand.ResultInfo
 		);
@@ -209,14 +224,20 @@ bool FFlexVaultUpdateStatusWorker::Execute(FFlexVaultSourceControlCommand& InCom
 						ChangeId = FString::Printf(TEXT("%s.%llu"), *Commit.Branch, Commit.PublishedRevision.Get(0));
 					}
 
-					FString ChangeInfoParams = FString::Printf(TEXT("changeinfo %s -e --unattended --no-color"), *ChangeId);
+					TArray<FString> ChangeInfoArgs = {
+						TEXT("changeinfo"),
+						ChangeId,
+						TEXT("-e"),
+						TEXT("--unattended"),
+						TEXT("--no-color")
+					};
 					TArray<FString> ChangeInfoOutput;
 					FSourceControlResultInfo TempResultInfo;
 
 					// Suppress SCM Error logging for changeinfo on old/deleted draft revisions. When drafts (e.g. main.1.1) 
 					// are published, they are promoted to a permanent published revision (e.g. main.2) and the local draft metadata/assets 
 					// are pruned from the draft store, meaning changeinfo will return exit code 1.
-					if (RunFlexVaultCommand(InCommand.BinaryPath, InCommand.WorkspacePath, ChangeInfoParams, ChangeInfoOutput, TempResultInfo, true))
+					if (RunFlexVaultCommand(InCommand.BinaryPath, InCommand.WorkspacePath, ChangeInfoArgs, ChangeInfoOutput, TempResultInfo, true))
 					{
 						ParseFlexVaultChangeInfo(ChangeInfoOutput, Commit, ChangeId, FileRevisionMap);
 					}
