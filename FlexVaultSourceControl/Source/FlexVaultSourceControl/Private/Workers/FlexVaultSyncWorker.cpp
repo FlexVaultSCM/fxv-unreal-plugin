@@ -79,7 +79,7 @@ bool FFlexVaultSyncWorker::UpdateStates() const
 		for (const FString& File : SyncedFiles)
 		{
 			TSharedRef<FFlexVaultSourceControlState, ESPMode::ThreadSafe> State = Provider.GetStateInternal(File);
-			State->SetState(EFlexVaultState::ReadOnly);
+			State->SetState(EFlexVaultState::Unchanged);
 			State->bModified = false;
 			State->TimeStamp = FDateTime::Now();
 

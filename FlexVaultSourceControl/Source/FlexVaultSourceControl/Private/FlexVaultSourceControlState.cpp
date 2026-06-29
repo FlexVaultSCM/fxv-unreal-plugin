@@ -75,7 +75,7 @@ FSlateIcon FFlexVaultSourceControlState::GetIcon() const
 	case EFlexVaultState::MarkedForDelete:
 		return FSlateIcon(FRevisionControlStyleManager::GetStyleSetName(), "RevisionControl.MarkedForDelete");
 	case EFlexVaultState::Ignore:
-	case EFlexVaultState::ReadOnly:
+	case EFlexVaultState::Unchanged:
 	default:
 		return FSlateIcon();
 	}
@@ -93,8 +93,8 @@ FText FFlexVaultSourceControlState::GetDisplayName() const
 	{
 	case EFlexVaultState::CheckedOut:
 		return LOCTEXT("CheckedOut", "Checked out");
-	case EFlexVaultState::ReadOnly:
-		return LOCTEXT("ReadOnly", "Read only");
+	case EFlexVaultState::Unchanged:
+		return LOCTEXT("Unchanged", "Unchanged");
 	case EFlexVaultState::NotInRepository:
 		return LOCTEXT("NotInRepository", "Not in repository");
 	case EFlexVaultState::CheckedOutOther:
@@ -122,8 +122,8 @@ FText FFlexVaultSourceControlState::GetDisplayTooltip() const
 	{
 	case EFlexVaultState::CheckedOut:
 		return LOCTEXT("CheckedOut_Tooltip", "The file(s) are modified locally");
-	case EFlexVaultState::ReadOnly:
-		return LOCTEXT("ReadOnly_Tooltip", "The file(s) are tracked and unmodified");
+	case EFlexVaultState::Unchanged:
+		return LOCTEXT("Unchanged_Tooltip", "The file(s) are tracked and unmodified");
 	case EFlexVaultState::NotInRepository:
 		return LOCTEXT("NotInRepository_Tooltip", "The file(s) are not in the FlexVault repository");
 	case EFlexVaultState::CheckedOutOther:
@@ -284,3 +284,4 @@ void FFlexVaultSourceControlState::Update(const FFlexVaultSourceControlState& In
 }
 
 #undef LOCTEXT_NAMESPACE
+ 

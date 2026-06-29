@@ -19,7 +19,7 @@ namespace EFlexVaultState
 		CheckedOut = 1,
 
 		/** File is tracked and unmodified. */
-		ReadOnly = 2,
+		Unchanged = 2,
 
 		/** File is untracked (not in the repository). */
 		NotInRepository = 3,

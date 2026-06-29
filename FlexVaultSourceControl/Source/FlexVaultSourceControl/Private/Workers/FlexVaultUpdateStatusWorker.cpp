@@ -255,7 +255,7 @@ bool FFlexVaultUpdateStatusWorker::UpdateStates() const
 		}
 		else
 		{
-			NewState.SetState(EFlexVaultState::ReadOnly);
+			NewState.SetState(EFlexVaultState::Unchanged);
 			NewState.bModified = false;
 		}
 
