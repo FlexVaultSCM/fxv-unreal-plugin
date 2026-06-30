@@ -95,6 +95,7 @@ private:
 	virtual TUniquePtr<ISourceControlProvider> Create(const FStringView& OwnerName, const FSourceControlInitSettings& InInitialSettings) const override;
 
 	TSharedPtr<IFlexVaultSourceControlWorker, ESPMode::ThreadSafe> CreateWorker(const FName& InOperationName);
+	ECommandResult::Type ExecuteSynchronousCommand(FFlexVaultSourceControlCommand& InCommand, const FText& Task);
 	ECommandResult::Type IssueCommand(FFlexVaultSourceControlCommand& InCommand, const bool bSynchronous);
 
 private:

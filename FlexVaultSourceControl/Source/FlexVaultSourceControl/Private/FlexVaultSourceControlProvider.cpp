@@ -14,6 +14,7 @@
 #include "Workers/FlexVaultGetSourceControlRevisionInfoWorker.h"
 #include "SourceControlOperations.h"
 #include "SourceControlHelpers.h"
+#include "ScopedSourceControlProgress.h"
 #include "Misc/QueuedThreadPool.h"
 #include "Misc/ScopeRWLock.h"
 #include "Misc/Paths.h"
@@ -244,7 +245,7 @@ void FFlexVaultSourceControlProvider::Tick()
 	for (int32 Index = 0; Index < CommandQueue.Num(); ++Index)
 	{
 		FFlexVaultSourceControlCommand* Command = CommandQueue[Index];
-		if (Command->bExecuteProcessed)
+		if (Command->bExecuteProcessed.Load())
 		{
 			CompletedCommands.Add(Command);
 			CommandQueue.RemoveAt(Index);
@@ -381,14 +382,43 @@ TSharedPtr<IFlexVaultSourceControlWorker, ESPMode::ThreadSafe> FFlexVaultSourceC
 	return nullptr;
 }
 
+ECommandResult::Type FFlexVaultSourceControlProvider::ExecuteSynchronousCommand(FFlexVaultSourceControlCommand& InCommand, const FText& Task)
+{
+	// Adopting the Git/Perforce sleep-tick loop paradigm for synchronous commands:
+	// - Similar to Git/Perforce: The command is queued to GThreadPool (asynchronously)
+	//   and the game thread loops on the FScopedSourceControlProgress modal while sleeping/ticking
+	//   until `bExecuteProcessed` is flagged by the background worker thread. This keeps the
+	//   Editor UI responsive and allows for progress feedback/cancellation.
+	// - Different from Git/Perforce: Both Git and Perforce call ReturnResults() and delete the command 
+	//   directly inside Tick() for synchronous commands. Here, FlexVault's Tick() handles all command 
+	//   completions uniformly by scheduling ReturnResults() and deletion asynchronously on the game thread's 
+	//   next frame via AsyncTask() to avoid Slate rendering/focus lockups.
+	FScopedSourceControlProgress Progress(Task);
+
+	// Issue the command asynchronously
+	IssueCommand(InCommand, false);
+
+	// Wait until the command is processed by the background thread pool
+	while (!InCommand.bExecuteProcessed.Load())
+	{
+		Tick();
+		Progress.Tick();
+		FPlatformProcess::Sleep(0.01f);
+	}
+
+	// Run a final Tick() to process state updates and completions
+	Tick();
+
+	return InCommand.bCommandSuccessful ? ECommandResult::Succeeded : ECommandResult::Failed;
+}
+
 ECommandResult::Type FFlexVaultSourceControlProvider::IssueCommand(FFlexVaultSourceControlCommand& InCommand, const bool bSynchronous)
 {
 	InCommand.WorkspacePath = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
 	InCommand.BinaryPath = GetDefault<UFlexVaultSourceControlDeveloperSettings>()->GetEffectiveBinaryPath();
 	if (bSynchronous)
 	{
-		InCommand.DoWork();
-		return InCommand.ReturnResults();
+		return ExecuteSynchronousCommand(InCommand, InCommand.Operation->GetInProgressString());
 	}
 	else
 	{

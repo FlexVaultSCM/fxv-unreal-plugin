@@ -7,6 +7,8 @@
 #include "Misc/IQueuedWork.h"
 #include "IFlexVaultSourceControlWorker.h"
 
+#include "Templates/Atomic.h"
+
 class FFlexVaultSourceControlCommand : public IQueuedWork
 {
 public:
@@ -37,8 +39,11 @@ public:
 	FSourceControlOperationComplete OperationCompleteDelegate;
 
 	/** Execution tracking atomic flags */
-	volatile int32 bExecuteProcessed;
-	volatile int32 bCancelled;
+	// Used by the background worker thread to signal execution completion to the main thread.
+	// Even in Perforce SCM where the synchronous loop checks CommandQueue.Contains,
+	// Perforce's Tick() still depends on this flag to remove completed commands from the queue.
+	TAtomic<bool> bExecuteProcessed;
+	TAtomic<bool> bCancelled;
 
 	/** Success tracking flags */
 	bool bCommandSuccessful;

@@ -11,8 +11,8 @@ FFlexVaultSourceControlCommand::FFlexVaultSourceControlCommand(
 	: Operation(InOperation)
 	, Worker(InWorker)
 	, OperationCompleteDelegate(InOperationCompleteDelegate)
-	, bExecuteProcessed(0)
-	, bCancelled(0)
+	, bExecuteProcessed(false)
+	, bCancelled(false)
 	, bCommandSuccessful(false)
 	, Concurrency(EConcurrency::Synchronous)
 {
@@ -21,13 +21,13 @@ FFlexVaultSourceControlCommand::FFlexVaultSourceControlCommand(
 bool FFlexVaultSourceControlCommand::DoWork()
 {
 	bCommandSuccessful = Worker->Execute(*this);
-	FPlatformAtomics::InterlockedExchange(&bExecuteProcessed, 1);
+	bExecuteProcessed.Store(true);
 	return bCommandSuccessful;
 }
 
 void FFlexVaultSourceControlCommand::Abandon()
 {
-	FPlatformAtomics::InterlockedExchange(&bExecuteProcessed, 1);
+	bExecuteProcessed.Store(true);
 }
 
 void FFlexVaultSourceControlCommand::DoThreadedWork()
@@ -37,12 +37,12 @@ void FFlexVaultSourceControlCommand::DoThreadedWork()
 
 void FFlexVaultSourceControlCommand::Cancel()
 {
-	FPlatformAtomics::InterlockedExchange(&bCancelled, 1);
+	bCancelled.Store(true);
 }
 
 bool FFlexVaultSourceControlCommand::IsCanceled() const
 {
-	return bCancelled != 0;
+	return bCancelled.Load();
 }
 
 ECommandResult::Type FFlexVaultSourceControlCommand::ReturnResults()
