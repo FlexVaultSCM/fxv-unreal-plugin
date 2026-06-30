@@ -49,6 +49,7 @@ static FName ProviderName("FlexVault");
 FFlexVaultSourceControlProvider::FFlexVaultSourceControlProvider()
 	: OwnerName(TEXT("Default"))
 	, bServerAvailable(false)
+	, bStatusUpdateDelayed(false)
 {
 }
 
@@ -124,7 +125,6 @@ const FName& FFlexVaultSourceControlProvider::GetName() const
 	return ProviderName;
 }
 
-// TODO is there a more appropriate way to buffer the fact that GetState is called individually for each file, but status is updated for all files in the workspace? 
 ECommandResult::Type FFlexVaultSourceControlProvider::GetState(const TArray<FString>& InFiles, TArray<FSourceControlStateRef>& OutState, EStateCacheUsage::Type InStateCacheUsage)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(FFlexVaultSourceControlProvider::GetState);
@@ -134,7 +134,6 @@ ECommandResult::Type FFlexVaultSourceControlProvider::GetState(const TArray<FStr
 		return ECommandResult::Failed;
 	}
 
-	TArray<FString> FilesToUpdate;
 	for (const FString& File : InFiles)
 	{
 		TSharedRef<FFlexVaultSourceControlState, ESPMode::ThreadSafe> State = GetStateInternal(File);
@@ -142,28 +141,40 @@ ECommandResult::Type FFlexVaultSourceControlProvider::GetState(const TArray<FStr
 
 		if (InStateCacheUsage == EStateCacheUsage::ForceUpdate || State->IsUnknown())
 		{
-			// De-duplicate in-flight status requests globally: Since a single 'fxv status' scans the entire workspace and updates the state of all files in the cache, we do not need to spawn another one if an active status update is already running.
-			bool bAlreadyInFlight = false;
-			for (const FFlexVaultSourceControlCommand* Command : CommandQueue)
-			{
-				if (Command->Operation->GetName() == FlexVaultSourceControlConstants::UpdateStatus)
-				{
-					bAlreadyInFlight = true;
-					break;
-				}
-			}
-
-			if (!bAlreadyInFlight)
-			{
-				FilesToUpdate.Add(File);
-			}
+			PendingStatusUpdates.Add(File);
 		}
 	}
 
-	if (FilesToUpdate.Num() > 0)
+	if (PendingStatusUpdates.Num() > 0 && !bStatusUpdateDelayed)
 	{
-		// Force update file status asynchronously
-		Execute(ISourceControlOperation::Create<FUpdateStatus>(), nullptr, FilesToUpdate, EConcurrency::Asynchronous);
+		bStatusUpdateDelayed = true;
+
+		// Defer execution of SCM command to the next game thread tick to accumulate and batch requests
+		AsyncTask(ENamedThreads::GameThread, [this]()
+		{
+			bStatusUpdateDelayed = false;
+			if (PendingStatusUpdates.Num() > 0)
+			{
+				TArray<FString> FilesToUpdate = PendingStatusUpdates.Array();
+				PendingStatusUpdates.Empty();
+
+				// De-duplicate in-flight status requests globally to avoid spawning redundant background status updates
+				bool bAlreadyInFlight = false;
+				for (const FFlexVaultSourceControlCommand* Command : CommandQueue)
+				{
+					if (Command->Operation->GetName() == FlexVaultSourceControlConstants::UpdateStatus)
+					{
+						bAlreadyInFlight = true;
+						break;
+					}
+				}
+
+				if (!bAlreadyInFlight)
+				{
+					Execute(ISourceControlOperation::Create<FUpdateStatus>(), nullptr, FilesToUpdate, EConcurrency::Asynchronous);
+				}
+			}
+		});
 	}
 
 	return ECommandResult::Succeeded;
@@ -313,12 +324,7 @@ TSharedRef<FFlexVaultSourceControlState, ESPMode::ThreadSafe> FFlexVaultSourceCo
 	}
 
 	FWriteScopeLock WriteLock(StateCacheLock);
-
-	const FString WorkspacePath = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
-	const bool bIsUnderWorkspace = FPaths::IsUnderDirectory(NormalizedFilename, WorkspacePath);
-	EFlexVaultState::Type DefaultState = bIsUnderWorkspace ? EFlexVaultState::Unchanged : EFlexVaultState::DontCare;
-
-	TSharedRef<FFlexVaultSourceControlState, ESPMode::ThreadSafe> NewState = MakeShared<FFlexVaultSourceControlState>(NormalizedFilename, DefaultState);
+	TSharedRef<FFlexVaultSourceControlState, ESPMode::ThreadSafe> NewState = MakeShared<FFlexVaultSourceControlState>(NormalizedFilename);
 	StateCache.Add(NormalizedFilename, NewState);
 	return NewState;
 }

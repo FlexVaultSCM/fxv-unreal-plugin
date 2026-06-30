@@ -63,13 +63,13 @@ public:
 	virtual bool UsesSnapshots() const override { return true; }
 	virtual bool AllowsDiffAgainstDepot() const override { return true; }
 	// UE 5.8: three new pure virtuals on ISourceControlProvider.
-	// NOTE: Using a Git-like edit-based workflow — no soft revert before delete.
+	// NOTE: Using a Git-like edit-based workflow â€” no soft revert before delete.
 	virtual bool UsesSoftRevertOnDelete() const override { return false; }
-	// Return empty TOptional (unknown/not applicable) — consistent with the IsAtLatestRevision/GetNumLocalChanges pattern.
+	// Return empty TOptional (unknown/not applicable) â€” consistent with the IsAtLatestRevision/GetNumLocalChanges pattern.
 	virtual TOptional<bool> HasChangesToSync() const override { return TOptional<bool>(); }
 	virtual TOptional<bool> HasChangesToCheckIn() const override { return TOptional<bool>(); }
 	// IsAtLatestRevision() and GetNumLocalChanges() are now final in UE 5.8's ISourceControlProvider.
-	// The base class default implementations return TOptional<bool>() / TOptional<int>() — identical behaviour.
+	// The base class default implementations return TOptional<bool>() / TOptional<int>() â€” identical behaviour.
 	virtual void Tick() override;
 	virtual TArray<TSharedRef<class ISourceControlLabel>> GetLabels(const FString& InMatchingSpec) const override { return TArray<TSharedRef<class ISourceControlLabel>>(); }
 	virtual TArray<FSourceControlChangelistRef> GetChangelists(EStateCacheUsage::Type InStateCacheUsage) override { return TArray<FSourceControlChangelistRef>(); }
@@ -113,6 +113,10 @@ private:
 
 	/** Delegate for status updates notification */
 	FSourceControlStateChanged OnSourceControlStateChanged;
+
+	/** Files pending status updates, collected over the frame and batched into a single command */
+	TSet<FString> PendingStatusUpdates;
+	bool bStatusUpdateDelayed;
 };
 
 DECLARE_LOG_CATEGORY_EXTERN(LogFlexVault, Verbose, All);
