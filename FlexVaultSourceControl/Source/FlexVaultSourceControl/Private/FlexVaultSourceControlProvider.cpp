@@ -69,10 +69,15 @@ ISourceControlProvider::FInitResult FFlexVaultSourceControlProvider::Init(EInitF
 		TSharedPtr<IFlexVaultSourceControlWorker, ESPMode::ThreadSafe> Worker = CreateWorker(ConnectOp->GetName());
 		if (Worker.IsValid())
 		{
-			FFlexVaultSourceControlCommand Command(ConnectOp, Worker.ToSharedRef());
-			Command.Concurrency = EConcurrency::Synchronous;
+			// NOTE: We must allocate the command on the heap to avoid access violations. This mirrors the standard 
+			// Git and Perforce source control provider implementations. FlexVault's Tick() routine 
+			// processes completions and deletes commands asynchronously on the Game Thread via AsyncTask. 
+			// Future Refactoring: Consider enforcing heap-only allocation by protecting the constructor 
+			// and exposing a static factory method, or modernizing the pipeline to use UE::Tasks.
+			FFlexVaultSourceControlCommand* Command = new FFlexVaultSourceControlCommand(ConnectOp, Worker.ToSharedRef());
+			Command->Concurrency = EConcurrency::Synchronous;
 			
-			ECommandResult::Type CmdResult = IssueCommand(Command, true);
+			ECommandResult::Type CmdResult = IssueCommand(*Command, true);
 			bServerAvailable = (CmdResult == ECommandResult::Succeeded);
 		}
 	}
@@ -119,6 +124,7 @@ const FName& FFlexVaultSourceControlProvider::GetName() const
 	return ProviderName;
 }
 
+// TODO is there a more appropriate way to buffer the fact that GetState is called individually for each file, but status is updated for all files in the workspace? 
 ECommandResult::Type FFlexVaultSourceControlProvider::GetState(const TArray<FString>& InFiles, TArray<FSourceControlStateRef>& OutState, EStateCacheUsage::Type InStateCacheUsage)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(FFlexVaultSourceControlProvider::GetState);
@@ -136,11 +142,11 @@ ECommandResult::Type FFlexVaultSourceControlProvider::GetState(const TArray<FStr
 
 		if (InStateCacheUsage == EStateCacheUsage::ForceUpdate || State->IsUnknown())
 		{
-			// De-duplicate in-flight status requests: do not query if an active status update is already running for this file. Avoid storming the SCM with redundant status requests on large file sets.
+			// De-duplicate in-flight status requests globally: Since a single 'fxv status' scans the entire workspace and updates the state of all files in the cache, we do not need to spawn another one if an active status update is already running.
 			bool bAlreadyInFlight = false;
 			for (const FFlexVaultSourceControlCommand* Command : CommandQueue)
 			{
-				if (Command->Operation->GetName() == FlexVaultSourceControlConstants::UpdateStatus && Command->Files.Contains(File))
+				if (Command->Operation->GetName() == FlexVaultSourceControlConstants::UpdateStatus)
 				{
 					bAlreadyInFlight = true;
 					break;
@@ -239,50 +245,47 @@ void FFlexVaultSourceControlProvider::Tick()
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(FFlexVaultSourceControlProvider::Tick);
 
-	// Process completed background tasks on main game thread
-	TArray<FFlexVaultSourceControlCommand*> CompletedCommands;
-
 	for (int32 Index = 0; Index < CommandQueue.Num(); ++Index)
 	{
 		FFlexVaultSourceControlCommand* Command = CommandQueue[Index];
 		if (Command->bExecuteProcessed.Load())
 		{
-			CompletedCommands.Add(Command);
+			UE_LOG(LogFlexVault, Log, TEXT("FlexVault SCM: Tick - found completed command: %s, Concurrency=%d"), *Command->Operation->GetName().ToString(), (int32)Command->Concurrency);
+			
 			CommandQueue.RemoveAt(Index);
 			--Index;
-		}
-	}
 
-	for (FFlexVaultSourceControlCommand* Command : CompletedCommands)
-	{
 #if SOURCE_CONTROL_WITH_SLATE
-		bool bIsLaunchError = false;
-		for (const FText& ErrorMsg : Command->ResultInfo.ErrorMessages)
-		{
-			if (ErrorMsg.ToString().Contains(TEXT("Failed to launch FlexVault SCM executable")))
+			bool bIsLaunchError = false;
+			for (const FText& ErrorMsg : Command->ResultInfo.ErrorMessages)
 			{
-				bIsLaunchError = true;
-				break;
+				if (ErrorMsg.ToString().Contains(TEXT("Failed to launch FlexVault SCM executable")))
+				{
+					bIsLaunchError = true;
+					break;
+				}
 			}
-		}
 
-		if (bIsLaunchError)
-		{
-			FNotificationInfo Info(LOCTEXT("FlexVaultLaunchErrorNotification", "FlexVault: Failed to launch SCM executable. Please verify your Binary Path in Developer Settings."));
-			Info.ExpireDuration = 5.0f;
-			Info.bUseSuccessFailIcons = true;
-			FSlateNotificationManager::Get().AddNotification(Info);
-		}
+			if (bIsLaunchError)
+			{
+				FNotificationInfo Info(LOCTEXT("FlexVaultLaunchErrorNotification", "FlexVault: Failed to launch SCM executable. Please verify your Binary Path in Developer Settings."));
+				Info.ExpireDuration = 5.0f;
+				Info.bUseSuccessFailIcons = true;
+				FSlateNotificationManager::Get().AddNotification(Info);
+			}
 #endif
 
-		// Defer ReturnResults and command deletion to the next game thread tick.
-		// This ensures that any Slate modals or dialogs spawned during SCM callbacks
-		// are created in a clean callstack, preventing Slate rendering or focus lockup.
-		AsyncTask(ENamedThreads::GameThread, [Command]()
-		{
+			// Execute ReturnResults inline to match Git and Perforce design
 			Command->ReturnResults();
-			delete Command;
-		});
+
+			if (Command->Concurrency == EConcurrency::Asynchronous)
+			{
+				delete Command;
+			}
+			
+			// Process only one command per tick loop (similar to Git SCM) to prevent concurrent modification issues
+			break;
+		}
 	}
 }
 
@@ -381,39 +384,40 @@ TSharedPtr<IFlexVaultSourceControlWorker, ESPMode::ThreadSafe> FFlexVaultSourceC
 
 	return nullptr;
 }
-
 ECommandResult::Type FFlexVaultSourceControlProvider::ExecuteSynchronousCommand(FFlexVaultSourceControlCommand& InCommand, const FText& Task)
 {
-	// Adopting the Git/Perforce sleep-tick loop paradigm for synchronous commands:
-	// - Similar to Git/Perforce: The command is queued to GThreadPool (asynchronously)
-	//   and the game thread loops on the FScopedSourceControlProgress modal while sleeping/ticking
-	//   until `bExecuteProcessed` is flagged by the background worker thread. This keeps the
-	//   Editor UI responsive and allows for progress feedback/cancellation.
-	// - Different from Git/Perforce: Both Git and Perforce call ReturnResults() and delete the command 
-	//   directly inside Tick() for synchronous commands. Here, FlexVault's Tick() handles all command 
-	//   completions uniformly by scheduling ReturnResults() and deletion asynchronously on the game thread's 
-	//   next frame via AsyncTask() to avoid Slate rendering/focus lockups.
+	UE_LOG(LogFlexVault, Log, TEXT("FlexVault SCM: ExecuteSynchronousCommand starting for operation: %s"), *InCommand.Operation->GetName().ToString());
 	FScopedSourceControlProgress Progress(Task);
 
 	// Issue the command asynchronously
 	IssueCommand(InCommand, false);
 
-	// Wait until the command is processed by the background thread pool
-	while (!InCommand.bExecuteProcessed.Load())
+	// Wait until the command has been processed and removed from the queue by Tick()
+	while (CommandQueue.Contains(&InCommand))
 	{
 		Tick();
 		Progress.Tick();
 		FPlatformProcess::Sleep(0.01f);
 	}
 
-	// Run a final Tick() to process state updates and completions
+	UE_LOG(LogFlexVault, Log, TEXT("FlexVault SCM: Synchronous command %s loop finished. processed=%d, success=%d"), *InCommand.Operation->GetName().ToString(), InCommand.bExecuteProcessed.Load() ? 1 : 0, InCommand.bCommandSuccessful ? 1 : 0);
+
+	// Run a final Tick() to process other state updates and completions
 	Tick();
 
-	return InCommand.bCommandSuccessful ? ECommandResult::Succeeded : ECommandResult::Failed;
+	const bool bSuccess = InCommand.bCommandSuccessful;
+
+	UE_LOG(LogFlexVault, Log, TEXT("FlexVault SCM: ExecuteSynchronousCommand finished for operation: %s, Success=%d"), *InCommand.Operation->GetName().ToString(), bSuccess ? 1 : 0);
+
+	// Safely delete the heap-allocated command (synchronous commands are not auto-deleted by Tick())
+	delete &InCommand;
+
+	return bSuccess ? ECommandResult::Succeeded : ECommandResult::Failed;
 }
 
 ECommandResult::Type FFlexVaultSourceControlProvider::IssueCommand(FFlexVaultSourceControlCommand& InCommand, const bool bSynchronous)
 {
+	UE_LOG(LogFlexVault, Log, TEXT("FlexVault SCM: IssueCommand: %s, bSynchronous=%d"), *InCommand.Operation->GetName().ToString(), bSynchronous ? 1 : 0);
 	InCommand.WorkspacePath = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
 	InCommand.BinaryPath = GetDefault<UFlexVaultSourceControlDeveloperSettings>()->GetEffectiveBinaryPath();
 	if (bSynchronous)
