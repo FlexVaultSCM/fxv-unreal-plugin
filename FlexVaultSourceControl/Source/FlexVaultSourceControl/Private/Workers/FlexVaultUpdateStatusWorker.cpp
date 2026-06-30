@@ -136,7 +136,18 @@ bool FFlexVaultUpdateStatusWorker::Execute(FFlexVaultSourceControlCommand& InCom
 			LocalRevision = DepotRevision;
 		}
 	}
-	UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault: Parsed head_commit metadata. LocalRevision: %d, DepotRevision: %d"), LocalRevision, DepotRevision);
+	
+	const TSharedPtr<FJsonObject>* SyncStatusObj = nullptr;
+	if (Payload->TryGetObjectField(TEXT("sync_status"), SyncStatusObj))
+	{
+		bool bUpToDate = true;
+		if ((*SyncStatusObj)->TryGetBoolField(TEXT("up_to_date"), bUpToDate))
+		{
+			bHasChangesToSync = !bUpToDate;
+		}
+	}
+
+	UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault: Parsed head_commit metadata. LocalRevision: %d, DepotRevision: %d, bHasChangesToSync: %d"), LocalRevision, DepotRevision, bHasChangesToSync ? 1 : 0);
 
 	// ── File state list ────────────────────────────────────────────────────────────────────────────
 	const TArray<TSharedPtr<FJsonValue>>* FilesArray = nullptr;
@@ -220,6 +231,7 @@ bool FFlexVaultUpdateStatusWorker::Execute(FFlexVaultSourceControlCommand& InCom
 bool FFlexVaultUpdateStatusWorker::UpdateStates() const
 {
 	FFlexVaultSourceControlProvider& Provider = GetSCCProvider();
+	Provider.SetHasChangesToSync(bHasChangesToSync);
 
 	// Ensure all modified/added/deleted files discovered by SCM status are present in the cache
 	for (const auto& Entry : ModifiedFiles)

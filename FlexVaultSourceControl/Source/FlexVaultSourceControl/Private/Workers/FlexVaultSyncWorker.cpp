@@ -25,9 +25,11 @@ bool FFlexVaultSyncWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 	// 2. Downloads missing chunks from remote if they aren't cached locally.
 	// 3. Reconstructs files from chunks and writes them to the working directory.
 	// 
-	// If specific files are passed, the sync is scoped to only those files. If no files are specified,
-	// the entire workspace is updated. If a revision/branch spec is provided (e.g., 'main.4'), 
-	// the workspace synchronizes to that point-in-time state.
+	// Note: Although Unreal Engine passes specific file and directory paths in InCommand.Files 
+	// (for example, syncing selected assets or folders), the 'fxv sync' CLI command does not 
+	// support targeted file syncs. Passing file paths to the CLI causes it to fail with exit 
+	// code 2 (unexpected argument error). To prevent failures, we ignore individual file/directory 
+	// scoping and always perform a full workspace-wide sync.
 
 	TSharedRef<FSync, ESPMode::ThreadSafe> Operation = StaticCastSharedRef<FSync>(InCommand.Operation);
 
@@ -41,28 +43,10 @@ bool FFlexVaultSyncWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 		SyncArgs.Add(Operation->GetRevision());
 	}
 
-	// When specific files are requested, scope the CLI command to those files.
-	// An empty file list means "sync the entire workspace".
-	if (InCommand.Files.Num() > 0)
-	{
-		UE_LOG(LogFlexVault, Display, TEXT("FlexVault SCM: Syncing %d file(s) with remote..."), InCommand.Files.Num());
-		for (const FString& File : InCommand.Files)
-		{
-			SyncArgs.Add(File);
-		}
-	}
-	else
-	{
-		UE_LOG(LogFlexVault, Display, TEXT("FlexVault SCM: Syncing workspace with remote..."));
-	}
+	UE_LOG(LogFlexVault, Display, TEXT("FlexVault SCM: Syncing workspace with remote..."));
 
 	TArray<FString> OutputLines;
 	bool bSucceeded = RunFlexVaultCommand(InCommand.BinaryPath, InCommand.WorkspacePath, SyncArgs, OutputLines, InCommand.ResultInfo);
-
-	if (bSucceeded)
-	{
-		SyncedFiles = InCommand.Files;
-	}
 
 	return bSucceeded;
 }
@@ -70,37 +54,14 @@ bool FFlexVaultSyncWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 bool FFlexVaultSyncWorker::UpdateStates() const
 {
 	FFlexVaultSourceControlProvider& Provider = GetSCCProvider();
+	Provider.SetHasChangesToSync(false);
 
-	if (SyncedFiles.Num() > 0)
-	{
-		// File-scoped sync: we know exactly which files changed, update only those entries.
-		IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
+	// Workspace-wide sync: the CLI may have touched any file in the workspace.
+	// Flush the entire cache so the next GetState() call triggers a fresh
+	// UpdateStatus query rather than returning stale data.
+	Provider.InvalidateStateCache();
 
-		for (const FString& File : SyncedFiles)
-		{
-			TSharedRef<FFlexVaultSourceControlState, ESPMode::ThreadSafe> State = Provider.GetStateInternal(File);
-			State->SetState(EFlexVaultState::Unchanged);
-			State->bModified = false;
-			State->TimeStamp = FDateTime::Now();
-			UE_LOG(LogFlexVault, Log, TEXT("FlexVault Sync: Updated state for synced file: %s"), *File);
-
-			if (Provider.UsesLocalReadOnlyState())
-			{
-				PlatformFile.SetReadOnly(*File, true);
-			}
-		}
-
-		UE_LOG(LogFlexVault, Display, TEXT("FlexVault SCM: Synced %d file(s) to latest revision."), SyncedFiles.Num());
-	}
-	else
-	{
-		// Workspace-wide sync: the CLI may have touched any file in the workspace.
-		// Flush the entire cache so the next GetState() call triggers a fresh
-		// UpdateStatus query rather than returning stale data.
-		Provider.InvalidateStateCache();
-
-		UE_LOG(LogFlexVault, Display, TEXT("FlexVault SCM: Workspace sync complete — state cache invalidated."));
-	}
+	UE_LOG(LogFlexVault, Display, TEXT("FlexVault SCM: Workspace sync complete — state cache invalidated."));
 
 	return true;
 }

@@ -28,6 +28,7 @@ private:
 	mutable int32 DepotRevision = 0;
 	mutable int32 LocalRevision = 0;
 	mutable FString WorkspacePath;
+	mutable bool bHasChangesToSync = false;
 
 	// History details cached during Execute() if ShouldUpdateHistory() was requested
 	mutable TMap<FString, TArray<TSharedRef<class FFlexVaultSourceControlRevision, ESPMode::ThreadSafe>>> FileHistories;
