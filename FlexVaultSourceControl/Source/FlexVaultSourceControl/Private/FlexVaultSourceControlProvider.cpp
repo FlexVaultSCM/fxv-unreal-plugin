@@ -313,7 +313,12 @@ TSharedRef<FFlexVaultSourceControlState, ESPMode::ThreadSafe> FFlexVaultSourceCo
 	}
 
 	FWriteScopeLock WriteLock(StateCacheLock);
-	TSharedRef<FFlexVaultSourceControlState, ESPMode::ThreadSafe> NewState = MakeShared<FFlexVaultSourceControlState>(NormalizedFilename);
+
+	const FString WorkspacePath = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
+	const bool bIsUnderWorkspace = FPaths::IsUnderDirectory(NormalizedFilename, WorkspacePath);
+	EFlexVaultState::Type DefaultState = bIsUnderWorkspace ? EFlexVaultState::Unchanged : EFlexVaultState::DontCare;
+
+	TSharedRef<FFlexVaultSourceControlState, ESPMode::ThreadSafe> NewState = MakeShared<FFlexVaultSourceControlState>(NormalizedFilename, DefaultState);
 	StateCache.Add(NormalizedFilename, NewState);
 	return NewState;
 }
