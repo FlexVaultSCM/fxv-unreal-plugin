@@ -23,6 +23,8 @@ public:
 	virtual bool UpdateStates() const override;
 
 private:
+	friend class FFlexVaultWorkerUpdateStatusTest;
+
 	// Repository-wide status results cached during Execute() to update all states on the main thread
 	mutable TMap<FString, EFlexVaultState::Type> ModifiedFiles;
 	mutable int32 DepotRevision = 0;

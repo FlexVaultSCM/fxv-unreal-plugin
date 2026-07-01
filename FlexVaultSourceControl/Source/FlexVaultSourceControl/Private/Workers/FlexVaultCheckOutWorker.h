@@ -20,5 +20,6 @@ public:
 	virtual bool UpdateStates() const override;
 
 private:
+	friend class FFlexVaultWorkerCheckOutTest;
 	mutable TArray<FString> CheckedOutFiles;
 };

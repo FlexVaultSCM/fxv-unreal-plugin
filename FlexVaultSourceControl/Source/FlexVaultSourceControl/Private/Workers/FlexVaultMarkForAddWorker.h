@@ -20,5 +20,6 @@ public:
 	virtual bool UpdateStates() const override;
 
 private:
+	friend class FFlexVaultWorkerMarkForAddTest;
 	mutable TArray<FString> AddedFiles;
 };
