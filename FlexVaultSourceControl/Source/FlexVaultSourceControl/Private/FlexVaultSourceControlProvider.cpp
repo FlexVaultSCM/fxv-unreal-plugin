@@ -261,7 +261,7 @@ void FFlexVaultSourceControlProvider::Tick()
 		FFlexVaultSourceControlCommand* Command = CommandQueue[Index];
 		if (Command->bExecuteProcessed.Load())
 		{
-			UE_LOG(LogFlexVault, Log, TEXT("FlexVault SCM: Tick - found completed command: %s, Concurrency=%d"), *Command->Operation->GetName().ToString(), (int32)Command->Concurrency);
+			UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault SCM: Tick - found completed command: %s, Concurrency=%d"), *Command->Operation->GetName().ToString(), (int32)Command->Concurrency);
 			
 			CommandQueue.RemoveAt(Index);
 			--Index;
@@ -397,7 +397,7 @@ TSharedPtr<IFlexVaultSourceControlWorker, ESPMode::ThreadSafe> FFlexVaultSourceC
 }
 ECommandResult::Type FFlexVaultSourceControlProvider::ExecuteSynchronousCommand(FFlexVaultSourceControlCommand& InCommand, const FText& Task)
 {
-	UE_LOG(LogFlexVault, Log, TEXT("FlexVault SCM: ExecuteSynchronousCommand starting for operation: %s"), *InCommand.Operation->GetName().ToString());
+	UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault SCM: ExecuteSynchronousCommand starting for operation: %s"), *InCommand.Operation->GetName().ToString());
 	FScopedSourceControlProgress Progress(Task);
 
 	// Issue the command asynchronously
@@ -411,14 +411,14 @@ ECommandResult::Type FFlexVaultSourceControlProvider::ExecuteSynchronousCommand(
 		FPlatformProcess::Sleep(0.01f);
 	}
 
-	UE_LOG(LogFlexVault, Log, TEXT("FlexVault SCM: Synchronous command %s loop finished. processed=%d, success=%d"), *InCommand.Operation->GetName().ToString(), InCommand.bExecuteProcessed.Load() ? 1 : 0, InCommand.bCommandSuccessful ? 1 : 0);
+	UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault SCM: Synchronous command %s loop finished. processed=%d, success=%d"), *InCommand.Operation->GetName().ToString(), InCommand.bExecuteProcessed.Load() ? 1 : 0, InCommand.bCommandSuccessful ? 1 : 0);
 
 	// Run a final Tick() to process other state updates and completions
 	Tick();
 
 	const bool bSuccess = InCommand.bCommandSuccessful;
 
-	UE_LOG(LogFlexVault, Log, TEXT("FlexVault SCM: ExecuteSynchronousCommand finished for operation: %s, Success=%d"), *InCommand.Operation->GetName().ToString(), bSuccess ? 1 : 0);
+	UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault SCM: ExecuteSynchronousCommand finished for operation: %s, Success=%d"), *InCommand.Operation->GetName().ToString(), bSuccess ? 1 : 0);
 
 	// Safely delete the heap-allocated command (synchronous commands are not auto-deleted by Tick())
 	delete &InCommand;
@@ -428,7 +428,7 @@ ECommandResult::Type FFlexVaultSourceControlProvider::ExecuteSynchronousCommand(
 
 ECommandResult::Type FFlexVaultSourceControlProvider::IssueCommand(FFlexVaultSourceControlCommand& InCommand, const bool bSynchronous)
 {
-	UE_LOG(LogFlexVault, Log, TEXT("FlexVault SCM: IssueCommand: %s, bSynchronous=%d"), *InCommand.Operation->GetName().ToString(), bSynchronous ? 1 : 0);
+	UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault SCM: IssueCommand: %s, bSynchronous=%d"), *InCommand.Operation->GetName().ToString(), bSynchronous ? 1 : 0);
 	InCommand.WorkspacePath = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
 	InCommand.BinaryPath = GetDefault<UFlexVaultSourceControlDeveloperSettings>()->GetEffectiveBinaryPath();
 	if (bSynchronous)
