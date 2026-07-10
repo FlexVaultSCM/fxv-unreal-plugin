@@ -56,6 +56,7 @@ bool FFlexVaultUpdateStatusWorker::Execute(FFlexVaultSourceControlCommand& InCom
 	DepotRevision = 0;
 	ModifiedFiles.Empty();
 	FileHistories.Empty();
+	bHasChangesToSync.Reset();
 
 	TArray<FString> OutputLines;
 	TArray<FString> StatusArgs = {
@@ -140,6 +141,7 @@ bool FFlexVaultUpdateStatusWorker::Execute(FFlexVaultSourceControlCommand& InCom
 	const TSharedPtr<FJsonObject>* SyncStatusObj = nullptr;
 	if (Payload->TryGetObjectField(TEXT("sync_status"), SyncStatusObj))
 	{
+		// Since TryGetObjectField succeeded, SyncStatusObj is guaranteed to be a valid pointer to a valid TSharedPtr<FJsonObject>
 		bool bUpToDate = true;
 		if ((*SyncStatusObj)->TryGetBoolField(TEXT("up_to_date"), bUpToDate))
 		{
@@ -147,7 +149,7 @@ bool FFlexVaultUpdateStatusWorker::Execute(FFlexVaultSourceControlCommand& InCom
 		}
 	}
 
-	UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault: Parsed head_commit metadata. LocalRevision: %d, DepotRevision: %d, bHasChangesToSync: %d"), LocalRevision, DepotRevision, bHasChangesToSync ? 1 : 0);
+	UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault: Parsed head_commit metadata. LocalRevision: %d, DepotRevision: %d, bHasChangesToSync: %d"), LocalRevision, DepotRevision, bHasChangesToSync.IsSet() ? (bHasChangesToSync.GetValue() ? 1 : 0) : -1);
 
 	// ── File state list ────────────────────────────────────────────────────────────────────────────
 	const TArray<TSharedPtr<FJsonValue>>* FilesArray = nullptr;

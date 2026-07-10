@@ -367,11 +367,11 @@ bool ParseFlexVaultChangeInfo(
 			if (InCommit.CommitType.Equals(TEXT("draft"), ESearchCase::IgnoreCase) && InCommit.DraftRevision.IsSet())
 			{
 				uint64 BaseRev = InCommit.PublishedRevision.Get(0);
-				Rev.RevisionNumber = (int32)(BaseRev + InCommit.DraftRevision.GetValue());
+				Rev.RevisionNumber = static_cast<int32>(BaseRev + InCommit.DraftRevision.GetValue());
 			}
 			else
 			{
-				Rev.RevisionNumber = (int32)InCommit.PublishedRevision.Get(0);
+				Rev.RevisionNumber = static_cast<int32>(InCommit.PublishedRevision.Get(0));
 			}
 			Rev.RevisionSpec = InChangeId;
 			Rev.Description = InCommit.Description;
@@ -396,7 +396,7 @@ bool ParseFlexVaultChangeInfo(
 			}
 
 			Rev.Date = InCommit.Date;
-			Rev.ContentAddress = FString::Printf(TEXT("CONTENT:%s"), *HashStr);
+			Rev.ContentAddress = FString::Printf(TEXT("BLOB:%s"), *HashStr);
 
 			UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault: Parsed file history change info - File: %s, Action: %s, RevisionSpec: %s, RevisionNumber: %d, Size: %lld"),
 				*RelPath, *Rev.Action, *Rev.RevisionSpec, Rev.RevisionNumber, Rev.FileSize);

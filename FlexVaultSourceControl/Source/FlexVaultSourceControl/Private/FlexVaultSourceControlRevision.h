@@ -54,7 +54,7 @@ public:
 	/** File size in bytes */
 	int32 FileSize;
 
-	/** CAS Address of the content blob (e.g., CONTENT:<hash>) */
+	/** CAS Address of the content blob (e.g., BLOB:<hash>) */
 	FString ContentAddress;
 
 private:

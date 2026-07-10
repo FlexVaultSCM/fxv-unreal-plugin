@@ -8,9 +8,6 @@
 #include "FlexVaultSourceControlDeveloperSettings.h"
 #include "Workers/FlexVaultSourceControlWorkerHelper.h"
 
-// Preprocessor trick to access private and mutable worker fields for state verification
-#define private public
-#define protected public
 #include "Workers/FlexVaultUpdateStatusWorker.h"
 #include "Workers/FlexVaultCheckInWorker.h"
 #include "Workers/FlexVaultCheckOutWorker.h"
@@ -18,8 +15,6 @@
 #include "Workers/FlexVaultDeleteWorker.h"
 #include "Workers/FlexVaultRevertWorker.h"
 #include "Workers/FlexVaultSyncWorker.h"
-#undef private
-#undef protected
 
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
@@ -209,7 +204,7 @@ bool FFlexVaultChangeInfoParsingTest::RunTest(const FString& Parameters)
 	{
 		TestEqual(TEXT("Action maps to Add"), (*AddRev)[0].Action, TEXT("Add"));
 		TestEqual(TEXT("Revision number maps correctly"), (*AddRev)[0].RevisionNumber, 8);
-		TestEqual(TEXT("Content address formatted correctly"), (*AddRev)[0].ContentAddress, TEXT("CONTENT:4a8e23908f9024f"));
+		TestEqual(TEXT("Content address formatted correctly"), (*AddRev)[0].ContentAddress, TEXT("BLOB:4a8e23908f9024f"));
 	}
 
 	// Test Modified File Revision

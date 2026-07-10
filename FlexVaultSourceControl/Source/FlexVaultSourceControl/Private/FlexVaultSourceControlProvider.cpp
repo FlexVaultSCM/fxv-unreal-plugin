@@ -75,10 +75,10 @@ ISourceControlProvider::FInitResult FFlexVaultSourceControlProvider::Init(EInitF
 			// processes completions and deletes commands asynchronously on the Game Thread via AsyncTask. 
 			// Future Refactoring: Consider enforcing heap-only allocation by protecting the constructor 
 			// and exposing a static factory method, or modernizing the pipeline to use UE::Tasks.
-			FFlexVaultSourceControlCommand* Command = new FFlexVaultSourceControlCommand(ConnectOp, Worker.ToSharedRef());
+			TUniquePtr<FFlexVaultSourceControlCommand> Command = MakeUnique<FFlexVaultSourceControlCommand>(ConnectOp, Worker.ToSharedRef());
 			Command->Concurrency = EConcurrency::Synchronous;
 			
-			ECommandResult::Type CmdResult = IssueCommand(*Command, true);
+			ECommandResult::Type CmdResult = IssueCommand(MoveTemp(Command), true);
 			bServerAvailable = (CmdResult == ECommandResult::Succeeded);
 		}
 	}
@@ -92,6 +92,8 @@ void FFlexVaultSourceControlProvider::Close()
 	FWriteScopeLock WriteLock(StateCacheLock);
 	StateCache.Empty();
 	bServerAvailable = false;
+	PendingStatusUpdates.Empty();
+	bStatusUpdateDelayed = false;
 }
 
 FText FFlexVaultSourceControlProvider::GetStatusText() const
@@ -148,33 +150,6 @@ ECommandResult::Type FFlexVaultSourceControlProvider::GetState(const TArray<FStr
 	if (PendingStatusUpdates.Num() > 0 && !bStatusUpdateDelayed)
 	{
 		bStatusUpdateDelayed = true;
-
-		// Defer execution of SCM command to the next game thread tick to accumulate and batch requests
-		AsyncTask(ENamedThreads::GameThread, [this]()
-		{
-			bStatusUpdateDelayed = false;
-			if (PendingStatusUpdates.Num() > 0)
-			{
-				TArray<FString> FilesToUpdate = PendingStatusUpdates.Array();
-				PendingStatusUpdates.Empty();
-
-				// De-duplicate in-flight status requests globally to avoid spawning redundant background status updates
-				bool bAlreadyInFlight = false;
-				for (const FFlexVaultSourceControlCommand* Command : CommandQueue)
-				{
-					if (Command->Operation->GetName() == FlexVaultSourceControlConstants::UpdateStatus)
-					{
-						bAlreadyInFlight = true;
-						break;
-					}
-				}
-
-				if (!bAlreadyInFlight)
-				{
-					Execute(ISourceControlOperation::Create<FUpdateStatus>(), nullptr, FilesToUpdate, EConcurrency::Asynchronous);
-				}
-			}
-		});
 	}
 
 	return ECommandResult::Succeeded;
@@ -226,7 +201,7 @@ ECommandResult::Type FFlexVaultSourceControlProvider::Execute(
 	}
 
 	// Create command instance
-	FFlexVaultSourceControlCommand* Command = new FFlexVaultSourceControlCommand(
+	TUniquePtr<FFlexVaultSourceControlCommand> Command = MakeUnique<FFlexVaultSourceControlCommand>(
 		InOperation,
 		Worker.ToSharedRef(),
 		InOperationCompleteDelegate
@@ -235,7 +210,7 @@ ECommandResult::Type FFlexVaultSourceControlProvider::Execute(
 	Command->Files = InFiles;
 	Command->Concurrency = InConcurrency;
 
-	return IssueCommand(*Command, InConcurrency == EConcurrency::Synchronous);
+	return IssueCommand(MoveTemp(Command), InConcurrency == EConcurrency::Synchronous);
 }
 
 bool FFlexVaultSourceControlProvider::CanExecuteOperation(const FSourceControlOperationRef& InOperation) const
@@ -255,6 +230,30 @@ bool FFlexVaultSourceControlProvider::CanExecuteOperation(const FSourceControlOp
 void FFlexVaultSourceControlProvider::Tick()
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(FFlexVaultSourceControlProvider::Tick);
+
+	// Defer execution of SCM command to the next game thread tick to accumulate and batch requests
+	if (bStatusUpdateDelayed && PendingStatusUpdates.Num() > 0)
+	{
+		bStatusUpdateDelayed = false;
+		TArray<FString> FilesToUpdate = PendingStatusUpdates.Array();
+		PendingStatusUpdates.Empty();
+
+		// De-duplicate in-flight status requests globally to avoid spawning redundant background status updates
+		bool bAlreadyInFlight = false;
+		for (const FFlexVaultSourceControlCommand* Command : CommandQueue)
+		{
+			if (Command->Operation->GetName() == FlexVaultSourceControlConstants::UpdateStatus)
+			{
+				bAlreadyInFlight = true;
+				break;
+			}
+		}
+
+		if (!bAlreadyInFlight)
+		{
+			Execute(ISourceControlOperation::Create<FUpdateStatus>(), nullptr, FilesToUpdate, EConcurrency::Asynchronous);
+		}
+	}
 
 	for (int32 Index = 0; Index < CommandQueue.Num(); ++Index)
 	{
@@ -395,51 +394,53 @@ TSharedPtr<IFlexVaultSourceControlWorker, ESPMode::ThreadSafe> FFlexVaultSourceC
 
 	return nullptr;
 }
-ECommandResult::Type FFlexVaultSourceControlProvider::ExecuteSynchronousCommand(FFlexVaultSourceControlCommand& InCommand, const FText& Task)
+ECommandResult::Type FFlexVaultSourceControlProvider::ExecuteSynchronousCommand(TUniquePtr<FFlexVaultSourceControlCommand> InCommand, const FText& Task)
 {
-	UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault SCM: ExecuteSynchronousCommand starting for operation: %s"), *InCommand.Operation->GetName().ToString());
+	UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault SCM: ExecuteSynchronousCommand starting for operation: %s"), *InCommand->Operation->GetName().ToString());
 	FScopedSourceControlProgress Progress(Task);
 
-	// Issue the command asynchronously
-	IssueCommand(InCommand, false);
+	FFlexVaultSourceControlCommand* CommandPtr = InCommand.Get();
+
+	// Queue background work on Unreal Engine thread pool manually to bypass IssueCommand ownership release
+	CommandQueue.Add(CommandPtr);
+	GThreadPool->AddQueuedWork(CommandPtr);
 
 	// Wait until the command has been processed and removed from the queue by Tick()
-	while (CommandQueue.Contains(&InCommand))
+	while (CommandQueue.Contains(CommandPtr))
 	{
 		Tick();
 		Progress.Tick();
 		FPlatformProcess::Sleep(0.01f);
 	}
 
-	UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault SCM: Synchronous command %s loop finished. processed=%d, success=%d"), *InCommand.Operation->GetName().ToString(), InCommand.bExecuteProcessed.Load() ? 1 : 0, InCommand.bCommandSuccessful ? 1 : 0);
+	UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault SCM: Synchronous command %s loop finished. processed=%d, success=%d"), *CommandPtr->Operation->GetName().ToString(), CommandPtr->bExecuteProcessed.Load() ? 1 : 0, CommandPtr->bCommandSuccessful ? 1 : 0);
 
 	// Run a final Tick() to process other state updates and completions
 	Tick();
 
-	const bool bSuccess = InCommand.bCommandSuccessful;
+	const bool bSuccess = CommandPtr->bCommandSuccessful;
 
-	UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault SCM: ExecuteSynchronousCommand finished for operation: %s, Success=%d"), *InCommand.Operation->GetName().ToString(), bSuccess ? 1 : 0);
+	UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault SCM: ExecuteSynchronousCommand finished for operation: %s, Success=%d"), *CommandPtr->Operation->GetName().ToString(), bSuccess ? 1 : 0);
 
-	// Safely delete the heap-allocated command (synchronous commands are not auto-deleted by Tick())
-	delete &InCommand;
-
+	// InCommand will go out of scope and delete the heap-allocated command automatically and safely.
 	return bSuccess ? ECommandResult::Succeeded : ECommandResult::Failed;
 }
 
-ECommandResult::Type FFlexVaultSourceControlProvider::IssueCommand(FFlexVaultSourceControlCommand& InCommand, const bool bSynchronous)
+ECommandResult::Type FFlexVaultSourceControlProvider::IssueCommand(TUniquePtr<FFlexVaultSourceControlCommand> InCommand, const bool bSynchronous)
 {
-	UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault SCM: IssueCommand: %s, bSynchronous=%d"), *InCommand.Operation->GetName().ToString(), bSynchronous ? 1 : 0);
-	InCommand.WorkspacePath = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
-	InCommand.BinaryPath = GetDefault<UFlexVaultSourceControlDeveloperSettings>()->GetEffectiveBinaryPath();
+	UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault SCM: IssueCommand: %s, bSynchronous=%d"), *InCommand->Operation->GetName().ToString(), bSynchronous ? 1 : 0);
+	InCommand->WorkspacePath = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
+	InCommand->BinaryPath = GetDefault<UFlexVaultSourceControlDeveloperSettings>()->GetEffectiveBinaryPath();
 	if (bSynchronous)
 	{
-		return ExecuteSynchronousCommand(InCommand, InCommand.Operation->GetInProgressString());
+		return ExecuteSynchronousCommand(MoveTemp(InCommand), InCommand->Operation->GetInProgressString());
 	}
 	else
 	{
-		CommandQueue.Add(&InCommand);
+		FFlexVaultSourceControlCommand* CommandPtr = InCommand.Release();
+		CommandQueue.Add(CommandPtr);
 		// Queue background work on Unreal Engine thread pool
-		GThreadPool->AddQueuedWork(&InCommand);
+		GThreadPool->AddQueuedWork(CommandPtr);
 		return ECommandResult::Succeeded;
 	}
 }
