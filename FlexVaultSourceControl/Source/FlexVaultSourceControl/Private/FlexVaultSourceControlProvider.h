@@ -60,16 +60,22 @@ public:
 	// NOTE: Using a Git-like edit-based workflow. May change this later to return true for Perforce-like checkouts.
 	virtual bool UsesCheckout() const override { return false; }
 	virtual bool UsesFileRevisions() const override { return true; }
+	// NOTE: Returning true here informs the Editor that FlexVault uses Git-like point-in-time snapshots/local drafts.
+	// When true, the Editor enforces that the local workspace is fully synchronized (up-to-date) with the remote head 
+	// before allowing a Check-In (Submit), prompting the Editor to query HasChangesToSync() and conditionally run SyncLatest().
+	// NOTE: In the future, sync will act like Perforce in that it will be a rebase+sync such that you don't need to be at HEAD to commit, 
+	// you just need to have resolved any conflicts.
 	virtual bool UsesSnapshots() const override { return true; }
 	virtual bool AllowsDiffAgainstDepot() const override { return true; }
 	// UE 5.8: three new pure virtuals on ISourceControlProvider.
-	// NOTE: Using a Git-like edit-based workflow — no soft revert before delete.
+	// NOTE: Using a Git-like edit-based workflow, no soft revert before delete.
 	virtual bool UsesSoftRevertOnDelete() const override { return false; }
-	// Return empty TOptional (unknown/not applicable) — consistent with the IsAtLatestRevision/GetNumLocalChanges pattern.
-	virtual TOptional<bool> HasChangesToSync() const override { return TOptional<bool>(); }
+	// Return empty TOptional (unknown/not applicable), consistent with the IsAtLatestRevision/GetNumLocalChanges pattern.
+	virtual TOptional<bool> HasChangesToSync() const override { return bHasChangesToSync; }
 	virtual TOptional<bool> HasChangesToCheckIn() const override { return TOptional<bool>(); }
+	void SetHasChangesToSync(TOptional<bool> InHasChangesToSync) { bHasChangesToSync = InHasChangesToSync; }
 	// IsAtLatestRevision() and GetNumLocalChanges() are now final in UE 5.8's ISourceControlProvider.
-	// The base class default implementations return TOptional<bool>() / TOptional<int>() — identical behaviour.
+	// The base class default implementations return TOptional<bool>() / TOptional<int>(), identical behaviour.
 	virtual void Tick() override;
 	virtual TArray<TSharedRef<class ISourceControlLabel>> GetLabels(const FString& InMatchingSpec) const override { return TArray<TSharedRef<class ISourceControlLabel>>(); }
 	virtual TArray<FSourceControlChangelistRef> GetChangelists(EStateCacheUsage::Type InStateCacheUsage) override { return TArray<FSourceControlChangelistRef>(); }
@@ -95,8 +101,8 @@ private:
 	virtual TUniquePtr<ISourceControlProvider> Create(const FStringView& OwnerName, const FSourceControlInitSettings& InInitialSettings) const override;
 
 	TSharedPtr<IFlexVaultSourceControlWorker, ESPMode::ThreadSafe> CreateWorker(const FName& InOperationName);
-	ECommandResult::Type ExecuteSynchronousCommand(FFlexVaultSourceControlCommand& InCommand, const FText& Task);
-	ECommandResult::Type IssueCommand(FFlexVaultSourceControlCommand& InCommand, const bool bSynchronous);
+	ECommandResult::Type ExecuteSynchronousCommand(TUniquePtr<FFlexVaultSourceControlCommand> InCommand, const FText& Task);
+	ECommandResult::Type IssueCommand(TUniquePtr<FFlexVaultSourceControlCommand> InCommand, const bool bSynchronous);
 
 private:
 	FString OwnerName;
@@ -113,6 +119,11 @@ private:
 
 	/** Delegate for status updates notification */
 	FSourceControlStateChanged OnSourceControlStateChanged;
+
+	/** Files pending status updates, collected over the frame and batched into a single command */
+	TSet<FString> PendingStatusUpdates;
+	bool bStatusUpdateDelayed;
+	TOptional<bool> bHasChangesToSync;
 };
 
 DECLARE_LOG_CATEGORY_EXTERN(LogFlexVault, Verbose, All);

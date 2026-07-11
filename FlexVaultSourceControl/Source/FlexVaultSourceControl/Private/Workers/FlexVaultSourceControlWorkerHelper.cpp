@@ -342,27 +342,37 @@ bool ParseFlexVaultChangeInfo(
 	TMap<FString, TArray<FFlexVaultRevisionDetail>>& OutFileRevisionMap
 )
 {
-	// TODO: Plaintext parsing of changeinfo output is temporary until the SCM CLI supports structured JSON output for changeinfo
+	// Plaintext parsing of changeinfo output:
+	// Format is: <Action> <Hash> <Path>
+	// E.g.: Added 3c9b23ad7a002458ec6ec130aea451eab768d4965b8d0f6ac83ddcbf54df6234 .fxvignore
 	for (const FString& Line : InChangeInfoOutputLines)
 	{
 		FString TrimmedLine = Line.TrimStartAndEnd();
 		TArray<FString> Tokens;
 		TrimmedLine.ParseIntoArrayWS(Tokens);
-		if (Tokens.Num() >= 4)
+		if (Tokens.Num() >= 3)
 		{
 			FString ActionStr = Tokens[0];
 			FString HashStr = Tokens[1];
-			int64 ParsedSize = FCString::Atoi64(*Tokens[2]);
+			int64 ParsedSize = 0; // File size is not yet reported in the changeinfo output
 			
-			FString RelPath = Tokens[3];
-			for (int32 i = 4; i < Tokens.Num(); ++i)
+			FString RelPath = Tokens[2];
+			for (int32 i = 3; i < Tokens.Num(); ++i)
 			{
 				RelPath += TEXT(" ") + Tokens[i];
 			}
 			RelPath.ReplaceInline(TEXT("\\"), TEXT("/"));
 
 			FFlexVaultRevisionDetail Rev;
-			Rev.RevisionNumber = (int32)InCommit.PublishedRevision.Get(0);
+			if (InCommit.CommitType.Equals(TEXT("draft"), ESearchCase::IgnoreCase) && InCommit.DraftRevision.IsSet())
+			{
+				uint64 BaseRev = InCommit.PublishedRevision.Get(0);
+				Rev.RevisionNumber = static_cast<int32>(BaseRev + InCommit.DraftRevision.GetValue());
+			}
+			else
+			{
+				Rev.RevisionNumber = static_cast<int32>(InCommit.PublishedRevision.Get(0));
+			}
 			Rev.RevisionSpec = InChangeId;
 			Rev.Description = InCommit.Description;
 			Rev.UserName = InCommit.Author;
@@ -386,7 +396,10 @@ bool ParseFlexVaultChangeInfo(
 			}
 
 			Rev.Date = InCommit.Date;
-			Rev.ContentAddress = FString::Printf(TEXT("CONTENT:%s"), *HashStr);
+			Rev.ContentAddress = FString::Printf(TEXT("BLOB:%s"), *HashStr);
+
+			UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault: Parsed file history change info - File: %s, Action: %s, RevisionSpec: %s, RevisionNumber: %d, Size: %lld"),
+				*RelPath, *Rev.Action, *Rev.RevisionSpec, Rev.RevisionNumber, Rev.FileSize);
 
 			OutFileRevisionMap.FindOrAdd(RelPath.ToLower()).Add(Rev);
 		}

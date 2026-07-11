@@ -47,6 +47,12 @@ fxv-unreal-plugin/
 3. Enable the plugin in the **Plugins** browser and restart the editor.
 4. Go to **Revision Control → Connect to Revision Control**, select **FlexVault**, and configure the `fxv` binary path and repository URI.
 
+## Running Plugin Tests
+
+```powershell
+Engine/Binaries/Win64/UnrealEditor-Cmd.exe "Path/To/YourProject/YourProject.uproject" -ExecCmds="Automation RunTests FlexVault.SourceControl" -NoSplash -NullRHI -NoSound -unattended -TestExit="All Tests Complete"
+```
+
 ## Open items
 
 See [`FlexVaultSourceControl/TODO.md`](FlexVaultSourceControl/TODO.md) for planned work (lock server integration, Slate settings widget, auto-discovery of `fxv`).

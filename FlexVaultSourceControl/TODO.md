@@ -51,7 +51,4 @@ The plugin currently targets **Unreal Engine 5.8**. To support older UE 5 releas
 - [ ] Implement FFlexVaultRevertWorker once CLI supports it (`fxv revert`)
 - [ ] Implement FFlexVaultSourceControlRevision once CLI supports it (`fxv cat`)
 - [ ] Swap plaintext parsing of changeinfo output to JSON once CLI supports it (`fxv changeinfo`)
-- [ ] Submitting results in prolonged reloading, likely due to unexpected cache invalidation
-- [ ] Submit modal takes a long time to present after clicking on the button (large amount of SCM state changed)
 - [ ] Log spam: `LogRendererCore: Warning: FlushRenderingCommands called recursively! 2 calls on the stack.`
-- [ ] Editor crash when closing Submit modal, regardless of action taken (UECC-Windows-D1ED4FA241707896405B759F2ABABF7C_0000)

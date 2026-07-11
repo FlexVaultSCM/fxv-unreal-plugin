@@ -23,11 +23,14 @@ public:
 	virtual bool UpdateStates() const override;
 
 private:
+	friend class FFlexVaultWorkerUpdateStatusTest;
+
 	// Repository-wide status results cached during Execute() to update all states on the main thread
 	mutable TMap<FString, EFlexVaultState::Type> ModifiedFiles;
 	mutable int32 DepotRevision = 0;
 	mutable int32 LocalRevision = 0;
 	mutable FString WorkspacePath;
+	mutable TOptional<bool> bHasChangesToSync;
 
 	// History details cached during Execute() if ShouldUpdateHistory() was requested
 	mutable TMap<FString, TArray<TSharedRef<class FFlexVaultSourceControlRevision, ESPMode::ThreadSafe>>> FileHistories;

@@ -34,7 +34,7 @@ bool FFlexVaultCheckInWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 
 	UE_LOG(LogFlexVault, Display, TEXT("FlexVault SCM: Checking in %d files with description: '%s'"), InCommand.Files.Num(), *Description);
 
-	TArray<FString> OutputLines;
+	TArray<FString> SnapshotOutputLines;
 	// 1. Snapshot changes locally
 	TArray<FString> SnapshotArgs = {
 		TEXT("snapshot"),
@@ -43,13 +43,23 @@ bool FFlexVaultCheckInWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 		TEXT("--unattended"),
 		TEXT("--no-color")
 	};
-	bool bSnapshotOk = RunFlexVaultCommand(InCommand.BinaryPath, InCommand.WorkspacePath, SnapshotArgs, OutputLines, InCommand.ResultInfo);
+	bool bSnapshotOk = RunFlexVaultCommand(InCommand.BinaryPath, InCommand.WorkspacePath, SnapshotArgs, SnapshotOutputLines, InCommand.ResultInfo);
 	if (!bSnapshotOk)
 	{
+		UE_LOG(LogFlexVault, Error, TEXT("FlexVault SCM: Snapshot phase failed during check-in."));
+		InCommand.ResultInfo.ErrorMessages.Add(LOCTEXT("SnapshotFailure", "FlexVault: Snapshot phase failed during check-in."));
+		for (const FString& Line : SnapshotOutputLines)
+		{
+			if (!Line.IsEmpty())
+			{
+				InCommand.ResultInfo.ErrorMessages.Add(FText::FromString(Line));
+			}
+		}
 		return false;
 	}
 
 	// 2. Publish snapshots to remote CAS
+	TArray<FString> PublishOutputLines;
 	TArray<FString> PublishArgs = {
 		TEXT("publish"),
 		TEXT("-d"),
@@ -57,11 +67,22 @@ bool FFlexVaultCheckInWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 		TEXT("--unattended"),
 		TEXT("--no-color")
 	};
-	bool bPublishOk = RunFlexVaultCommand(InCommand.BinaryPath, InCommand.WorkspacePath, PublishArgs, OutputLines, InCommand.ResultInfo);
+	bool bPublishOk = RunFlexVaultCommand(InCommand.BinaryPath, InCommand.WorkspacePath, PublishArgs, PublishOutputLines, InCommand.ResultInfo);
 	if (!bPublishOk)
 	{
+		UE_LOG(LogFlexVault, Error, TEXT("FlexVault SCM: Publish phase failed during check-in."));
+		InCommand.ResultInfo.ErrorMessages.Add(LOCTEXT("PublishFailure", "FlexVault: Publish phase failed during check-in."));
+		for (const FString& Line : PublishOutputLines)
+		{
+			if (!Line.IsEmpty())
+			{
+				InCommand.ResultInfo.ErrorMessages.Add(FText::FromString(Line));
+			}
+		}
 		return false;
 	}
+
+	Operation->SetSuccessMessage(FText::Format(LOCTEXT("CheckInSuccess", "Successfully checked in {0} files."), FText::AsNumber(InCommand.Files.Num())));
 
 	CommittedFiles = InCommand.Files;
 	return true;

@@ -20,5 +20,6 @@ public:
 	virtual bool UpdateStates() const override;
 
 private:
+	friend class FFlexVaultWorkerDeleteTest;
 	mutable TArray<FString> DeletedFiles;
 };
