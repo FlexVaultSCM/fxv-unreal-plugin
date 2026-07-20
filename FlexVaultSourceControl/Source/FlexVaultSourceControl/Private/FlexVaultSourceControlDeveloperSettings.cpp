@@ -5,6 +5,7 @@
 UFlexVaultSourceControlDeveloperSettings::UFlexVaultSourceControlDeveloperSettings()
 	: BinaryPath(TEXT(""))
 	, bUseUnattendedMode(true)
+	, ResolvePreference(TEXT("theirs"))
 {
 }
 

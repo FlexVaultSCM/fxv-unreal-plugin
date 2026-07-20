@@ -358,6 +358,8 @@ bool FFlexVaultWorkerUpdateStatusTest::RunTest(const FString& Parameters)
 	Worker.bHasChangesToSync = true;
 	Worker.ModifiedFiles.Add(ModFileRelative, EFlexVaultState::CheckedOut);
 	Worker.ModifiedFiles.Add(AddFileRelative, EFlexVaultState::OpenForAdd);
+	Worker.FileSizes.Add(ModFileRelative, 1024);
+	Worker.FileSizes.Add(AddFileRelative, 2048);
 
 	// Verify UpdateStates correctly applies injected mock SCM findings
 	TestTrue(TEXT("Status UpdateStates succeeds"), Worker.UpdateStates());
@@ -398,6 +400,58 @@ bool FFlexVaultWorkerSyncTest::RunTest(const FString& Parameters)
 	// Cache should be completely flushed after a sync operation
 	TArray<FSourceControlStateRef> EmptyCache = Provider.GetCachedStateByPredicate([](const FSourceControlStateRef&){ return true; });
 	TestEqual(TEXT("State cache is invalidated and empty"), EmptyCache.Num(), 0);
+
+	return true;
+}
+
+// ── Test 11: Revert SCM Worker ───────────────────────────────────────────────
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultWorkerRevertTest, "FlexVault.SourceControl.WorkerRevert", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FFlexVaultWorkerRevertTest::RunTest(const FString& Parameters)
+{
+	FFlexVaultSourceControlProvider Provider;
+	FString TestFile = FPaths::ProjectDir() / TEXT("Content/RevertAsset.uasset");
+	TestFile.ReplaceInline(TEXT("\\"), TEXT("/"));
+
+	// Pre-fill state cache
+	TSharedRef<FFlexVaultSourceControlState, ESPMode::ThreadSafe> State = Provider.GetStateInternal(TestFile);
+	State->SetState(EFlexVaultState::CheckedOut);
+	State->bModified = true;
+
+	FFlexVaultRevertWorker Worker(Provider);
+	// Mock reverted files list
+	Worker.RevertedFiles.Add(TestFile);
+
+	TestTrue(TEXT("Revert UpdateStates completes"), Worker.UpdateStates());
+
+	// Verify revert reset the state
+	TestEqual(TEXT("Reverted file state set to Unchanged"), State->GetState(), EFlexVaultState::Unchanged);
+	TestFalse(TEXT("Reverted file modified flag is false"), State->bModified);
+
+	return true;
+}
+
+// ── Test 12: Resolve SCM Worker ───────────────────────────────────────────────
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultWorkerResolveTest, "FlexVault.SourceControl.WorkerResolve", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FFlexVaultWorkerResolveTest::RunTest(const FString& Parameters)
+{
+	FFlexVaultSourceControlProvider Provider;
+	FString TestFile = FPaths::ProjectDir() / TEXT("Content/ConflictedAsset.uasset");
+	TestFile.ReplaceInline(TEXT("\\"), TEXT("/"));
+
+	// Pre-fill state cache with conflict
+	TSharedRef<FFlexVaultSourceControlState, ESPMode::ThreadSafe> State = Provider.GetStateInternal(TestFile);
+	State->bConflicted = true;
+
+	FFlexVaultResolveWorker Worker(Provider);
+	// Mock resolved files list
+	Worker.ResolvedFiles.Add(TestFile);
+
+	TestTrue(TEXT("Resolve UpdateStates completes"), Worker.UpdateStates());
+
+	// Verify resolve cleared conflict
+	TestFalse(TEXT("Resolved file bConflicted is false"), State->bConflicted);
 
 	return true;
 }

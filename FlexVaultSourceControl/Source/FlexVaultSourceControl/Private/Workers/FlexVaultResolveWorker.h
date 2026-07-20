@@ -5,12 +5,12 @@
 #include "IFlexVaultSourceControlWorker.h"
 
 /**
- * Worker for FRevert operation.
+ * Worker for FResolve SCM operation.
  */
-class FFlexVaultRevertWorker : public IFlexVaultSourceControlWorker
+class FFlexVaultResolveWorker : public IFlexVaultSourceControlWorker
 {
 public:
-	FFlexVaultRevertWorker(FFlexVaultSourceControlProvider& InSCCProvider)
+	FFlexVaultResolveWorker(FFlexVaultSourceControlProvider& InSCCProvider)
 		: IFlexVaultSourceControlWorker(InSCCProvider)
 	{
 	}
@@ -20,7 +20,7 @@ public:
 	virtual bool UpdateStates() const override;
 
 private:
-	friend class FFlexVaultWorkerRevertTest;
+	friend class FFlexVaultWorkerResolveTest;
 
-	mutable TArray<FString> RevertedFiles;
+	mutable TArray<FString> ResolvedFiles;
 };

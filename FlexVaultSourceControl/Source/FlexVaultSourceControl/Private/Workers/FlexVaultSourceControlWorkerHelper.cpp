@@ -350,14 +350,14 @@ bool ParseFlexVaultChangeInfo(
 		FString TrimmedLine = Line.TrimStartAndEnd();
 		TArray<FString> Tokens;
 		TrimmedLine.ParseIntoArrayWS(Tokens);
-		if (Tokens.Num() >= 3)
+		if (Tokens.Num() >= 4)
 		{
 			FString ActionStr = Tokens[0];
 			FString HashStr = Tokens[1];
-			int64 ParsedSize = 0; // File size is not yet reported in the changeinfo output
+			int64 ParsedSize = FCString::Atoi64(*Tokens[2]);
 			
-			FString RelPath = Tokens[2];
-			for (int32 i = 3; i < Tokens.Num(); ++i)
+			FString RelPath = Tokens[3];
+			for (int32 i = 4; i < Tokens.Num(); ++i)
 			{
 				RelPath += TEXT(" ") + Tokens[i];
 			}

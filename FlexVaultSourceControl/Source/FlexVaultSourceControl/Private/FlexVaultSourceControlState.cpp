@@ -244,6 +244,11 @@ bool FFlexVaultSourceControlState::CanRevert() const
 	return IsCheckedOut() || IsAdded() || IsDeleted();
 }
 
+bool FFlexVaultSourceControlState::IsConflicted() const
+{
+	return bConflicted;
+}
+
 void FFlexVaultSourceControlState::Update(const FFlexVaultSourceControlState& InOther, const FDateTime* InTimeStamp)
 {
 	check(InOther.LocalFilename == LocalFilename);
@@ -276,6 +281,7 @@ void FFlexVaultSourceControlState::Update(const FFlexVaultSourceControlState& In
 
 	bBinary = InOther.bBinary;
 	bExclusiveCheckout = InOther.bExclusiveCheckout;
+	bConflicted = InOther.bConflicted;
 
 	if (InTimeStamp)
 	{

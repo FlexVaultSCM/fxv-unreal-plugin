@@ -49,6 +49,7 @@ public:
 		, bModified(false)
 		, bBinary(false)
 		, bExclusiveCheckout(false)
+		, bConflicted(false)
 		, TimeStamp(0)
 	{
 	}
@@ -95,6 +96,7 @@ public:
 	virtual bool CanAdd() const override;
 	virtual bool CanDelete() const override;
 	virtual bool CanRevert() const override;
+	virtual bool IsConflicted() const override;
 
 	EFlexVaultState::Type GetState() const { return State; }
 	void SetState(EFlexVaultState::Type InState) { State = InState; }
@@ -128,6 +130,9 @@ public:
 
 	/** Exclusive lock flag */
 	bool bExclusiveCheckout;
+
+	/** Conflicted flag */
+	bool bConflicted;
 
 	/** Timestamp of last SCM update */
 	FDateTime TimeStamp;

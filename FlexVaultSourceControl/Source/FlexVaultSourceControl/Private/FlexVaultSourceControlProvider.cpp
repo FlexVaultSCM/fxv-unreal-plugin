@@ -10,6 +10,7 @@
 #include "Workers/FlexVaultMarkForAddWorker.h"
 #include "Workers/FlexVaultDeleteWorker.h"
 #include "Workers/FlexVaultRevertWorker.h"
+#include "Workers/FlexVaultResolveWorker.h"
 #include "Workers/FlexVaultSyncWorker.h"
 #include "Workers/FlexVaultGetSourceControlRevisionInfoWorker.h"
 #include "SourceControlOperations.h"
@@ -40,6 +41,7 @@ namespace FlexVaultSourceControlConstants
 	const FName MarkForAdd(TEXT("MarkForAdd"));
 	const FName Delete(TEXT("Delete"));
 	const FName Revert(TEXT("Revert"));
+	const FName Resolve(TEXT("Resolve"));
 	const FName Sync(TEXT("Sync"));
 	const FName GetSourceControlRevisionInfo(TEXT("GetSourceControlRevisionInfo"));
 }
@@ -223,6 +225,7 @@ bool FFlexVaultSourceControlProvider::CanExecuteOperation(const FSourceControlOp
 		   OpName == FlexVaultSourceControlConstants::MarkForAdd ||
 		   OpName == FlexVaultSourceControlConstants::Delete ||
 		   OpName == FlexVaultSourceControlConstants::Revert ||
+		   OpName == FlexVaultSourceControlConstants::Resolve ||
 		   OpName == FlexVaultSourceControlConstants::Sync ||
 		   OpName == FlexVaultSourceControlConstants::GetSourceControlRevisionInfo;
 }
@@ -382,6 +385,10 @@ TSharedPtr<IFlexVaultSourceControlWorker, ESPMode::ThreadSafe> FFlexVaultSourceC
 	else if (InOperationName == FlexVaultSourceControlConstants::Revert)
 	{
 		return TSharedPtr<IFlexVaultSourceControlWorker, ESPMode::ThreadSafe>(new FFlexVaultRevertWorker(*this));
+	}
+	else if (InOperationName == FlexVaultSourceControlConstants::Resolve)
+	{
+		return TSharedPtr<IFlexVaultSourceControlWorker, ESPMode::ThreadSafe>(new FFlexVaultResolveWorker(*this));
 	}
 	else if (InOperationName == FlexVaultSourceControlConstants::Sync)
 	{

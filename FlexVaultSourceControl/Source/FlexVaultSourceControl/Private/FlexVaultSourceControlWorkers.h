@@ -8,5 +8,6 @@
 #include "Workers/FlexVaultMarkForAddWorker.h"
 #include "Workers/FlexVaultDeleteWorker.h"
 #include "Workers/FlexVaultRevertWorker.h"
+#include "Workers/FlexVaultResolveWorker.h"
 #include "Workers/FlexVaultSyncWorker.h"
 #include "Workers/FlexVaultGetSourceControlRevisionInfoWorker.h"
