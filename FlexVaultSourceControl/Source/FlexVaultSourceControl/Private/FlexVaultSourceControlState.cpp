@@ -241,7 +241,7 @@ bool FFlexVaultSourceControlState::CanDelete() const
 
 bool FFlexVaultSourceControlState::CanRevert() const
 {
-	return IsCheckedOut() || IsAdded() || IsDeleted();
+	return IsCheckedOut() || IsAdded() || IsDeleted() || IsConflicted();
 }
 
 bool FFlexVaultSourceControlState::IsConflicted() const

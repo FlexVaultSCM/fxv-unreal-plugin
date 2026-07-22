@@ -427,6 +427,7 @@ bool FFlexVaultWorkerRevertTest::RunTest(const FString& Parameters)
 	// Verify revert reset the state
 	TestEqual(TEXT("Reverted file state set to Unchanged"), State->GetState(), EFlexVaultState::Unchanged);
 	TestFalse(TEXT("Reverted file modified flag is false"), State->bModified);
+	TestFalse(TEXT("Reverted file conflicted flag is false"), State->bConflicted);
 
 	return true;
 }
