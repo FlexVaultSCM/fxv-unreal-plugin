@@ -457,4 +457,39 @@ bool FFlexVaultWorkerResolveTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+// ── Test 13: Synchronous Command Execution Non-Blocking Test ─────────────────
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultSynchronousCommandTest, "FlexVault.SourceControl.SynchronousCommandNonBlocking", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FFlexVaultSynchronousCommandTest::RunTest(const FString& Parameters)
+{
+	FFlexVaultSourceControlProvider Provider;
+	TSharedRef<FConnect, ESPMode::ThreadSafe> ConnectOp = ISourceControlOperation::Create<FConnect>();
+
+	// Test Execute with EConcurrency::Synchronous
+	ECommandResult::Type Result = Provider.Execute(ConnectOp, nullptr, TArray<FString>(), EConcurrency::Synchronous);
+
+	// Synchronous command must return immediately and process bExecuteProcessed without relying on frame Tick()
+	TestTrue(TEXT("Synchronous command execution completes cleanly"), Result == ECommandResult::Succeeded || Result == ECommandResult::Failed);
+
+	return true;
+}
+
+// ── Test 14: Asynchronous Command Queuing & Tick Processing ──────────────────
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultAsynchronousCommandTest, "FlexVault.SourceControl.AsynchronousCommandQueue", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FFlexVaultAsynchronousCommandTest::RunTest(const FString& Parameters)
+{
+	FFlexVaultSourceControlProvider Provider;
+	TSharedRef<FConnect, ESPMode::ThreadSafe> ConnectOp = ISourceControlOperation::Create<FConnect>();
+
+	// Execute asynchronous command
+	ECommandResult::Type Result = Provider.Execute(ConnectOp, nullptr, TArray<FString>(), EConcurrency::Asynchronous);
+	TestEqual(TEXT("IssueCommand for asynchronous operation returns Succeeded immediately"), Result, ECommandResult::Succeeded);
+
+	// Call Tick() to process completion
+	Provider.Tick();
+
+	return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS

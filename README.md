@@ -2,39 +2,6 @@
 
 Unreal Engine Source Control Plugin for [FlexVault](https://fxv.dev) — integrates the `fxv` CLI with Unreal Engine's built-in Revision Control system.
 
-## Structure
-
-```
-fxv-unreal-plugin/
-└── FlexVaultSourceControl/          # UE plugin root
-    ├── FlexVaultSourceControl.uplugin
-    ├── Config/
-    │   └── FilterPlugin.ini
-    └── Source/
-        └── FlexVaultSourceControl/
-            ├── FlexVaultSourceControl.Build.cs
-            └── Private/
-                ├── FlexVaultSourceControlProvider.{h,cpp}
-                ├── FlexVaultSourceControlState.{h,cpp}
-                ├── FlexVaultSourceControlRevision.{h,cpp}
-                ├── FlexVaultSourceControlCommand.{h,cpp}
-                ├── FlexVaultSourceControlModule.{h,cpp}
-                ├── FlexVaultSourceControlWorkers.{h,cpp}
-                ├── FlexVaultSourceControlDeveloperSettings.{h,cpp}
-                ├── IFlexVaultSourceControlWorker.h
-                └── Workers/
-                    ├── FlexVaultConnectWorker
-                    ├── FlexVaultUpdateStatusWorker
-                    ├── FlexVaultCheckInWorker
-                    ├── FlexVaultCheckOutWorker
-                    ├── FlexVaultRevertWorker
-                    ├── FlexVaultDeleteWorker
-                    ├── FlexVaultMarkForAddWorker
-                    ├── FlexVaultSyncWorker
-                    ├── FlexVaultGetSourceControlRevisionInfoWorker
-                    └── FlexVaultSourceControlWorkerHelper
-```
-
 ## Requirements
 
 - Unreal Engine 5.8
@@ -50,7 +17,7 @@ fxv-unreal-plugin/
 ## Running Plugin Tests
 
 ```powershell
-Engine/Binaries/Win64/UnrealEditor-Cmd.exe "Path/To/YourProject/YourProject.uproject" -ExecCmds="Automation RunTests FlexVault.SourceControl" -NoSplash -NullRHI -NoSound -unattended -TestExit="All Tests Complete"
+Engine/Binaries/Win64/UnrealEditor-Cmd.exe "Path/To/YourProject/YourProject.uproject" -ExecCmds="Automation RunTests FlexVault.SourceControl; Quit" -NoSplash -NullRHI -NoSound -unattended
 ```
 
 ## Open items

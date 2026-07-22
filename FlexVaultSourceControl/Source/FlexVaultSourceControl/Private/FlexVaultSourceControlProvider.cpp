@@ -258,6 +258,13 @@ void FFlexVaultSourceControlProvider::Tick()
 		}
 	}
 
+	// Guard against returning results or updating states while Engine Initial Load, Garbage Collection, or Async Package Loading is in progress.
+	// Executing callbacks or notifying object reloads during GC/Async Loading/Initial Load can cause memory corruption or crashes.
+	if (GIsInitialLoad || IsGarbageCollecting() || IsAsyncLoading())
+	{
+		return;
+	}
+
 	for (int32 Index = 0; Index < CommandQueue.Num(); ++Index)
 	{
 		FFlexVaultSourceControlCommand* Command = CommandQueue[Index];
@@ -401,6 +408,7 @@ TSharedPtr<IFlexVaultSourceControlWorker, ESPMode::ThreadSafe> FFlexVaultSourceC
 
 	return nullptr;
 }
+
 ECommandResult::Type FFlexVaultSourceControlProvider::ExecuteSynchronousCommand(TUniquePtr<FFlexVaultSourceControlCommand> InCommand, const FText& Task)
 {
 	UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault SCM: ExecuteSynchronousCommand starting for operation: %s"), *InCommand->Operation->GetName().ToString());
@@ -412,18 +420,43 @@ ECommandResult::Type FFlexVaultSourceControlProvider::ExecuteSynchronousCommand(
 	CommandQueue.Add(CommandPtr);
 	GThreadPool->AddQueuedWork(CommandPtr);
 
-	// Wait until the command has been processed and removed from the queue by Tick()
-	while (CommandQueue.Contains(CommandPtr))
+	// Wait directly until the background worker thread sets bExecuteProcessed.
+	// We must NOT rely on Tick() to process completed commands here because Tick() early-returns
+	// when IsAsyncLoading() or IsGarbageCollecting() is true (e.g., during engine startup).
+	// Bypassing Tick() for synchronous calls prevents main thread deadlocks/hangs during launch while
+	// preserving Tick()'s async-loading safety guard for asynchronous operations.
+	while (!CommandPtr->bExecuteProcessed.Load())
 	{
-		Tick();
 		Progress.Tick();
 		FPlatformProcess::Sleep(0.01f);
 	}
 
-	UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault SCM: Synchronous command %s loop finished. processed=%d, success=%d"), *CommandPtr->Operation->GetName().ToString(), CommandPtr->bExecuteProcessed.Load() ? 1 : 0, CommandPtr->bCommandSuccessful ? 1 : 0);
+	// Remove from CommandQueue and return results directly on the calling thread
+	CommandQueue.Remove(CommandPtr);
 
-	// Run a final Tick() to process other state updates and completions
-	Tick();
+#if SOURCE_CONTROL_WITH_SLATE
+	bool bIsLaunchError = false;
+	for (const FText& ErrorMsg : CommandPtr->ResultInfo.ErrorMessages)
+	{
+		if (ErrorMsg.ToString().Contains(TEXT("Failed to launch FlexVault SCM executable")))
+		{
+			bIsLaunchError = true;
+			break;
+		}
+	}
+
+	if (bIsLaunchError)
+	{
+		FNotificationInfo Info(LOCTEXT("FlexVaultLaunchErrorNotification", "FlexVault: Failed to launch SCM executable. Please verify your Binary Path in Developer Settings."));
+		Info.ExpireDuration = 5.0f;
+		Info.bUseSuccessFailIcons = true;
+		FSlateNotificationManager::Get().AddNotification(Info);
+	}
+#endif
+
+	CommandPtr->ReturnResults();
+
+	UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault SCM: Synchronous command %s loop finished. processed=%d, success=%d"), *CommandPtr->Operation->GetName().ToString(), CommandPtr->bExecuteProcessed.Load() ? 1 : 0, CommandPtr->bCommandSuccessful ? 1 : 0);
 
 	const bool bSuccess = CommandPtr->bCommandSuccessful;
 

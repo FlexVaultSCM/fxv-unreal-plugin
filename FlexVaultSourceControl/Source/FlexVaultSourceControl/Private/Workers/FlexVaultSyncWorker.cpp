@@ -56,12 +56,10 @@ bool FFlexVaultSyncWorker::UpdateStates() const
 	FFlexVaultSourceControlProvider& Provider = GetSCCProvider();
 	Provider.SetHasChangesToSync(false);
 
-	// Workspace-wide sync: the CLI may have touched any file in the workspace.
-	// Flush the entire cache so the next GetState() call triggers a fresh
-	// UpdateStatus query rather than returning stale data.
-	Provider.InvalidateStateCache();
+	// Re-query workspace status asynchronously to update cached states in-place
+	Provider.Execute(ISourceControlOperation::Create<FUpdateStatus>(), nullptr, TArray<FString>(), EConcurrency::Asynchronous);
 
-	UE_LOG(LogFlexVault, Display, TEXT("FlexVault SCM: Workspace sync complete — state cache invalidated."));
+	UE_LOG(LogFlexVault, Display, TEXT("FlexVault SCM: Workspace sync complete — status update queued."));
 
 	return true;
 }
