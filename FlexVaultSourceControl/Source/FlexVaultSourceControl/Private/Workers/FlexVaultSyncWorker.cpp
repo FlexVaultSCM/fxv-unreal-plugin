@@ -8,6 +8,10 @@
 #include "HAL/PlatformFileManager.h"
 #include "GenericPlatform/GenericPlatformFile.h"
 #include "Misc/Paths.h"
+#include "Dom/JsonObject.h"
+#include "Dom/JsonValue.h"
+#include "Serialization/JsonSerializer.h"
+#include "Serialization/JsonReader.h"
 
 FName FFlexVaultSyncWorker::GetName() const
 {
@@ -33,10 +37,14 @@ bool FFlexVaultSyncWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 
 	TSharedRef<FSync, ESPMode::ThreadSafe> Operation = StaticCastSharedRef<FSync>(InCommand.Operation);
 
+	SyncedFiles.Empty();
+
 	TArray<FString> SyncArgs = {
 		TEXT("sync"),
 		TEXT("--unattended"),
-		TEXT("--no-color")
+		TEXT("--no-color"),
+		TEXT("--format"),
+		TEXT("json")
 	};
 	if (Operation->GetRevision().Len() > 0)
 	{
@@ -47,6 +55,45 @@ bool FFlexVaultSyncWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 
 	TArray<FString> OutputLines;
 	bool bSucceeded = RunFlexVaultCommand(InCommand.BinaryPath, InCommand.WorkspacePath, SyncArgs, OutputLines, InCommand.ResultInfo);
+
+	if (bSucceeded && OutputLines.Num() > 0)
+	{
+		FString FullOutput = FString::Join(OutputLines, TEXT("\n"));
+		TSharedPtr<FJsonObject> JsonObject;
+		TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(FullOutput);
+
+		if (FJsonSerializer::Deserialize(Reader, JsonObject) && JsonObject.IsValid())
+		{
+			const TSharedPtr<FJsonObject>* MessageObj = nullptr;
+			if (JsonObject->TryGetObjectField(TEXT("message"), MessageObj) && MessageObj != nullptr && MessageObj->IsValid())
+			{
+				const TSharedPtr<FJsonObject>* PayloadObj = nullptr;
+				if ((*MessageObj)->TryGetObjectField(TEXT("payload"), PayloadObj) && PayloadObj != nullptr && PayloadObj->IsValid())
+				{
+					const TArray<TSharedPtr<FJsonValue>>* FilesUpdatedArray = nullptr;
+					if ((*PayloadObj)->TryGetArrayField(TEXT("files_updated"), FilesUpdatedArray) && FilesUpdatedArray != nullptr)
+					{
+						for (const TSharedPtr<FJsonValue>& FileVal : *FilesUpdatedArray)
+						{
+							if (FileVal.IsValid() && FileVal->Type == EJson::Object)
+							{
+								TSharedPtr<FJsonObject> FileObj = FileVal->AsObject();
+								FString RelativePath;
+								if (FileObj->TryGetStringField(TEXT("path"), RelativePath))
+								{
+									FString FullPath = FPaths::Combine(InCommand.WorkspacePath, RelativePath);
+									FPaths::NormalizeFilename(FullPath);
+									SyncedFiles.Add(FullPath);
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+
+		UE_LOG(LogFlexVault, Display, TEXT("FlexVault SCM: Sync complete. Updated %d file(s)."), SyncedFiles.Num());
+	}
 
 	return bSucceeded;
 }

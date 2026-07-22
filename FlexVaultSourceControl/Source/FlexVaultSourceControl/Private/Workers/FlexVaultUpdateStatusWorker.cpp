@@ -141,14 +141,23 @@ bool FFlexVaultUpdateStatusWorker::Execute(FFlexVaultSourceControlCommand& InCom
 	}
 	
 	const TSharedPtr<FJsonObject>* SyncStatusObj = nullptr;
-	if (Payload->TryGetObjectField(TEXT("sync_status"), SyncStatusObj))
+	if (Payload->TryGetObjectField(TEXT("sync_status"), SyncStatusObj) && SyncStatusObj != nullptr && (*SyncStatusObj).IsValid())
 	{
-		// Since TryGetObjectField succeeded, SyncStatusObj is guaranteed to be a valid pointer to a valid TSharedPtr<FJsonObject>
 		bool bUpToDate = true;
 		if ((*SyncStatusObj)->TryGetBoolField(TEXT("up_to_date"), bUpToDate))
 		{
 			bHasChangesToSync = !bUpToDate;
 		}
+		else
+		{
+			bHasChangesToSync = false;
+		}
+	}
+	else
+	{
+		// When sync_status is omitted (e.g. unparented/local draft or up-to-date branch),
+		// default bHasChangesToSync to false so Unreal Engine does not perform unnecessary full-project Sync/Reload.
+		bHasChangesToSync = false;
 	}
 
 	UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault: Parsed head_commit metadata. LocalRevision: %d, DepotRevision: %d, bHasChangesToSync: %d"), LocalRevision, DepotRevision, bHasChangesToSync.IsSet() ? (bHasChangesToSync.GetValue() ? 1 : 0) : -1);

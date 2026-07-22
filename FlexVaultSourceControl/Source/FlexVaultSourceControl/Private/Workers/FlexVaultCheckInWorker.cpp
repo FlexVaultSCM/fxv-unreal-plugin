@@ -107,6 +107,13 @@ bool FFlexVaultCheckInWorker::UpdateStates() const
 			PlatformFile.SetReadOnly(*File, true);
 		}
 	}
+
+	if (CommittedFiles.Num() > 0)
+	{
+		TArray<FSourceControlStateRef> States;
+		Provider.GetState(CommittedFiles, States, EStateCacheUsage::ForceUpdate);
+	}
+
 	UE_LOG(LogFlexVault, Display, TEXT("FlexVault SCM: Successfully checked in %d files."), CommittedFiles.Num());
 	return CommittedFiles.Num() > 0;
 }

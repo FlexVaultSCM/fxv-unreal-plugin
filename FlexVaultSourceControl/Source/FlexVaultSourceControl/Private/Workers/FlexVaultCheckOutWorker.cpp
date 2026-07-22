@@ -44,6 +44,13 @@ bool FFlexVaultCheckOutWorker::UpdateStates() const
 		State->bModified = true;
 		State->TimeStamp = FDateTime::Now();
 	}
+
+	if (CheckedOutFiles.Num() > 0)
+	{
+		TArray<FSourceControlStateRef> States;
+		Provider.GetState(CheckedOutFiles, States, EStateCacheUsage::ForceUpdate);
+	}
+
 	UE_LOG(LogFlexVault, Display, TEXT("FlexVault SCM: Checked out %d files for editing."), CheckedOutFiles.Num());
 	return CheckedOutFiles.Num() > 0;
 }
