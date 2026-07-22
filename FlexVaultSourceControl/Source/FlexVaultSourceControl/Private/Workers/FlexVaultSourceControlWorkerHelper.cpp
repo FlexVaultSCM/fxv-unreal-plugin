@@ -343,8 +343,9 @@ bool ParseFlexVaultChangeInfo(
 )
 {
 	// Plaintext parsing of changeinfo output:
-	// Format is: <Action> <Hash> <Path>
-	// E.g.: Added 3c9b23ad7a002458ec6ec130aea451eab768d4965b8d0f6ac83ddcbf54df6234 .fxvignore
+	// Format is: <Action> <Hash> [<Size>] <Path>
+	// E.g.: Changed 82d69ce3c61a6300fc41c2d68e63e722841c85228caffedc89831e56aa467de6 3226909 Content\Images\loot.uasset
+	// E.g.: Added 3c9b23ad7a002458ec6ec130aea451eab768d4965b8d0f6ac83ddcbf54df6234 651 .fxvignore
 	for (const FString& Line : InChangeInfoOutputLines)
 	{
 		FString TrimmedLine = Line.TrimStartAndEnd();
@@ -354,10 +355,17 @@ bool ParseFlexVaultChangeInfo(
 		{
 			FString ActionStr = Tokens[0];
 			FString HashStr = Tokens[1];
-			int64 ParsedSize = 0; // File size is not yet reported in the changeinfo output
-			
-			FString RelPath = Tokens[2];
-			for (int32 i = 3; i < Tokens.Num(); ++i)
+			int64 ParsedSize = 0;
+			int32 PathStartIndex = 2;
+
+			if (Tokens.Num() >= 4 && Tokens[2].IsNumeric())
+			{
+				ParsedSize = FCString::Atoi64(*Tokens[2]);
+				PathStartIndex = 3;
+			}
+
+			FString RelPath = Tokens[PathStartIndex];
+			for (int32 i = PathStartIndex + 1; i < Tokens.Num(); ++i)
 			{
 				RelPath += TEXT(" ") + Tokens[i];
 			}
@@ -377,16 +385,16 @@ bool ParseFlexVaultChangeInfo(
 			Rev.Description = InCommit.Description;
 			Rev.UserName = InCommit.Author;
 			Rev.FileSize = ParsedSize;
-			
-			if (ActionStr.Equals(TEXT("Added"), ESearchCase::IgnoreCase))
+
+			if (ActionStr.Equals(TEXT("Added"), ESearchCase::IgnoreCase) || ActionStr.Equals(TEXT("Add"), ESearchCase::IgnoreCase))
 			{
 				Rev.Action = TEXT("Add");
 			}
-			else if (ActionStr.Equals(TEXT("Modified"), ESearchCase::IgnoreCase))
+			else if (ActionStr.Equals(TEXT("Modified"), ESearchCase::IgnoreCase) || ActionStr.Equals(TEXT("Changed"), ESearchCase::IgnoreCase) || ActionStr.Equals(TEXT("Edit"), ESearchCase::IgnoreCase))
 			{
 				Rev.Action = TEXT("Edit");
 			}
-			else if (ActionStr.Equals(TEXT("Deleted"), ESearchCase::IgnoreCase))
+			else if (ActionStr.Equals(TEXT("Deleted"), ESearchCase::IgnoreCase) || ActionStr.Equals(TEXT("Removed"), ESearchCase::IgnoreCase) || ActionStr.Equals(TEXT("Delete"), ESearchCase::IgnoreCase))
 			{
 				Rev.Action = TEXT("Delete");
 			}
@@ -463,14 +471,20 @@ bool QueryFlexVaultFileHistoryDetails(
 
 	for (const FFlexVaultCommitMeta& Commit : Commits)
 	{
-		FString ChangeId;
-		if (Commit.CommitType.Equals(TEXT("draft"), ESearchCase::IgnoreCase) && Commit.DraftRevision.IsSet())
+		// Skip draft commits in file history to prevent duplicate entries and invalid changeinfo queries
+		if (Commit.CommitType.Equals(TEXT("draft"), ESearchCase::IgnoreCase))
 		{
-			ChangeId = FString::Printf(TEXT("%s.%llu.%llu"), *Commit.Branch, Commit.PublishedRevision.Get(0), Commit.DraftRevision.GetValue());
+			continue;
+		}
+
+		FString ChangeId;
+		if (Commit.PublishedRevision.IsSet())
+		{
+			ChangeId = FString::Printf(TEXT("%s.%llu"), *Commit.Branch, Commit.PublishedRevision.GetValue());
 		}
 		else
 		{
-			ChangeId = FString::Printf(TEXT("%s.%llu"), *Commit.Branch, Commit.PublishedRevision.Get(0));
+			ChangeId = Commit.Branch;
 		}
 
 		TArray<FString> ChangeInfoArgs = {
@@ -483,9 +497,6 @@ bool QueryFlexVaultFileHistoryDetails(
 		TArray<FString> ChangeInfoOutput;
 		FSourceControlResultInfo TempResultInfo;
 
-		// Suppress SCM Error logging for changeinfo on old/deleted draft revisions. When drafts (e.g. main.1.1) 
-		// are published, they are promoted to a permanent published revision (e.g. main.2) and the local draft metadata/assets 
-		// are pruned from the draft store, meaning changeinfo will return exit code 1.
 		if (RunFlexVaultCommand(InBinaryPath, InWorkspacePath, ChangeInfoArgs, ChangeInfoOutput, TempResultInfo, true))
 		{
 			ParseFlexVaultChangeInfo(ChangeInfoOutput, Commit, ChangeId, OutFileRevisionMap);

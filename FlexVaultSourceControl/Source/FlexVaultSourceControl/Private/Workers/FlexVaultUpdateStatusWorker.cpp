@@ -342,5 +342,10 @@ bool FFlexVaultUpdateStatusWorker::UpdateStates() const
 		}
 	}
 
+	if (bStatesUpdated)
+	{
+		Provider.OutputStateChangedEvent();
+	}
+
 	return bStatesUpdated;
 }

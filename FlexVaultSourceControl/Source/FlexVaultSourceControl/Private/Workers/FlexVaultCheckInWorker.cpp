@@ -112,6 +112,7 @@ bool FFlexVaultCheckInWorker::UpdateStates() const
 	{
 		TArray<FSourceControlStateRef> States;
 		Provider.GetState(CommittedFiles, States, EStateCacheUsage::ForceUpdate);
+		Provider.OutputStateChangedEvent();
 	}
 
 	UE_LOG(LogFlexVault, Display, TEXT("FlexVault SCM: Successfully checked in %d files."), CommittedFiles.Num());

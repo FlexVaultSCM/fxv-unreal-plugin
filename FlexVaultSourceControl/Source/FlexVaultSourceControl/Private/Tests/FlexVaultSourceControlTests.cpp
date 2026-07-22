@@ -187,8 +187,8 @@ bool FFlexVaultChangeInfoParsingTest::RunTest(const FString& Parameters)
 	Commit.Description = TEXT("Update map layout");
 
 	TArray<FString> ChangeInfoLines = {
-		TEXT("Added 4a8e23908f9024f Content/Maps/MainMenu.umap"),
-		TEXT("Modified 9b88a9120bc8b2a Content/Blueprints/BP_GameMode.uasset"),
+		TEXT("Added 4a8e23908f9024f 1024 Content/Maps/MainMenu.umap"),
+		TEXT("Changed 9b88a9120bc8b2a 2048 Content/Blueprints/BP_GameMode.uasset"),
 		TEXT("Deleted 10cbff8d120a8fe Content/OldAsset.uasset")
 	};
 
@@ -205,6 +205,7 @@ bool FFlexVaultChangeInfoParsingTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("Action maps to Add"), (*AddRev)[0].Action, TEXT("Add"));
 		TestEqual(TEXT("Revision number maps correctly"), (*AddRev)[0].RevisionNumber, 8);
 		TestEqual(TEXT("Content address formatted correctly"), (*AddRev)[0].ContentAddress, TEXT("BLOB:4a8e23908f9024f"));
+		TestEqual(TEXT("File size parsed correctly"), (*AddRev)[0].FileSize, (int64)1024);
 	}
 
 	// Test Modified File Revision
@@ -213,6 +214,7 @@ bool FFlexVaultChangeInfoParsingTest::RunTest(const FString& Parameters)
 	if (ModRev && ModRev->Num() > 0)
 	{
 		TestEqual(TEXT("Action maps to Edit"), (*ModRev)[0].Action, TEXT("Edit"));
+		TestEqual(TEXT("File size parsed correctly"), (*ModRev)[0].FileSize, (int64)2048);
 	}
 
 	// Test Deleted File Revision
@@ -489,6 +491,44 @@ bool FFlexVaultAsynchronousCommandTest::RunTest(const FString& Parameters)
 	// Call Tick() to process completion
 	Provider.Tick();
 
+	return true;
+}
+
+// ── Test 15: CheckIn Worker State Notification & Delegate Broadcast Test ──────
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultWorkerCheckInStateBroadcastTest, "FlexVault.SourceControl.WorkerCheckInStateBroadcast", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FFlexVaultWorkerCheckInStateBroadcastTest::RunTest(const FString& Parameters)
+{
+	FFlexVaultSourceControlProvider Provider;
+	FString TestFile = FPaths::ProjectDir() / TEXT("Content/CommittedAsset.uasset");
+	TestFile.ReplaceInline(TEXT("\\"), TEXT("/"));
+
+	// Track whether OnSourceControlStateChanged delegate fires
+	bool bDelegateFired = false;
+	FDelegateHandle Handle = Provider.RegisterSourceControlStateChanged_Handle(FSourceControlStateChanged::FDelegate::CreateLambda([&bDelegateFired]()
+	{
+		bDelegateFired = true;
+	}));
+
+	// Pre-fill state cache as modified / checked out
+	TSharedRef<FFlexVaultSourceControlState, ESPMode::ThreadSafe> State = Provider.GetStateInternal(TestFile);
+	State->SetState(EFlexVaultState::CheckedOut);
+	State->bModified = true;
+
+	FFlexVaultCheckInWorker Worker(Provider);
+	Worker.CommittedFiles.Add(TestFile);
+
+	// Execute UpdateStates
+	TestTrue(TEXT("CheckIn UpdateStates completes"), Worker.UpdateStates());
+
+	// Verify file state updated in cache
+	TestEqual(TEXT("Committed file state reset to Unchanged"), State->GetState(), EFlexVaultState::Unchanged);
+	TestFalse(TEXT("Committed file modified flag set to false"), State->bModified);
+
+	// Verify state changed delegate was broadcasted
+	TestTrue(TEXT("OnSourceControlStateChanged delegate was broadcasted"), bDelegateFired);
+
+	Provider.UnregisterSourceControlStateChanged_Handle(Handle);
 	return true;
 }
 
