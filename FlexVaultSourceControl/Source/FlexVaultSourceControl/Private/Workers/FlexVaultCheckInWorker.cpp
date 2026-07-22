@@ -48,13 +48,6 @@ bool FFlexVaultCheckInWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 	{
 		UE_LOG(LogFlexVault, Error, TEXT("FlexVault SCM: Snapshot phase failed during check-in."));
 		InCommand.ResultInfo.ErrorMessages.Add(LOCTEXT("SnapshotFailure", "FlexVault: Snapshot phase failed during check-in."));
-		for (const FString& Line : SnapshotOutputLines)
-		{
-			if (!Line.IsEmpty())
-			{
-				InCommand.ResultInfo.ErrorMessages.Add(FText::FromString(Line));
-			}
-		}
 		return false;
 	}
 
@@ -72,13 +65,6 @@ bool FFlexVaultCheckInWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 	{
 		UE_LOG(LogFlexVault, Error, TEXT("FlexVault SCM: Publish phase failed during check-in."));
 		InCommand.ResultInfo.ErrorMessages.Add(LOCTEXT("PublishFailure", "FlexVault: Publish phase failed during check-in."));
-		for (const FString& Line : PublishOutputLines)
-		{
-			if (!Line.IsEmpty())
-			{
-				InCommand.ResultInfo.ErrorMessages.Add(FText::FromString(Line));
-			}
-		}
 		return false;
 	}
 

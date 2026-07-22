@@ -154,6 +154,13 @@ bool RunFlexVaultCommand(
 	if (ReturnCode != 0 && !bIgnoreError)
 	{
 		OutResultInfo.ErrorMessages.Add(FText::Format(LOCTEXT("FlexVaultCommandError", "FlexVault CLI command failed with exit code: {0}"), FText::AsNumber(ReturnCode)));
+		for (const FString& Line : OutOutputLines)
+		{
+			if (!Line.IsEmpty())
+			{
+				OutResultInfo.ErrorMessages.Add(FText::FromString(Line));
+			}
+		}
 	}
 
 	if (ReturnCode != 0 || !LogFlexVault.IsSuppressed(ELogVerbosity::Verbose))
