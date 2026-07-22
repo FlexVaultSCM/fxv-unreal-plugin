@@ -28,6 +28,10 @@ The plugin currently targets **Unreal Engine 5.8**. To support older UE 5 releas
 - [ ] **Changelists & Branch Switching**:
   - Explore mapping branch lists to Unreal Engine's revision control branch actions.
   - Add menu items to sync to a specific tag/revision or create new branches from the editor.
+- [ ] **FlexVault Branch Explorer UI (`UnrealRevisionControl.FocusBranchExplorer`)**:
+  - Implement full visual Branch Explorer Slate window (`SFlexVaultBranchExplorer`) bound to `UnrealRevisionControl.FocusBranchExplorer`.
+  - Display interactive DAG/branch tree, commit history, and branch creation/switch controls directly inside Unreal Editor.
+  - *(Directly related to `LogConsoleManager: Warning: Performance warning: Many (31) failed FindConsoleObject() for 'UnrealRevisionControl.FocusBranchExplorer'` — basic command stub is registered in `FFlexVaultSourceControlModule::StartupModule` to prevent missing console object lookup warnings during Editor Status Bar updates).*
 - [ ] **Batch `changeinfo` / History Performance**:
   - `GetSourceControlRevisionInfoWorker` and `UpdateStatusWorker` both spawn one `fxv changeinfo` subprocess per commit (up to 30), resulting in an O(N) process fan-out for every history panel open. Options to address this:
     - Add a `fxv changeinfo --batch` mode that accepts multiple change IDs in a single invocation.
