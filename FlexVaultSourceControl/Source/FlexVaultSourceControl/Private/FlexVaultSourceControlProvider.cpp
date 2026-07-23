@@ -425,10 +425,20 @@ ECommandResult::Type FFlexVaultSourceControlProvider::ExecuteSynchronousCommand(
 	// when IsAsyncLoading() or IsGarbageCollecting() is true (e.g., during engine startup).
 	// Bypassing Tick() for synchronous calls prevents main thread deadlocks/hangs during launch while
 	// preserving Tick()'s async-loading safety guard for asynchronous operations.
+	const double StartWaitTime = FPlatformTime::Seconds();
+	const UFlexVaultSourceControlDeveloperSettings* Settings = GetDefault<UFlexVaultSourceControlDeveloperSettings>();
+	const double TimeoutSeconds = (Settings && Settings->CommandTimeoutSeconds > 0.0) ? Settings->CommandTimeoutSeconds : 30.0;
 	while (!CommandPtr->bExecuteProcessed.Load())
 	{
 		Progress.Tick();
 		FPlatformProcess::Sleep(0.01f);
+		if (FPlatformTime::Seconds() - StartWaitTime > TimeoutSeconds)
+		{
+			UE_LOG(LogFlexVault, Error, TEXT("FlexVault SCM: Synchronous command timed out after %.1f seconds."), TimeoutSeconds);
+			CommandPtr->bCommandSuccessful = false;
+			CommandPtr->ResultInfo.ErrorMessages.Add(FText::FromString(TEXT("Command execution timed out.")));
+			break;
+		}
 	}
 
 	// Remove from CommandQueue and return results directly on the calling thread
@@ -473,7 +483,8 @@ ECommandResult::Type FFlexVaultSourceControlProvider::IssueCommand(TUniquePtr<FF
 	InCommand->BinaryPath = GetDefault<UFlexVaultSourceControlDeveloperSettings>()->GetEffectiveBinaryPath();
 	if (bSynchronous)
 	{
-		return ExecuteSynchronousCommand(MoveTemp(InCommand), InCommand->Operation->GetInProgressString());
+		const FText Task = InCommand->Operation->GetInProgressString();
+		return ExecuteSynchronousCommand(MoveTemp(InCommand), Task);
 	}
 	else
 	{

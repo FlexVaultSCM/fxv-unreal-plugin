@@ -17,7 +17,7 @@ Unreal Engine Source Control Plugin for [FlexVault](https://fxv.dev) — integra
 ## Running Plugin Tests
 
 ```powershell
-Engine/Binaries/Win64/UnrealEditor-Cmd.exe "Path/To/YourProject/YourProject.uproject" -ExecCmds="Automation RunTests FlexVault.SourceControl; Quit" -NoSplash -NullRHI -NoSound -unattended
+Engine/Binaries/Win64/UnrealEditor-Cmd.exe "Path/To/YourProject/YourProject.uproject" -ExecCmds="Automation RunTests FlexVault.SourceControl; Quit" -TestExit="All Tests Complete" -NoSplash -NullRHI -NoSound -unattended
 ```
 
 ## Open items

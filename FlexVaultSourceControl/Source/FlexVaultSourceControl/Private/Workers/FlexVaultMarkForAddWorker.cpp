@@ -43,6 +43,7 @@ bool FFlexVaultMarkForAddWorker::UpdateStates() const
 
 	if (AddedFiles.Num() > 0)
 	{
+		Provider.OutputStateChangedEvent();
 		TArray<FSourceControlStateRef> States;
 		Provider.GetState(AddedFiles, States, EStateCacheUsage::ForceUpdate);
 	}

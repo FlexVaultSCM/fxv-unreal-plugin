@@ -21,4 +21,5 @@ public:
 
 private:
 	mutable TArray<FString> SyncedFiles;
+	mutable TArray<FString> ConflictedFiles;
 };

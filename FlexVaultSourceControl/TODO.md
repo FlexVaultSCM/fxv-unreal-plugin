@@ -31,14 +31,12 @@ The plugin currently targets **Unreal Engine 5.8**. To support older UE 5 releas
 - [ ] **FlexVault Branch Explorer UI (`UnrealRevisionControl.FocusBranchExplorer`)**:
   - Implement full visual Branch Explorer Slate window (`SFlexVaultBranchExplorer`) bound to `UnrealRevisionControl.FocusBranchExplorer`.
   - Display interactive DAG/branch tree, commit history, and branch creation/switch controls directly inside Unreal Editor.
-  - *(Directly related to `LogConsoleManager: Warning: Performance warning: Many (31) failed FindConsoleObject() for 'UnrealRevisionControl.FocusBranchExplorer'` — basic command stub is registered in `FFlexVaultSourceControlModule::StartupModule` to prevent missing console object lookup warnings during Editor Status Bar updates).*
 - [ ] **Batch `changeinfo` / History Performance**:
   - `GetSourceControlRevisionInfoWorker` and `UpdateStatusWorker` both spawn one `fxv changeinfo` subprocess per commit (up to 30), resulting in an O(N) process fan-out for every history panel open. Options to address this:
     - Add a `fxv changeinfo --batch` mode that accepts multiple change IDs in a single invocation.
     - Fold per-file details (hash, size, action) directly into the `fxv history --format json` output so no secondary calls are needed.
-- [ ] **Active Unsubmitted Draft Handling in File History**:
-  - `QueryFlexVaultFileHistoryDetails` currently skips all commits where `CommitType == "draft"` to prevent duplicate entries and errors on published/pruned draft IDs.
-  - Refactor history parsing to distinguish between **active (unpublished)** local drafts and **published/pruned** drafts so that active in-progress local drafts are correctly queried via `fxv changeinfo` and presented in Unreal Engine's history panel.
+- [x] **Active Unsubmitted Draft Handling in File History**:
+  - `QueryFlexVaultFileHistoryDetails` queries active local draft revisions via `fxv changeinfo` (using `branch.base.draft` ID) while gracefully handling pruned drafts.
 - [ ] **`FileSize` Interface Limitation (`int64` → `int32`)**:
   - Unreal's `ISourceControlRevision` interface stores `FileSize` as `int32`, capping displayable sizes at ~2.1 GB. The CLI reports sizes as `int64`. Files larger than this limit will silently display incorrect sizes in the History panel. Track upstream (`ISourceControlRevision`) for a widened type, or display a clamped/formatted value with a tooltip for oversized assets.
 - [ ] **Process Pool & Warm Up Optimization**:

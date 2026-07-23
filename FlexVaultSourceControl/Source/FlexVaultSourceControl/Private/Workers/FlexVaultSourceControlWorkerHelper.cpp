@@ -365,7 +365,8 @@ bool ParseFlexVaultChangeInfo(
 			int64 ParsedSize = 0;
 			int32 PathStartIndex = 2;
 
-			if (Tokens.Num() >= 4 && Tokens[2].IsNumeric())
+			const bool bIsDeleted = ActionStr.Equals(TEXT("Deleted"), ESearchCase::IgnoreCase) || ActionStr.Equals(TEXT("Removed"), ESearchCase::IgnoreCase) || ActionStr.Equals(TEXT("Delete"), ESearchCase::IgnoreCase);
+			if (!bIsDeleted && Tokens.Num() >= 4 && Tokens[2].IsNumeric())
 			{
 				ParsedSize = FCString::Atoi64(*Tokens[2]);
 				PathStartIndex = 3;
@@ -478,14 +479,20 @@ bool QueryFlexVaultFileHistoryDetails(
 
 	for (const FFlexVaultCommitMeta& Commit : Commits)
 	{
-		// Skip draft commits in file history to prevent duplicate entries and invalid changeinfo queries
+		FString ChangeId;
 		if (Commit.CommitType.Equals(TEXT("draft"), ESearchCase::IgnoreCase))
 		{
-			continue;
+			if (Commit.DraftRevision.IsSet())
+			{
+				uint64 BaseRev = Commit.PublishedRevision.Get(0);
+				ChangeId = FString::Printf(TEXT("%s.%llu.%llu"), *Commit.Branch, BaseRev, Commit.DraftRevision.GetValue());
+			}
+			else
+			{
+				continue;
+			}
 		}
-
-		FString ChangeId;
-		if (Commit.PublishedRevision.IsSet())
+		else if (Commit.PublishedRevision.IsSet())
 		{
 			ChangeId = FString::Printf(TEXT("%s.%llu"), *Commit.Branch, Commit.PublishedRevision.GetValue());
 		}

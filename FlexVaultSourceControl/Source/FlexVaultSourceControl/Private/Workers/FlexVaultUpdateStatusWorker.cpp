@@ -56,7 +56,6 @@ bool FFlexVaultUpdateStatusWorker::Execute(FFlexVaultSourceControlCommand& InCom
 	DepotRevision = 0;
 	ModifiedFiles.Empty();
 	ConflictedFiles.Empty();
-	FileSizes.Empty();
 	FileHistories.Empty();
 	bHasChangesToSync.Reset();
 
@@ -210,12 +209,6 @@ bool FFlexVaultUpdateStatusWorker::Execute(FFlexVaultSourceControlCommand& InCom
 			if ((*FileObj)->HasField(TEXT("conflict_state")))
 			{
 				ConflictedFiles.Add(FilePath);
-			}
-
-			int64 SizeVal = 0;
-			if ((*FileObj)->TryGetNumberField(TEXT("size"), SizeVal))
-			{
-				FileSizes.Add(FilePath, SizeVal);
 			}
 
 			UE_LOG(LogFlexVault, VeryVerbose, TEXT("FlexVault: Parsed modified file: %s (MappedState: %d, SourceStateStr: %s)"), *FilePath, (int32)MappedState, *StateStr);

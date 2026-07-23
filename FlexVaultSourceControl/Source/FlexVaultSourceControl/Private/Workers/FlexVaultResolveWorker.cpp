@@ -20,12 +20,11 @@ bool FFlexVaultResolveWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 		return true;
 	}
 
-	// Read resolve preference from developer settings
-	const UFlexVaultSourceControlDeveloperSettings* Settings = GetDefault<UFlexVaultSourceControlDeveloperSettings>();
-	FString ActionArg = TEXT("--theirs"); // Default to theirs
-	if (Settings->ResolvePreference.Equals(TEXT("mine"), ESearchCase::IgnoreCase))
+	// Use thread-safe snapshot of resolve preference resolved on game thread during worker creation
+	FString ActionArg = TEXT("--mine"); // Default to mine (safer than discarding local work)
+	if (ResolvePreference.Equals(TEXT("theirs"), ESearchCase::IgnoreCase))
 	{
-		ActionArg = TEXT("--mine");
+		ActionArg = TEXT("--theirs");
 	}
 
 	TArray<FString> ResolveArgs = {
@@ -72,6 +71,7 @@ bool FFlexVaultResolveWorker::UpdateStates() const
 
 	if (ResolvedFiles.Num() > 0)
 	{
+		Provider.OutputStateChangedEvent();
 		TArray<FSourceControlStateRef> States;
 		Provider.GetState(ResolvedFiles, States, EStateCacheUsage::ForceUpdate);
 	}

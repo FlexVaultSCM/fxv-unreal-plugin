@@ -73,6 +73,7 @@ bool FFlexVaultRevertWorker::UpdateStates() const
 
 	if (RevertedFiles.Num() > 0)
 	{
+		Provider.OutputStateChangedEvent();
 		TArray<FSourceControlStateRef> States;
 		Provider.GetState(RevertedFiles, States, EStateCacheUsage::ForceUpdate);
 	}

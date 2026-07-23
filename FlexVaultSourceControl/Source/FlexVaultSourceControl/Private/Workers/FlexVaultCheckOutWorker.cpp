@@ -47,6 +47,7 @@ bool FFlexVaultCheckOutWorker::UpdateStates() const
 
 	if (CheckedOutFiles.Num() > 0)
 	{
+		Provider.OutputStateChangedEvent();
 		TArray<FSourceControlStateRef> States;
 		Provider.GetState(CheckedOutFiles, States, EStateCacheUsage::ForceUpdate);
 	}

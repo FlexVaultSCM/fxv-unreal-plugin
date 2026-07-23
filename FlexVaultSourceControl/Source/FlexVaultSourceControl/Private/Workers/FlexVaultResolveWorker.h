@@ -4,6 +4,8 @@
 #include "CoreMinimal.h"
 #include "IFlexVaultSourceControlWorker.h"
 
+#include "FlexVaultSourceControlDeveloperSettings.h"
+
 /**
  * Worker for FResolve SCM operation.
  */
@@ -13,6 +15,11 @@ public:
 	FFlexVaultResolveWorker(FFlexVaultSourceControlProvider& InSCCProvider)
 		: IFlexVaultSourceControlWorker(InSCCProvider)
 	{
+		const UFlexVaultSourceControlDeveloperSettings* Settings = GetDefault<UFlexVaultSourceControlDeveloperSettings>();
+		if (Settings)
+		{
+			ResolvePreference = Settings->ResolvePreference;
+		}
 	}
 
 	virtual FName GetName() const override;
@@ -22,5 +29,6 @@ public:
 private:
 	friend class FFlexVaultWorkerResolveTest;
 
+	FString ResolvePreference;
 	mutable TArray<FString> ResolvedFiles;
 };

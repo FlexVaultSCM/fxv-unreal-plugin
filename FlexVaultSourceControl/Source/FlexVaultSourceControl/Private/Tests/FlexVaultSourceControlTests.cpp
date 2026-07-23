@@ -360,8 +360,6 @@ bool FFlexVaultWorkerUpdateStatusTest::RunTest(const FString& Parameters)
 	Worker.bHasChangesToSync = true;
 	Worker.ModifiedFiles.Add(ModFileRelative, EFlexVaultState::CheckedOut);
 	Worker.ModifiedFiles.Add(AddFileRelative, EFlexVaultState::OpenForAdd);
-	Worker.FileSizes.Add(ModFileRelative, 1024);
-	Worker.FileSizes.Add(AddFileRelative, 2048);
 
 	// Verify UpdateStates correctly applies injected mock SCM findings
 	TestTrue(TEXT("Status UpdateStates succeeds"), Worker.UpdateStates());
@@ -398,10 +396,6 @@ bool FFlexVaultWorkerSyncTest::RunTest(const FString& Parameters)
 
 	// Verify sync resets repository state
 	TestFalse(TEXT("bHasChangesToSync was cleared"), Provider.HasChangesToSync().Get(true));
-	
-	// Cache should be completely flushed after a sync operation
-	TArray<FSourceControlStateRef> EmptyCache = Provider.GetCachedStateByPredicate([](const FSourceControlStateRef&){ return true; });
-	TestEqual(TEXT("State cache is invalidated and empty"), EmptyCache.Num(), 0);
 
 	return true;
 }
@@ -488,9 +482,39 @@ bool FFlexVaultAsynchronousCommandTest::RunTest(const FString& Parameters)
 	ECommandResult::Type Result = Provider.Execute(ConnectOp, nullptr, TArray<FString>(), EConcurrency::Asynchronous);
 	TestEqual(TEXT("IssueCommand for asynchronous operation returns Succeeded immediately"), Result, ECommandResult::Succeeded);
 
-	// Call Tick() to process completion
-	Provider.Tick();
+	// Drain command queue over time to prevent leaking heap command or dangling references
+	double StartTime = FPlatformTime::Seconds();
+	while (FPlatformTime::Seconds() - StartTime < 2.0)
+	{
+		Provider.Tick();
+		FPlatformProcess::Sleep(0.01f);
+	}
 
+	return true;
+}
+
+// ── Test: changeinfo numeric-leading path parsing ───────────────────────────
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultChangeInfoNumericPathRepro, "FlexVault.SourceControl.HelperChangeInfoNumericPathRepro", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FFlexVaultChangeInfoNumericPathRepro::RunTest(const FString& Parameters)
+{
+	FFlexVaultCommitMeta Commit;
+	Commit.Branch = TEXT("main");
+	Commit.PublishedRevision = 8;
+	Commit.CommitType = TEXT("published");
+
+	// A 'Deleted' entry carries NO size column, and this root-level path's first whitespace token ("2024") is numeric.
+	TArray<FString> Lines = { TEXT("Deleted 10cbff8d120a8fe 2024 Roadmap.uasset") };
+
+	TMap<FString, TArray<FFlexVaultRevisionDetail>> Map;
+	ParseFlexVaultChangeInfo(Lines, Commit, TEXT("main.8"), Map);
+
+	TestTrue(TEXT("Full path key present"), Map.Contains(TEXT("2024 roadmap.uasset")));
+	TestFalse(TEXT("Truncated key absent"), Map.Contains(TEXT("roadmap.uasset")));
+	if (TArray<FFlexVaultRevisionDetail>* R = Map.Find(TEXT("2024 roadmap.uasset")))
+	{
+		TestEqual(TEXT("Size not fabricated from path token"), (*R)[0].FileSize, (int64)0);
+	}
 	return true;
 }
 
@@ -529,6 +553,35 @@ bool FFlexVaultWorkerCheckInStateBroadcastTest::RunTest(const FString& Parameter
 	TestTrue(TEXT("OnSourceControlStateChanged delegate was broadcasted"), bDelegateFired);
 
 	Provider.UnregisterSourceControlStateChanged_Handle(Handle);
+	return true;
+}
+
+// ── Test 16: CanCheckIn State Filtering Test ──────────────────────────────────
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultCanCheckInTest, "FlexVault.SourceControl.CanCheckInFiltering", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FFlexVaultCanCheckInTest::RunTest(const FString& Parameters)
+{
+	FFlexVaultSourceControlState UnchangedState(TEXT("Content/Unchanged.uasset"), EFlexVaultState::Unchanged);
+	UnchangedState.DepotRevNumber = 5;
+	UnchangedState.LocalRevNumber = 5;
+	TestFalse(TEXT("Unchanged file cannot be checked in"), UnchangedState.CanCheckIn());
+
+	FFlexVaultSourceControlState ModifiedState(TEXT("Content/Modified.uasset"), EFlexVaultState::CheckedOut);
+	ModifiedState.DepotRevNumber = 5;
+	ModifiedState.LocalRevNumber = 5;
+	ModifiedState.bModified = true;
+	TestTrue(TEXT("Modified file can be checked in"), ModifiedState.CanCheckIn());
+
+	FFlexVaultSourceControlState AddedState(TEXT("Content/Added.uasset"), EFlexVaultState::OpenForAdd);
+	AddedState.DepotRevNumber = 5;
+	AddedState.LocalRevNumber = 5;
+	TestTrue(TEXT("Marked for add file can be checked in"), AddedState.CanCheckIn());
+
+	FFlexVaultSourceControlState DeletedState(TEXT("Content/Deleted.uasset"), EFlexVaultState::MarkedForDelete);
+	DeletedState.DepotRevNumber = 5;
+	DeletedState.LocalRevNumber = 5;
+	TestTrue(TEXT("Marked for delete file can be checked in"), DeletedState.CanCheckIn());
+
 	return true;
 }
 

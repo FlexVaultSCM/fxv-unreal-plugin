@@ -45,4 +45,8 @@ public:
 	/** Default conflict resolution preference */
 	UPROPERTY(Config, EditAnywhere, Category="FlexVault", meta=(DisplayName="Conflict Resolution Preference", ToolTip="Conflict resolution strategy: 'mine' (keep local draft version) or 'theirs' (accept published remote version)."))
 	FString ResolvePreference;
+
+	/** Command execution timeout in seconds for synchronous operations */
+	UPROPERTY(Config, EditAnywhere, Category="FlexVault", meta=(DisplayName="Command Timeout (Seconds)", ClampMin="1.0", ClampMax="300.0", ToolTip="Maximum time in seconds to wait for synchronous CLI commands to complete before timing out."))
+	double CommandTimeoutSeconds;
 };

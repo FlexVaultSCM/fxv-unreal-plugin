@@ -38,6 +38,7 @@ bool FFlexVaultSyncWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 	TSharedRef<FSync, ESPMode::ThreadSafe> Operation = StaticCastSharedRef<FSync>(InCommand.Operation);
 
 	SyncedFiles.Empty();
+	ConflictedFiles.Empty();
 
 	TArray<FString> SyncArgs = {
 		TEXT("sync"),
@@ -88,11 +89,26 @@ bool FFlexVaultSyncWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 							}
 						}
 					}
+
+					const TArray<TSharedPtr<FJsonValue>>* ConflictedFilesArray = nullptr;
+					if ((*PayloadObj)->TryGetArrayField(TEXT("conflicted_files"), ConflictedFilesArray) && ConflictedFilesArray != nullptr)
+					{
+						for (const TSharedPtr<FJsonValue>& FileVal : *ConflictedFilesArray)
+						{
+							if (FileVal.IsValid())
+							{
+								FString RelativePath = FileVal->AsString();
+								FString FullPath = FPaths::Combine(InCommand.WorkspacePath, RelativePath);
+								FPaths::NormalizeFilename(FullPath);
+								ConflictedFiles.Add(FullPath);
+							}
+						}
+					}
 				}
 			}
 		}
 
-		UE_LOG(LogFlexVault, Display, TEXT("FlexVault SCM: Sync complete. Updated %d file(s)."), SyncedFiles.Num());
+		UE_LOG(LogFlexVault, Display, TEXT("FlexVault SCM: Sync complete. Updated %d file(s), %d conflict(s)."), SyncedFiles.Num(), ConflictedFiles.Num());
 	}
 
 	return bSucceeded;
@@ -102,6 +118,13 @@ bool FFlexVaultSyncWorker::UpdateStates() const
 {
 	FFlexVaultSourceControlProvider& Provider = GetSCCProvider();
 	Provider.SetHasChangesToSync(false);
+
+	// Immediately mark any conflicted files reported by workspace_sync
+	for (const FString& File : ConflictedFiles)
+	{
+		TSharedRef<FFlexVaultSourceControlState, ESPMode::ThreadSafe> State = Provider.GetStateInternal(File);
+		State->bConflicted = true;
+	}
 
 	// Re-query workspace status asynchronously to update cached states in-place
 	Provider.Execute(ISourceControlOperation::Create<FUpdateStatus>(), nullptr, TArray<FString>(), EConcurrency::Asynchronous);
