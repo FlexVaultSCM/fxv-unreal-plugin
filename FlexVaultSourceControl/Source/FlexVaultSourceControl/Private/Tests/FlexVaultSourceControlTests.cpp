@@ -582,6 +582,135 @@ bool FFlexVaultCanCheckInTest::RunTest(const FString& Parameters)
 	DeletedState.LocalRevNumber = 5;
 	TestTrue(TEXT("Marked for delete file can be checked in"), DeletedState.CanCheckIn());
 
+	FFlexVaultSourceControlState ConflictedState(TEXT("Content/Conflicted.uasset"), EFlexVaultState::CheckedOut);
+	ConflictedState.DepotRevNumber = 5;
+	ConflictedState.LocalRevNumber = 5;
+	ConflictedState.bModified = true;
+	ConflictedState.bConflicted = true;
+	TestFalse(TEXT("Conflicted file cannot be checked in (publish would fail)"), ConflictedState.CanCheckIn());
+
+	FFlexVaultSourceControlState ConflictedOnlyState(TEXT("Content/ConflictedOnly.uasset"), EFlexVaultState::Unchanged);
+	ConflictedOnlyState.DepotRevNumber = 5;
+	ConflictedOnlyState.LocalRevNumber = 5;
+	ConflictedOnlyState.bConflicted = true;
+	TestFalse(TEXT("Conflict-only (unmodified) file cannot be checked in"), ConflictedOnlyState.CanCheckIn());
+
+	return true;
+}
+
+// ── Test 17: Conflict → Revert State Transitions ─────────────────────────────
+// Verifies the full state machine for a conflicted file that is reverted:
+//   Conflicted (CheckedOut + bConflicted) → Revert → Unchanged, clean, CanCheckIn=false
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultConflictRevertTransitionTest, "FlexVault.SourceControl.ConflictRevertTransition", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FFlexVaultConflictRevertTransitionTest::RunTest(const FString& Parameters)
+{
+	FFlexVaultSourceControlProvider Provider;
+	FString TestFile = FPaths::ProjectDir() / TEXT("Content/ConflictedThenReverted.uasset");
+	TestFile.ReplaceInline(TEXT("\\"), TEXT("/"));
+
+	// ── Setup: conflicted, locally modified, checked-out ─────────────────────
+	TSharedRef<FFlexVaultSourceControlState, ESPMode::ThreadSafe> State = Provider.GetStateInternal(TestFile);
+	State->SetState(EFlexVaultState::CheckedOut);
+	State->bModified = true;
+	State->bConflicted = true;
+	State->DepotRevNumber = 5;
+	State->LocalRevNumber = 5;
+
+	// Pre-condition assertions — confirm this is a genuinely conflicted state
+	TestTrue(TEXT("Pre: file is conflicted"), State->IsConflicted());
+	TestTrue(TEXT("Pre: file is modified"), State->IsModified());
+	TestFalse(TEXT("Pre: conflicted file cannot be checked in (N4 regression)"), State->CanCheckIn());
+	TestTrue(TEXT("Pre: conflicted file can be reverted"), State->CanRevert());
+
+	// Track delegate broadcast
+	bool bDelegateFired = false;
+	FDelegateHandle Handle = Provider.RegisterSourceControlStateChanged_Handle(
+		FSourceControlStateChanged::FDelegate::CreateLambda([&bDelegateFired]() { bDelegateFired = true; }));
+
+	// ── Action: Revert ────────────────────────────────────────────────────────
+	FFlexVaultRevertWorker Worker(Provider);
+	Worker.RevertedFiles.Add(TestFile);
+	TestTrue(TEXT("Revert UpdateStates succeeds"), Worker.UpdateStates());
+
+	// ── Post-revert state assertions ──────────────────────────────────────────
+	// Revert must: clear conflict, clear modified, set state to Unchanged.
+	// The file is back to a clean depot-sync'd state — no pending local changes.
+	TestFalse(TEXT("Post-revert: bConflicted cleared"), State->IsConflicted());
+	TestFalse(TEXT("Post-revert: bModified cleared"), State->bModified);
+	TestEqual(TEXT("Post-revert: State is Unchanged"), State->GetState(), EFlexVaultState::Unchanged);
+
+	// A reverted file is no longer modified/added/deleted → cannot be checked in
+	TestFalse(TEXT("Post-revert: CanCheckIn is false (nothing to submit)"), State->CanCheckIn());
+
+	// A clean Unchanged file should not offer Revert (nothing to revert)
+	TestFalse(TEXT("Post-revert: CanRevert is false (file is clean)"), State->CanRevert());
+
+	// The UE asset browser must be refreshed — delegate must have fired
+	TestTrue(TEXT("Post-revert: state-changed delegate broadcast"), bDelegateFired);
+
+	Provider.UnregisterSourceControlStateChanged_Handle(Handle);
+	return true;
+}
+
+// ── Test 18: Conflict → Resolve State Transitions ────────────────────────────
+// Verifies the full state machine for a conflicted file that is resolved (--mine):
+//   Conflicted (CheckedOut + bConflicted) → Resolve → CheckedOut, bModified preserved,
+//   CanCheckIn=true (resolved content is still a local change that needs publishing)
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultConflictResolveTransitionTest, "FlexVault.SourceControl.ConflictResolveTransition", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FFlexVaultConflictResolveTransitionTest::RunTest(const FString& Parameters)
+{
+	FFlexVaultSourceControlProvider Provider;
+	FString TestFile = FPaths::ProjectDir() / TEXT("Content/ConflictedThenResolved.uasset");
+	TestFile.ReplaceInline(TEXT("\\"), TEXT("/"));
+
+	// ── Setup: conflicted, locally modified, checked-out ─────────────────────
+	TSharedRef<FFlexVaultSourceControlState, ESPMode::ThreadSafe> State = Provider.GetStateInternal(TestFile);
+	State->SetState(EFlexVaultState::CheckedOut);
+	State->bModified = true;
+	State->bConflicted = true;
+	State->DepotRevNumber = 5;
+	State->LocalRevNumber = 5;
+
+	// Pre-condition assertions
+	TestTrue(TEXT("Pre: file is conflicted"), State->IsConflicted());
+	TestTrue(TEXT("Pre: file is modified"), State->IsModified());
+	TestFalse(TEXT("Pre: conflicted file cannot be checked in"), State->CanCheckIn());
+	TestTrue(TEXT("Pre: conflicted file can be reverted"), State->CanRevert());
+
+	// Track delegate broadcast
+	bool bDelegateFired = false;
+	FDelegateHandle Handle = Provider.RegisterSourceControlStateChanged_Handle(
+		FSourceControlStateChanged::FDelegate::CreateLambda([&bDelegateFired]() { bDelegateFired = true; }));
+
+	// ── Action: Resolve (--mine) ──────────────────────────────────────────────
+	FFlexVaultResolveWorker Worker(Provider);
+	Worker.ResolvedFiles.Add(TestFile);
+	TestTrue(TEXT("Resolve UpdateStates succeeds"), Worker.UpdateStates());
+
+	// ── Post-resolve state assertions ─────────────────────────────────────────
+	// Resolve only clears the conflict flag — it does NOT revert local changes.
+	// The file is still in CheckedOut/modified state: the resolved content must
+	// still be published via Check In (fxv snapshot + fxv publish).
+	TestFalse(TEXT("Post-resolve: bConflicted cleared"), State->IsConflicted());
+
+	// State and bModified are preserved: resolve picks a version but the file
+	// is still locally modified relative to the published depot head.
+	TestTrue(TEXT("Post-resolve: bModified preserved (content still local)"), State->bModified);
+	TestEqual(TEXT("Post-resolve: State remains CheckedOut"), State->GetState(), EFlexVaultState::CheckedOut);
+
+	// After resolve, CanCheckIn must be true: conflict is gone, file is still
+	// modified, so it is now valid to submit via fxv publish.
+	TestTrue(TEXT("Post-resolve: CanCheckIn is true (ready to publish)"), State->CanCheckIn());
+
+	// A still-modified file can still be reverted if the user changes their mind
+	TestTrue(TEXT("Post-resolve: CanRevert is true (CheckedOut state)"), State->CanRevert());
+
+	// The UE asset browser must be refreshed
+	TestTrue(TEXT("Post-resolve: state-changed delegate broadcast"), bDelegateFired);
+
+	Provider.UnregisterSourceControlStateChanged_Handle(Handle);
 	return true;
 }
 

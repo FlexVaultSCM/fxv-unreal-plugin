@@ -35,8 +35,6 @@ The plugin currently targets **Unreal Engine 5.8**. To support older UE 5 releas
   - `GetSourceControlRevisionInfoWorker` and `UpdateStatusWorker` both spawn one `fxv changeinfo` subprocess per commit (up to 30), resulting in an O(N) process fan-out for every history panel open. Options to address this:
     - Add a `fxv changeinfo --batch` mode that accepts multiple change IDs in a single invocation.
     - Fold per-file details (hash, size, action) directly into the `fxv history --format json` output so no secondary calls are needed.
-- [x] **Active Unsubmitted Draft Handling in File History**:
-  - `QueryFlexVaultFileHistoryDetails` queries active local draft revisions via `fxv changeinfo` (using `branch.base.draft` ID) while gracefully handling pruned drafts.
 - [ ] **`FileSize` Interface Limitation (`int64` → `int32`)**:
   - Unreal's `ISourceControlRevision` interface stores `FileSize` as `int32`, capping displayable sizes at ~2.1 GB. The CLI reports sizes as `int64`. Files larger than this limit will silently display incorrect sizes in the History panel. Track upstream (`ISourceControlRevision`) for a widened type, or display a clamped/formatted value with a tooltip for oversized assets.
 - [ ] **Process Pool & Warm Up Optimization**:

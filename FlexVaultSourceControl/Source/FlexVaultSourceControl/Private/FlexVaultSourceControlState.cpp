@@ -154,7 +154,7 @@ bool FFlexVaultSourceControlState::CanCheckIn() const
 {
 	// In FlexVault, checking in corresponds to publishing/submitting local changes (snapshots).
 	// A file can be checked in if it is tracked, up-to-date with the depot, and has local modifications.
-	return IsSourceControlled() && IsCurrent() && (IsModified() || IsAdded() || IsDeleted() || IsConflicted());
+	return IsSourceControlled() && IsCurrent() && (IsModified() || IsAdded() || IsDeleted()) && !IsConflicted();
 }
 
 bool FFlexVaultSourceControlState::CanCheckout() const

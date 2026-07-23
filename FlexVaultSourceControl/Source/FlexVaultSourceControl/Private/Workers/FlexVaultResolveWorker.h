@@ -28,6 +28,7 @@ public:
 
 private:
 	friend class FFlexVaultWorkerResolveTest;
+	friend class FFlexVaultConflictResolveTransitionTest;
 
 	FString ResolvePreference;
 	mutable TArray<FString> ResolvedFiles;
