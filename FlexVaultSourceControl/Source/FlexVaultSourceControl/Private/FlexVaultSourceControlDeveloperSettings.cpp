@@ -7,6 +7,7 @@ UFlexVaultSourceControlDeveloperSettings::UFlexVaultSourceControlDeveloperSettin
 	, bUseUnattendedMode(true)
 	, ResolvePreference(TEXT("theirs"))
 	, CommandTimeoutSeconds(60.0)
+	, CommandCancelGracePeriodSeconds(2.0)
 {
 }
 

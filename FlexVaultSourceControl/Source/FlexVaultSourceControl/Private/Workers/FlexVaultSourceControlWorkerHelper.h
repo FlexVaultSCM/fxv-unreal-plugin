@@ -5,6 +5,7 @@
 #include "SourceControlOperations.h"
 
 struct FSourceControlResultInfo;
+class FFlexVaultSourceControlCommand;
 
 /**
  * Common SCM execution helper function
@@ -32,13 +33,20 @@ struct FFlexVaultRevisionDetail
 	int64 FileSize;
 };
 
+/**
+ * Runs the FlexVault CLI as a child process and blocks the calling thread until it exits.
+ * If InCancelCommand is provided and InCancelCommand->IsCanceled() becomes true while the
+ * process is running (e.g. a synchronous wait timed out), the child process is terminated
+ * and the call returns promptly with a failure result, rather than blocking indefinitely.
+ */
 bool RunFlexVaultCommand(
 	const FString& InBinaryPath,
 	const FString& InWorkspacePath,
 	const TArray<FString>& InArgs,
 	TArray<FString>& OutOutputLines,
 	FSourceControlResultInfo& OutResultInfo,
-	bool bIgnoreError = false
+	bool bIgnoreError = false,
+	const FFlexVaultSourceControlCommand* InCancelCommand = nullptr
 );
 
 /**
@@ -89,5 +97,6 @@ bool QueryFlexVaultFileHistoryDetails(
 	const FString& InBinaryPath,
 	const FString& InWorkspacePath,
 	TMap<FString, TArray<FFlexVaultRevisionDetail>>& OutFileRevisionMap,
-	FSourceControlResultInfo& OutResultInfo
+	FSourceControlResultInfo& OutResultInfo,
+	const FFlexVaultSourceControlCommand* InCancelCommand = nullptr
 );

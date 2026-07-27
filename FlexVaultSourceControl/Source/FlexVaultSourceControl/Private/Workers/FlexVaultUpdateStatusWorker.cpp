@@ -73,7 +73,9 @@ bool FFlexVaultUpdateStatusWorker::Execute(FFlexVaultSourceControlCommand& InCom
 		InCommand.WorkspacePath,
 		StatusArgs,
 		OutputLines,
-		InCommand.ResultInfo
+		InCommand.ResultInfo,
+		false,
+		&InCommand
 	);
 	if (!bSucceeded)
 	{
@@ -220,7 +222,7 @@ bool FFlexVaultUpdateStatusWorker::Execute(FFlexVaultSourceControlCommand& InCom
 	if (Operation->ShouldUpdateHistory() && InCommand.Files.Num() > 0)
 	{
 		TMap<FString, TArray<FFlexVaultRevisionDetail>> FileRevisionMap;
-		if (QueryFlexVaultFileHistoryDetails(InCommand.BinaryPath, InCommand.WorkspacePath, FileRevisionMap, InCommand.ResultInfo))
+		if (QueryFlexVaultFileHistoryDetails(InCommand.BinaryPath, InCommand.WorkspacePath, FileRevisionMap, InCommand.ResultInfo, &InCommand))
 		{
 			FFlexVaultSourceControlProvider& Provider = GetSCCProvider();
 			for (const FString& File : InCommand.Files)

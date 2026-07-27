@@ -46,7 +46,9 @@ bool FFlexVaultResolveWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 		InCommand.WorkspacePath,
 		ResolveArgs,
 		OutputLines,
-		InCommand.ResultInfo
+		InCommand.ResultInfo,
+		false,
+		&InCommand
 	);
 
 	if (bSucceeded)

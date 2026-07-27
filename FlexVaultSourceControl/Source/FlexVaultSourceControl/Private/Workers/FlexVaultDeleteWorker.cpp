@@ -38,7 +38,8 @@ bool FFlexVaultDeleteWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 		SnapshotArgs,
 		SnapshotOutputLines,
 		SnapshotResultInfo,
-		true // Ignore errors to ensure filesystem deletion still proceeds
+		true, // Ignore errors to ensure filesystem deletion still proceeds
+		&InCommand
 	);
 
 	// 2. Perform local filesystem deletion

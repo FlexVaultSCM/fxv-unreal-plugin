@@ -432,12 +432,15 @@ ECommandResult::Type FFlexVaultSourceControlProvider::ExecuteSynchronousCommand(
 	{
 		Progress.Tick();
 		FPlatformProcess::Sleep(0.01f);
-		if (FPlatformTime::Seconds() - StartWaitTime > TimeoutSeconds)
+		if (!CommandPtr->IsCanceled() && (FPlatformTime::Seconds() - StartWaitTime > TimeoutSeconds))
 		{
-			UE_LOG(LogFlexVault, Error, TEXT("FlexVault SCM: Synchronous command timed out after %.1f seconds."), TimeoutSeconds);
-			CommandPtr->bCommandSuccessful = false;
-			CommandPtr->ResultInfo.ErrorMessages.Add(FText::FromString(TEXT("Command execution timed out.")));
-			break;
+			// Cooperatively cancel rather than reclaiming/deleting the command out from under the
+			// thread pool: Cancel() is observed by RunFlexVaultCommand's poll loop (worker thread),
+			// which terminates the underlying 'fxv' child process and lets DoWork() return promptly.
+			// This mirrors how the Perforce plugin's synchronous wait is cancelled cooperatively rather
+			// than the wait loop unilaterally giving up on the command object while the pool still owns it.
+			UE_LOG(LogFlexVault, Error, TEXT("FlexVault SCM: Synchronous command timed out after %.1f seconds; canceling."), TimeoutSeconds);
+			CommandPtr->Cancel();
 		}
 	}
 
@@ -464,23 +467,23 @@ ECommandResult::Type FFlexVaultSourceControlProvider::ExecuteSynchronousCommand(
 	}
 #endif
 
-	CommandPtr->ReturnResults();
+	const ECommandResult::Type Result = CommandPtr->ReturnResults();
 
-	UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault SCM: Synchronous command %s loop finished. processed=%d, success=%d"), *CommandPtr->Operation->GetName().ToString(), CommandPtr->bExecuteProcessed.Load() ? 1 : 0, CommandPtr->bCommandSuccessful ? 1 : 0);
-
-	const bool bSuccess = CommandPtr->bCommandSuccessful;
-
-	UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault SCM: ExecuteSynchronousCommand finished for operation: %s, Success=%d"), *CommandPtr->Operation->GetName().ToString(), bSuccess ? 1 : 0);
+	UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault SCM: ExecuteSynchronousCommand finished for operation: %s, Result=%d"), *CommandPtr->Operation->GetName().ToString(), (int32)Result);
 
 	// InCommand will go out of scope and delete the heap-allocated command automatically and safely.
-	return bSuccess ? ECommandResult::Succeeded : ECommandResult::Failed;
+	return Result;
 }
 
 ECommandResult::Type FFlexVaultSourceControlProvider::IssueCommand(TUniquePtr<FFlexVaultSourceControlCommand> InCommand, const bool bSynchronous)
 {
 	UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault SCM: IssueCommand: %s, bSynchronous=%d"), *InCommand->Operation->GetName().ToString(), bSynchronous ? 1 : 0);
 	InCommand->WorkspacePath = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
-	InCommand->BinaryPath = GetDefault<UFlexVaultSourceControlDeveloperSettings>()->GetEffectiveBinaryPath();
+	if (const UFlexVaultSourceControlDeveloperSettings* Settings = GetDefault<UFlexVaultSourceControlDeveloperSettings>())
+	{
+		InCommand->BinaryPath = Settings->GetEffectiveBinaryPath();
+		InCommand->CommandCancelGracePeriodSeconds = Settings->CommandCancelGracePeriodSeconds;
+	}
 	if (bSynchronous)
 	{
 		const FText Task = InCommand->Operation->GetInProgressString();

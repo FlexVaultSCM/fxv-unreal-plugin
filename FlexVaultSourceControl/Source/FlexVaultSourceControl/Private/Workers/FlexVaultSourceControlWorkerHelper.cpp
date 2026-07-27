@@ -1,6 +1,7 @@
 // Copyright (c) 2025-2026 FlexVault Inc. All Rights Reserved.
 #include "FlexVaultSourceControlWorkerHelper.h"
 #include "FlexVaultSourceControlProvider.h"
+#include "FlexVaultSourceControlCommand.h"
 #include "FlexVaultSourceControlRevision.h"
 #include "HAL/PlatformProcess.h"
 #include "Misc/Paths.h"
@@ -83,7 +84,8 @@ bool RunFlexVaultCommand(
 	const TArray<FString>& InArgs,
 	TArray<FString>& OutOutputLines,
 	FSourceControlResultInfo& OutResultInfo,
-	bool bIgnoreError
+	bool bIgnoreError,
+	const FFlexVaultSourceControlCommand* InCancelCommand
 )
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(RunFlexVaultCommand);
@@ -122,14 +124,40 @@ bool RunFlexVaultCommand(
 	}
 
 	FString OutputString;
+	bool bWasCanceled = false;
 	while (FPlatformProcess::IsProcRunning(Process))
 	{
+		if (InCancelCommand && InCancelCommand->IsCanceled())
+		{
+			// Terminate the child process so the calling thread's wait for this command
+			// (e.g. ExecuteSynchronousCommand's timeout) is honored promptly and the underlying
+			// process is not left running/orphaned in the background.
+			bWasCanceled = true;
+			FPlatformProcess::TerminateProc(Process, true);
+			break;
+		}
+
 		FString TempData = FPlatformProcess::ReadPipe(PipeRead);
 		if (!TempData.IsEmpty())
 		{
 			OutputString.Append(TempData);
 		}
 		FPlatformProcess::Sleep(0.01f);
+	}
+
+	if (bWasCanceled)
+	{
+		// TerminateProc is not guaranteed to be synchronous; give the OS a bounded window to
+		// finish tearing the process down before we ask for its exit code. The bound comes from
+		// InCancelCommand, which snapshotted UFlexVaultSourceControlDeveloperSettings on the game
+		// thread (see FFlexVaultSourceControlProvider::IssueCommand) - we must not read the settings
+		// CDO here, since RunFlexVaultCommand runs on a thread pool worker thread.
+		const double GracePeriodSeconds = InCancelCommand ? InCancelCommand->CommandCancelGracePeriodSeconds : 2.0;
+		const double TerminateWaitStart = FPlatformTime::Seconds();
+		while (FPlatformProcess::IsProcRunning(Process) && (FPlatformTime::Seconds() - TerminateWaitStart) < GracePeriodSeconds)
+		{
+			FPlatformProcess::Sleep(0.01f);
+		}
 	}
 
 	FString TempData = FPlatformProcess::ReadPipe(PipeRead);
@@ -151,7 +179,13 @@ bool RunFlexVaultCommand(
 		Line.TrimStartAndEndInline();
 	}
 
-	if (ReturnCode != 0 && !bIgnoreError)
+	if (bWasCanceled)
+	{
+		// Cancellation is not a normal CLI failure to be suppressed by bIgnoreError - the caller
+		// explicitly requested this command stop, so always surface it.
+		OutResultInfo.ErrorMessages.Add(LOCTEXT("FlexVaultCommandCanceled", "FlexVault CLI command was canceled (timed out)."));
+	}
+	else if (ReturnCode != 0 && !bIgnoreError)
 	{
 		OutResultInfo.ErrorMessages.Add(FText::Format(LOCTEXT("FlexVaultCommandError", "FlexVault CLI command failed with exit code: {0}"), FText::AsNumber(ReturnCode)));
 		for (const FString& Line : OutOutputLines)
@@ -200,7 +234,7 @@ bool RunFlexVaultCommand(
 		}
 		LogBlock.Appendf(TEXT("================================================================"));
 
-		if (ReturnCode == 0 || bIgnoreError)
+		if (!bWasCanceled && (ReturnCode == 0 || bIgnoreError))
 		{
 			UE_LOG(LogFlexVault, Verbose, TEXT("\n%s"), *LogBlock);
 		}
@@ -210,7 +244,9 @@ bool RunFlexVaultCommand(
 		}
 	}
 
-	return ReturnCode == 0;
+	// A canceled command is always a failure, regardless of the exit code the OS reports for a
+	// forcibly-terminated process (which may not be reliably retrievable at all).
+	return !bWasCanceled && ReturnCode == 0;
 }
 
 bool CheckFlexVaultVersion(
@@ -454,7 +490,8 @@ bool QueryFlexVaultFileHistoryDetails(
 	const FString& InBinaryPath,
 	const FString& InWorkspacePath,
 	TMap<FString, TArray<FFlexVaultRevisionDetail>>& OutFileRevisionMap,
-	FSourceControlResultInfo& OutResultInfo
+	FSourceControlResultInfo& OutResultInfo,
+	const FFlexVaultSourceControlCommand* InCancelCommand
 )
 {
 	TArray<FString> HistoryArgs = {
@@ -465,7 +502,7 @@ bool QueryFlexVaultFileHistoryDetails(
 		TEXT("--no-color")
 	};
 	TArray<FString> OutputLines;
-	bool bSucceeded = RunFlexVaultCommand(InBinaryPath, InWorkspacePath, HistoryArgs, OutputLines, OutResultInfo);
+	bool bSucceeded = RunFlexVaultCommand(InBinaryPath, InWorkspacePath, HistoryArgs, OutputLines, OutResultInfo, false, InCancelCommand);
 	if (!bSucceeded)
 	{
 		return false;
@@ -479,6 +516,11 @@ bool QueryFlexVaultFileHistoryDetails(
 
 	for (const FFlexVaultCommitMeta& Commit : Commits)
 	{
+		if (InCancelCommand && InCancelCommand->IsCanceled())
+		{
+			break;
+		}
+
 		FString ChangeId;
 		if (Commit.CommitType.Equals(TEXT("draft"), ESearchCase::IgnoreCase))
 		{
@@ -511,7 +553,7 @@ bool QueryFlexVaultFileHistoryDetails(
 		TArray<FString> ChangeInfoOutput;
 		FSourceControlResultInfo TempResultInfo;
 
-		if (RunFlexVaultCommand(InBinaryPath, InWorkspacePath, ChangeInfoArgs, ChangeInfoOutput, TempResultInfo, true))
+		if (RunFlexVaultCommand(InBinaryPath, InWorkspacePath, ChangeInfoArgs, ChangeInfoOutput, TempResultInfo, true, InCancelCommand))
 		{
 			ParseFlexVaultChangeInfo(ChangeInfoOutput, Commit, ChangeId, OutFileRevisionMap);
 		}

@@ -60,6 +60,13 @@ public:
 	/** Path to the workspace directory, resolved on the main thread */
 	FString WorkspacePath;
 
+	/**
+	 * Grace period (seconds) for a canceled CLI process to exit after being terminated, snapshotted
+	 * from UFlexVaultSourceControlDeveloperSettings on the game thread (see IssueCommand) so worker
+	 * threads never read the settings CDO directly.
+	 */
+	double CommandCancelGracePeriodSeconds = 2.0;
+
 	/** Standard output message logging collections */
 	FSourceControlResultInfo ResultInfo;
 };
