@@ -418,8 +418,11 @@ bool ParseFlexVaultChangeInfo(
 			FFlexVaultRevisionDetail Rev;
 			if (InCommit.CommitType.Equals(TEXT("draft"), ESearchCase::IgnoreCase) && InCommit.DraftRevision.IsSet())
 			{
-				uint64 BaseRev = InCommit.PublishedRevision.Get(0);
-				Rev.RevisionNumber = static_cast<int32>(BaseRev + InCommit.DraftRevision.GetValue());
+				// An unparented draft (no prior publish on this branch) has no base revision to add;
+				// using it directly keeps this symmetric with the "main.-.N" ChangeId format below.
+				Rev.RevisionNumber = InCommit.PublishedRevision.IsSet()
+					? static_cast<int32>(InCommit.PublishedRevision.GetValue() + InCommit.DraftRevision.GetValue())
+					: static_cast<int32>(InCommit.DraftRevision.GetValue());
 			}
 			else
 			{
@@ -465,6 +468,31 @@ FString GetRelativeWorkspacePath(const FString& InFile, const FString& InWorkspa
 	FPaths::MakePathRelativeTo(RelativePath, *InWorkspacePath);
 	RelativePath.ReplaceInline(TEXT("\\"), TEXT("/"));
 	return RelativePath;
+}
+
+FString BuildFlexVaultChangeId(const FFlexVaultCommitMeta& InCommit)
+{
+	if (InCommit.CommitType.Equals(TEXT("draft"), ESearchCase::IgnoreCase))
+	{
+		if (!InCommit.DraftRevision.IsSet())
+		{
+			return FString();
+		}
+
+		// An unset PublishedRevision means this draft has no published parent on this branch
+		// (e.g. before the branch's first publish). The CLI identifies that state with a literal
+		// "-" base-revision segment ("main.-.N"), not "main.0.N" ("0" is a real, different, revision).
+		return InCommit.PublishedRevision.IsSet()
+			? FString::Printf(TEXT("%s.%llu.%llu"), *InCommit.Branch, InCommit.PublishedRevision.GetValue(), InCommit.DraftRevision.GetValue())
+			: FString::Printf(TEXT("%s.-.%llu"), *InCommit.Branch, InCommit.DraftRevision.GetValue());
+	}
+
+	if (InCommit.PublishedRevision.IsSet())
+	{
+		return FString::Printf(TEXT("%s.%llu"), *InCommit.Branch, InCommit.PublishedRevision.GetValue());
+	}
+
+	return InCommit.Branch;
 }
 
 TSharedRef<FFlexVaultSourceControlRevision, ESPMode::ThreadSafe> CreateFlexVaultRevision(
@@ -521,26 +549,10 @@ bool QueryFlexVaultFileHistoryDetails(
 			break;
 		}
 
-		FString ChangeId;
-		if (Commit.CommitType.Equals(TEXT("draft"), ESearchCase::IgnoreCase))
+		const FString ChangeId = BuildFlexVaultChangeId(Commit);
+		if (ChangeId.IsEmpty())
 		{
-			if (Commit.DraftRevision.IsSet())
-			{
-				uint64 BaseRev = Commit.PublishedRevision.Get(0);
-				ChangeId = FString::Printf(TEXT("%s.%llu.%llu"), *Commit.Branch, BaseRev, Commit.DraftRevision.GetValue());
-			}
-			else
-			{
-				continue;
-			}
-		}
-		else if (Commit.PublishedRevision.IsSet())
-		{
-			ChangeId = FString::Printf(TEXT("%s.%llu"), *Commit.Branch, Commit.PublishedRevision.GetValue());
-		}
-		else
-		{
-			ChangeId = Commit.Branch;
+			continue;
 		}
 
 		TArray<FString> ChangeInfoArgs = {

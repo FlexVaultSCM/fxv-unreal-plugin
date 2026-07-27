@@ -518,6 +518,59 @@ bool FFlexVaultChangeInfoNumericPathRepro::RunTest(const FString& Parameters)
 	return true;
 }
 
+// ── Test: N3 — unparented draft ChangeId uses "main.-.N", not "main.0.N" ────
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultUnparentedDraftChangeIdTest, "FlexVault.SourceControl.HelperUnparentedDraftChangeId", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FFlexVaultUnparentedDraftChangeIdTest::RunTest(const FString& Parameters)
+{
+	// Unparented draft: no prior publish on this branch, so PublishedRevision is left unset,
+	// exactly as the JSON parser leaves it when 'fxv history' omits the "revision" field
+	// (confirmed live: 'fxv status' on a fresh workspace reports head_commit.state ==
+	// "unparented_draft" with no "revision" key on the commit).
+	FFlexVaultCommitMeta UnparentedDraft;
+	UnparentedDraft.Branch = TEXT("main");
+	UnparentedDraft.CommitType = TEXT("draft");
+	UnparentedDraft.DraftRevision = 1;
+	TestEqual(TEXT("Unparented draft ChangeId uses '-' base revision"), BuildFlexVaultChangeId(UnparentedDraft), TEXT("main.-.1"));
+
+	// Parented draft: PublishedRevision set (round-1/round-2 behavior, must be unchanged).
+	FFlexVaultCommitMeta ParentedDraft;
+	ParentedDraft.Branch = TEXT("main");
+	ParentedDraft.CommitType = TEXT("draft");
+	ParentedDraft.PublishedRevision = 4;
+	ParentedDraft.DraftRevision = 2;
+	TestEqual(TEXT("Parented draft ChangeId includes base revision"), BuildFlexVaultChangeId(ParentedDraft), TEXT("main.4.2"));
+
+	// Draft with no DraftRevision set: nothing to query, ChangeId must be empty so the caller skips it.
+	FFlexVaultCommitMeta DraftMissingRevision;
+	DraftMissingRevision.Branch = TEXT("main");
+	DraftMissingRevision.CommitType = TEXT("draft");
+	TestTrue(TEXT("Draft with no DraftRevision yields empty ChangeId"), BuildFlexVaultChangeId(DraftMissingRevision).IsEmpty());
+
+	// Published commit: unaffected by the draft-specific branching.
+	FFlexVaultCommitMeta Published;
+	Published.Branch = TEXT("main");
+	Published.CommitType = TEXT("published");
+	Published.PublishedRevision = 8;
+	TestEqual(TEXT("Published ChangeId unaffected"), BuildFlexVaultChangeId(Published), TEXT("main.8"));
+
+	// RevisionNumber (display/sort only) mirrors the same unparented-vs-parented split.
+	TArray<FString> UnparentedChangeInfoLines = { TEXT("Added 4a8e23908f9024f 1024 Content/Foo.uasset") };
+	TMap<FString, TArray<FFlexVaultRevisionDetail>> UnparentedMap;
+	ParseFlexVaultChangeInfo(UnparentedChangeInfoLines, UnparentedDraft, TEXT("main.-.1"), UnparentedMap);
+	if (TArray<FFlexVaultRevisionDetail>* R = UnparentedMap.Find(TEXT("content/foo.uasset")))
+	{
+		TestEqual(TEXT("Unparented draft RevisionNumber has no phantom base revision"), (*R)[0].RevisionNumber, 1);
+		TestEqual(TEXT("Unparented draft RevisionSpec round-trips"), (*R)[0].RevisionSpec, TEXT("main.-.1"));
+	}
+	else
+	{
+		AddError(TEXT("Expected file entry missing from unparented draft changeinfo parse"));
+	}
+
+	return true;
+}
+
 // ── Test 15: CheckIn Worker State Notification & Delegate Broadcast Test ──────
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultWorkerCheckInStateBroadcastTest, "FlexVault.SourceControl.WorkerCheckInStateBroadcast", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 

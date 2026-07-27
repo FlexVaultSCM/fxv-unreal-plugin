@@ -67,6 +67,14 @@ bool ParseFlexVaultHistory(
 );
 
 /**
+ * Builds the 'fxv changeinfo'-compatible revision spec ("ChangeId") for a commit, e.g. "main.8",
+ * "main.8.2" for a draft parented on published revision 8, or "main.-.2" for a draft with no
+ * published parent on its branch (the CLI's literal syntax for that state). Returns an empty
+ * string for a draft commit with no DraftRevision set (nothing to query).
+ */
+FString BuildFlexVaultChangeId(const FFlexVaultCommitMeta& InCommit);
+
+/**
  * Parses the plaintext output lines of 'fxv changeinfo' for a specific commit and groups them by file path.
  */
 bool ParseFlexVaultChangeInfo(
