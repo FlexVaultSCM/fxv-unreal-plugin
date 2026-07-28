@@ -20,5 +20,7 @@ public:
 	virtual bool UpdateStates() const override;
 
 private:
+	friend class FFlexVaultWorkerCheckInStateBroadcastTest;
+
 	mutable TArray<FString> CommittedFiles;
 };

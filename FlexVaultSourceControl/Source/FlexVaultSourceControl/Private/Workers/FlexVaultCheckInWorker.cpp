@@ -43,18 +43,11 @@ bool FFlexVaultCheckInWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 		TEXT("--unattended"),
 		TEXT("--no-color")
 	};
-	bool bSnapshotOk = RunFlexVaultCommand(InCommand.BinaryPath, InCommand.WorkspacePath, SnapshotArgs, SnapshotOutputLines, InCommand.ResultInfo);
+	bool bSnapshotOk = RunFlexVaultCommand(InCommand.BinaryPath, InCommand.WorkspacePath, SnapshotArgs, SnapshotOutputLines, InCommand.ResultInfo, false, &InCommand);
 	if (!bSnapshotOk)
 	{
 		UE_LOG(LogFlexVault, Error, TEXT("FlexVault SCM: Snapshot phase failed during check-in."));
 		InCommand.ResultInfo.ErrorMessages.Add(LOCTEXT("SnapshotFailure", "FlexVault: Snapshot phase failed during check-in."));
-		for (const FString& Line : SnapshotOutputLines)
-		{
-			if (!Line.IsEmpty())
-			{
-				InCommand.ResultInfo.ErrorMessages.Add(FText::FromString(Line));
-			}
-		}
 		return false;
 	}
 
@@ -67,18 +60,11 @@ bool FFlexVaultCheckInWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 		TEXT("--unattended"),
 		TEXT("--no-color")
 	};
-	bool bPublishOk = RunFlexVaultCommand(InCommand.BinaryPath, InCommand.WorkspacePath, PublishArgs, PublishOutputLines, InCommand.ResultInfo);
+	bool bPublishOk = RunFlexVaultCommand(InCommand.BinaryPath, InCommand.WorkspacePath, PublishArgs, PublishOutputLines, InCommand.ResultInfo, false, &InCommand);
 	if (!bPublishOk)
 	{
 		UE_LOG(LogFlexVault, Error, TEXT("FlexVault SCM: Publish phase failed during check-in."));
 		InCommand.ResultInfo.ErrorMessages.Add(LOCTEXT("PublishFailure", "FlexVault: Publish phase failed during check-in."));
-		for (const FString& Line : PublishOutputLines)
-		{
-			if (!Line.IsEmpty())
-			{
-				InCommand.ResultInfo.ErrorMessages.Add(FText::FromString(Line));
-			}
-		}
 		return false;
 	}
 
@@ -107,6 +93,14 @@ bool FFlexVaultCheckInWorker::UpdateStates() const
 			PlatformFile.SetReadOnly(*File, true);
 		}
 	}
+
+	if (CommittedFiles.Num() > 0)
+	{
+		TArray<FSourceControlStateRef> States;
+		Provider.GetState(CommittedFiles, States, EStateCacheUsage::ForceUpdate);
+		Provider.OutputStateChangedEvent();
+	}
+
 	UE_LOG(LogFlexVault, Display, TEXT("FlexVault SCM: Successfully checked in %d files."), CommittedFiles.Num());
 	return CommittedFiles.Num() > 0;
 }

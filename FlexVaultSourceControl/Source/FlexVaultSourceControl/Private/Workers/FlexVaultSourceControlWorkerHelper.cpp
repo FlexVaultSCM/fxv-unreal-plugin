@@ -1,6 +1,7 @@
 // Copyright (c) 2025-2026 FlexVault Inc. All Rights Reserved.
 #include "FlexVaultSourceControlWorkerHelper.h"
 #include "FlexVaultSourceControlProvider.h"
+#include "FlexVaultSourceControlCommand.h"
 #include "FlexVaultSourceControlRevision.h"
 #include "HAL/PlatformProcess.h"
 #include "Misc/Paths.h"
@@ -83,7 +84,8 @@ bool RunFlexVaultCommand(
 	const TArray<FString>& InArgs,
 	TArray<FString>& OutOutputLines,
 	FSourceControlResultInfo& OutResultInfo,
-	bool bIgnoreError
+	bool bIgnoreError,
+	const FFlexVaultSourceControlCommand* InCancelCommand
 )
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(RunFlexVaultCommand);
@@ -122,14 +124,40 @@ bool RunFlexVaultCommand(
 	}
 
 	FString OutputString;
+	bool bWasCanceled = false;
 	while (FPlatformProcess::IsProcRunning(Process))
 	{
+		if (InCancelCommand && InCancelCommand->IsCanceled())
+		{
+			// Terminate the child process so the calling thread's wait for this command
+			// (e.g. ExecuteSynchronousCommand's timeout) is honored promptly and the underlying
+			// process is not left running/orphaned in the background.
+			bWasCanceled = true;
+			FPlatformProcess::TerminateProc(Process, true);
+			break;
+		}
+
 		FString TempData = FPlatformProcess::ReadPipe(PipeRead);
 		if (!TempData.IsEmpty())
 		{
 			OutputString.Append(TempData);
 		}
 		FPlatformProcess::Sleep(0.01f);
+	}
+
+	if (bWasCanceled)
+	{
+		// TerminateProc is not guaranteed to be synchronous; give the OS a bounded window to
+		// finish tearing the process down before we ask for its exit code. The bound comes from
+		// InCancelCommand, which snapshotted UFlexVaultSourceControlDeveloperSettings on the game
+		// thread (see FFlexVaultSourceControlProvider::IssueCommand) - we must not read the settings
+		// CDO here, since RunFlexVaultCommand runs on a thread pool worker thread.
+		const double GracePeriodSeconds = InCancelCommand ? InCancelCommand->CommandCancelGracePeriodSeconds : 2.0;
+		const double TerminateWaitStart = FPlatformTime::Seconds();
+		while (FPlatformProcess::IsProcRunning(Process) && (FPlatformTime::Seconds() - TerminateWaitStart) < GracePeriodSeconds)
+		{
+			FPlatformProcess::Sleep(0.01f);
+		}
 	}
 
 	FString TempData = FPlatformProcess::ReadPipe(PipeRead);
@@ -151,9 +179,22 @@ bool RunFlexVaultCommand(
 		Line.TrimStartAndEndInline();
 	}
 
-	if (ReturnCode != 0 && !bIgnoreError)
+	if (bWasCanceled)
+	{
+		// Cancellation is not a normal CLI failure to be suppressed by bIgnoreError - the caller
+		// explicitly requested this command stop, so always surface it.
+		OutResultInfo.ErrorMessages.Add(LOCTEXT("FlexVaultCommandCanceled", "FlexVault CLI command was canceled (timed out)."));
+	}
+	else if (ReturnCode != 0 && !bIgnoreError)
 	{
 		OutResultInfo.ErrorMessages.Add(FText::Format(LOCTEXT("FlexVaultCommandError", "FlexVault CLI command failed with exit code: {0}"), FText::AsNumber(ReturnCode)));
+		for (const FString& Line : OutOutputLines)
+		{
+			if (!Line.IsEmpty())
+			{
+				OutResultInfo.ErrorMessages.Add(FText::FromString(Line));
+			}
+		}
 	}
 
 	if (ReturnCode != 0 || !LogFlexVault.IsSuppressed(ELogVerbosity::Verbose))
@@ -193,7 +234,7 @@ bool RunFlexVaultCommand(
 		}
 		LogBlock.Appendf(TEXT("================================================================"));
 
-		if (ReturnCode == 0 || bIgnoreError)
+		if (!bWasCanceled && (ReturnCode == 0 || bIgnoreError))
 		{
 			UE_LOG(LogFlexVault, Verbose, TEXT("\n%s"), *LogBlock);
 		}
@@ -203,7 +244,9 @@ bool RunFlexVaultCommand(
 		}
 	}
 
-	return ReturnCode == 0;
+	// A canceled command is always a failure, regardless of the exit code the OS reports for a
+	// forcibly-terminated process (which may not be reliably retrievable at all).
+	return !bWasCanceled && ReturnCode == 0;
 }
 
 bool CheckFlexVaultVersion(
@@ -343,8 +386,9 @@ bool ParseFlexVaultChangeInfo(
 )
 {
 	// Plaintext parsing of changeinfo output:
-	// Format is: <Action> <Hash> <Path>
-	// E.g.: Added 3c9b23ad7a002458ec6ec130aea451eab768d4965b8d0f6ac83ddcbf54df6234 .fxvignore
+	// Format is: <Action> <Hash> [<Size>] <Path>
+	// E.g.: Changed 82d69ce3c61a6300fc41c2d68e63e722841c85228caffedc89831e56aa467de6 3226909 Content\Images\loot.uasset
+	// E.g.: Added 3c9b23ad7a002458ec6ec130aea451eab768d4965b8d0f6ac83ddcbf54df6234 651 .fxvignore
 	for (const FString& Line : InChangeInfoOutputLines)
 	{
 		FString TrimmedLine = Line.TrimStartAndEnd();
@@ -354,10 +398,17 @@ bool ParseFlexVaultChangeInfo(
 		{
 			FString ActionStr = Tokens[0];
 			FString HashStr = Tokens[1];
-			int64 ParsedSize = 0; // File size is not yet reported in the changeinfo output
-			
-			FString RelPath = Tokens[2];
-			for (int32 i = 3; i < Tokens.Num(); ++i)
+			int64 ParsedSize = 0;
+			int32 PathStartIndex = 2;
+
+			if (Tokens.Num() >= 4 && Tokens[2].IsNumeric())
+			{
+				ParsedSize = FCString::Atoi64(*Tokens[2]);
+				PathStartIndex = 3;
+			}
+
+			FString RelPath = Tokens[PathStartIndex];
+			for (int32 i = PathStartIndex + 1; i < Tokens.Num(); ++i)
 			{
 				RelPath += TEXT(" ") + Tokens[i];
 			}
@@ -366,8 +417,11 @@ bool ParseFlexVaultChangeInfo(
 			FFlexVaultRevisionDetail Rev;
 			if (InCommit.CommitType.Equals(TEXT("draft"), ESearchCase::IgnoreCase) && InCommit.DraftRevision.IsSet())
 			{
-				uint64 BaseRev = InCommit.PublishedRevision.Get(0);
-				Rev.RevisionNumber = static_cast<int32>(BaseRev + InCommit.DraftRevision.GetValue());
+				// An unparented draft (no prior publish on this branch) has no base revision to add;
+				// using it directly keeps this symmetric with the "main.-.N" ChangeId format below.
+				Rev.RevisionNumber = InCommit.PublishedRevision.IsSet()
+					? static_cast<int32>(InCommit.PublishedRevision.GetValue() + InCommit.DraftRevision.GetValue())
+					: static_cast<int32>(InCommit.DraftRevision.GetValue());
 			}
 			else
 			{
@@ -377,16 +431,16 @@ bool ParseFlexVaultChangeInfo(
 			Rev.Description = InCommit.Description;
 			Rev.UserName = InCommit.Author;
 			Rev.FileSize = ParsedSize;
-			
-			if (ActionStr.Equals(TEXT("Added"), ESearchCase::IgnoreCase))
+
+			if (ActionStr.Equals(TEXT("Added"), ESearchCase::IgnoreCase) || ActionStr.Equals(TEXT("Add"), ESearchCase::IgnoreCase))
 			{
 				Rev.Action = TEXT("Add");
 			}
-			else if (ActionStr.Equals(TEXT("Modified"), ESearchCase::IgnoreCase))
+			else if (ActionStr.Equals(TEXT("Modified"), ESearchCase::IgnoreCase) || ActionStr.Equals(TEXT("Changed"), ESearchCase::IgnoreCase) || ActionStr.Equals(TEXT("Edit"), ESearchCase::IgnoreCase))
 			{
 				Rev.Action = TEXT("Edit");
 			}
-			else if (ActionStr.Equals(TEXT("Deleted"), ESearchCase::IgnoreCase))
+			else if (ActionStr.Equals(TEXT("Deleted"), ESearchCase::IgnoreCase) || ActionStr.Equals(TEXT("Removed"), ESearchCase::IgnoreCase) || ActionStr.Equals(TEXT("Delete"), ESearchCase::IgnoreCase))
 			{
 				Rev.Action = TEXT("Delete");
 			}
@@ -415,6 +469,31 @@ FString GetRelativeWorkspacePath(const FString& InFile, const FString& InWorkspa
 	return RelativePath;
 }
 
+FString BuildFlexVaultChangeId(const FFlexVaultCommitMeta& InCommit)
+{
+	if (InCommit.CommitType.Equals(TEXT("draft"), ESearchCase::IgnoreCase))
+	{
+		if (!InCommit.DraftRevision.IsSet())
+		{
+			return FString();
+		}
+
+		// An unset PublishedRevision means this draft has no published parent on this branch
+		// (e.g. before the branch's first publish). The CLI identifies that state with a literal
+		// "-" base-revision segment ("main.-.N"), not "main.0.N" ("0" is a real, different, revision).
+		return InCommit.PublishedRevision.IsSet()
+			? FString::Printf(TEXT("%s.%llu.%llu"), *InCommit.Branch, InCommit.PublishedRevision.GetValue(), InCommit.DraftRevision.GetValue())
+			: FString::Printf(TEXT("%s.-.%llu"), *InCommit.Branch, InCommit.DraftRevision.GetValue());
+	}
+
+	if (InCommit.PublishedRevision.IsSet())
+	{
+		return FString::Printf(TEXT("%s.%llu"), *InCommit.Branch, InCommit.PublishedRevision.GetValue());
+	}
+
+	return InCommit.Branch;
+}
+
 TSharedRef<FFlexVaultSourceControlRevision, ESPMode::ThreadSafe> CreateFlexVaultRevision(
 	const FFlexVaultRevisionDetail& InDetail,
 	FFlexVaultSourceControlProvider& InProvider,
@@ -438,7 +517,8 @@ bool QueryFlexVaultFileHistoryDetails(
 	const FString& InBinaryPath,
 	const FString& InWorkspacePath,
 	TMap<FString, TArray<FFlexVaultRevisionDetail>>& OutFileRevisionMap,
-	FSourceControlResultInfo& OutResultInfo
+	FSourceControlResultInfo& OutResultInfo,
+	const FFlexVaultSourceControlCommand* InCancelCommand
 )
 {
 	TArray<FString> HistoryArgs = {
@@ -449,7 +529,7 @@ bool QueryFlexVaultFileHistoryDetails(
 		TEXT("--no-color")
 	};
 	TArray<FString> OutputLines;
-	bool bSucceeded = RunFlexVaultCommand(InBinaryPath, InWorkspacePath, HistoryArgs, OutputLines, OutResultInfo);
+	bool bSucceeded = RunFlexVaultCommand(InBinaryPath, InWorkspacePath, HistoryArgs, OutputLines, OutResultInfo, false, InCancelCommand);
 	if (!bSucceeded)
 	{
 		return false;
@@ -463,14 +543,15 @@ bool QueryFlexVaultFileHistoryDetails(
 
 	for (const FFlexVaultCommitMeta& Commit : Commits)
 	{
-		FString ChangeId;
-		if (Commit.CommitType.Equals(TEXT("draft"), ESearchCase::IgnoreCase) && Commit.DraftRevision.IsSet())
+		if (InCancelCommand && InCancelCommand->IsCanceled())
 		{
-			ChangeId = FString::Printf(TEXT("%s.%llu.%llu"), *Commit.Branch, Commit.PublishedRevision.Get(0), Commit.DraftRevision.GetValue());
+			break;
 		}
-		else
+
+		const FString ChangeId = BuildFlexVaultChangeId(Commit);
+		if (ChangeId.IsEmpty())
 		{
-			ChangeId = FString::Printf(TEXT("%s.%llu"), *Commit.Branch, Commit.PublishedRevision.Get(0));
+			continue;
 		}
 
 		TArray<FString> ChangeInfoArgs = {
@@ -483,10 +564,7 @@ bool QueryFlexVaultFileHistoryDetails(
 		TArray<FString> ChangeInfoOutput;
 		FSourceControlResultInfo TempResultInfo;
 
-		// Suppress SCM Error logging for changeinfo on old/deleted draft revisions. When drafts (e.g. main.1.1) 
-		// are published, they are promoted to a permanent published revision (e.g. main.2) and the local draft metadata/assets 
-		// are pruned from the draft store, meaning changeinfo will return exit code 1.
-		if (RunFlexVaultCommand(InBinaryPath, InWorkspacePath, ChangeInfoArgs, ChangeInfoOutput, TempResultInfo, true))
+		if (RunFlexVaultCommand(InBinaryPath, InWorkspacePath, ChangeInfoArgs, ChangeInfoOutput, TempResultInfo, true, InCancelCommand))
 		{
 			ParseFlexVaultChangeInfo(ChangeInfoOutput, Commit, ChangeId, OutFileRevisionMap);
 		}

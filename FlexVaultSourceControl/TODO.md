@@ -28,6 +28,9 @@ The plugin currently targets **Unreal Engine 5.8**. To support older UE 5 releas
 - [ ] **Changelists & Branch Switching**:
   - Explore mapping branch lists to Unreal Engine's revision control branch actions.
   - Add menu items to sync to a specific tag/revision or create new branches from the editor.
+- [ ] **FlexVault Branch Explorer UI (`UnrealRevisionControl.FocusBranchExplorer`)**:
+  - Implement full visual Branch Explorer Slate window (`SFlexVaultBranchExplorer`) bound to `UnrealRevisionControl.FocusBranchExplorer`.
+  - Display interactive DAG/branch tree, commit history, and branch creation/switch controls directly inside Unreal Editor.
 - [ ] **Batch `changeinfo` / History Performance**:
   - `GetSourceControlRevisionInfoWorker` and `UpdateStatusWorker` both spawn one `fxv changeinfo` subprocess per commit (up to 30), resulting in an O(N) process fan-out for every history panel open. Options to address this:
     - Add a `fxv changeinfo --batch` mode that accepts multiple change IDs in a single invocation.
@@ -48,7 +51,6 @@ The plugin currently targets **Unreal Engine 5.8**. To support older UE 5 releas
   - Present clear error messages to the editor log if the binary is missing or cannot be executed.
 - [ ] **Check-In Partial Failure Recovery**:
   - `FFlexVaultCheckInWorker` runs `fxv snapshot` then `fxv publish` sequentially. If snapshot succeeds but publish fails, the workspace is left with an unpublished local draft that is not reflected in the Unreal state — the editor shows the files as clean when they are not. Add a recovery path (e.g. surface a distinct `PartialCheckIn` state, or attempt a compensating revert) so the user is never silently left in an inconsistent state.
-- [ ] Implement FFlexVaultRevertWorker once CLI supports it (`fxv revert`)
 - [ ] Implement FFlexVaultSourceControlRevision once CLI supports it (`fxv cat`)
 - [ ] Swap plaintext parsing of changeinfo output to JSON once CLI supports it (`fxv changeinfo`)
 - [ ] Log spam: `LogRendererCore: Warning: FlushRenderingCommands called recursively! 2 calls on the stack.`

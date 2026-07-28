@@ -74,6 +74,13 @@ public:
 	virtual TOptional<bool> HasChangesToSync() const override { return bHasChangesToSync; }
 	virtual TOptional<bool> HasChangesToCheckIn() const override { return TOptional<bool>(); }
 	void SetHasChangesToSync(TOptional<bool> InHasChangesToSync) { bHasChangesToSync = InHasChangesToSync; }
+	void OutputStateChangedEvent()
+	{
+		if (!GIsInitialLoad && !IsGarbageCollecting() && !IsAsyncLoading())
+		{
+			OnSourceControlStateChanged.Broadcast();
+		}
+	}
 	// IsAtLatestRevision() and GetNumLocalChanges() are now final in UE 5.8's ISourceControlProvider.
 	// The base class default implementations return TOptional<bool>() / TOptional<int>(), identical behaviour.
 	virtual void Tick() override;

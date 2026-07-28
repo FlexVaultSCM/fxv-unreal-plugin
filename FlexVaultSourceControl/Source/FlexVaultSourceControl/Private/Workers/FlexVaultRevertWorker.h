@@ -20,5 +20,8 @@ public:
 	virtual bool UpdateStates() const override;
 
 private:
+	friend class FFlexVaultWorkerRevertTest;
+	friend class FFlexVaultConflictRevertTransitionTest;
+
 	mutable TArray<FString> RevertedFiles;
 };

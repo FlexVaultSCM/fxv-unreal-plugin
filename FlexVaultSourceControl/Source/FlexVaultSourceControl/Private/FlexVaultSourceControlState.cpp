@@ -153,9 +153,8 @@ const FDateTime& FFlexVaultSourceControlState::GetTimeStamp() const
 bool FFlexVaultSourceControlState::CanCheckIn() const
 {
 	// In FlexVault, checking in corresponds to publishing/submitting local changes (snapshots).
-	// A file can be checked in if it is tracked (source controlled) and is currently up-to-date with
-	// the latest revision from the depot (IsCurrent), which prevents merge conflicts upon commit.
-	return IsSourceControlled() && IsCurrent();
+	// A file can be checked in if it is tracked, up-to-date with the depot, and has local modifications.
+	return IsSourceControlled() && IsCurrent() && (IsModified() || IsAdded() || IsDeleted()) && !IsConflicted();
 }
 
 bool FFlexVaultSourceControlState::CanCheckout() const
@@ -241,7 +240,12 @@ bool FFlexVaultSourceControlState::CanDelete() const
 
 bool FFlexVaultSourceControlState::CanRevert() const
 {
-	return IsCheckedOut() || IsAdded() || IsDeleted();
+	return IsCheckedOut() || IsAdded() || IsDeleted() || IsConflicted();
+}
+
+bool FFlexVaultSourceControlState::IsConflicted() const
+{
+	return bConflicted;
 }
 
 void FFlexVaultSourceControlState::Update(const FFlexVaultSourceControlState& InOther, const FDateTime* InTimeStamp)
@@ -276,6 +280,7 @@ void FFlexVaultSourceControlState::Update(const FFlexVaultSourceControlState& In
 
 	bBinary = InOther.bBinary;
 	bExclusiveCheckout = InOther.bExclusiveCheckout;
+	bConflicted = InOther.bConflicted;
 
 	if (InTimeStamp)
 	{

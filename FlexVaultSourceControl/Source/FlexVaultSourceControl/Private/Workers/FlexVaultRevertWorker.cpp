@@ -2,6 +2,7 @@
 #include "FlexVaultRevertWorker.h"
 #include "FlexVaultSourceControlCommand.h"
 #include "FlexVaultSourceControlProvider.h"
+#include "FlexVaultSourceControlWorkerHelper.h"
 #include "HAL/PlatformFileManager.h"
 #include "GenericPlatform/GenericPlatformFile.h"
 
@@ -14,16 +15,41 @@ bool FFlexVaultRevertWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(FFlexVaultRevertWorker::Execute);
 
-	// FlexVault Mapping:
-	// Reverting files in a workspace maps to checking out the specific file paths at their 
-	// current branch head revision, downloading their original content,
-	// and overwriting the local modified working copy.
-	// Currently, file-level checkout/revert is not fully implemented in the FlexVault CLI
-	// workspace layer exposed to the plugin. Thus, this worker serves as a placeholder.
+	RevertedFiles.Empty();
+	if (InCommand.Files.Num() == 0)
+	{
+		return true;
+	}
 
-	// TODO: Implement revert command when the CLI supports it.
-	InCommand.ResultInfo.ErrorMessages.Add(FText::FromString(TEXT("Revert is not yet implemented.")));
-	return false;
+	TArray<FString> RevertArgs = {
+		TEXT("revert"),
+		TEXT("--unattended"),
+		TEXT("--no-color")
+	};
+
+	for (const FString& File : InCommand.Files)
+	{
+		FString RelativePath = GetRelativeWorkspacePath(File, InCommand.WorkspacePath);
+		RevertArgs.Add(RelativePath);
+	}
+
+	TArray<FString> OutputLines;
+	bool bSucceeded = RunFlexVaultCommand(
+		InCommand.BinaryPath,
+		InCommand.WorkspacePath,
+		RevertArgs,
+		OutputLines,
+		InCommand.ResultInfo,
+		false,
+		&InCommand
+	);
+
+	if (bSucceeded)
+	{
+		RevertedFiles = InCommand.Files;
+	}
+
+	return bSucceeded;
 }
 
 bool FFlexVaultRevertWorker::UpdateStates() const
@@ -36,6 +62,7 @@ bool FFlexVaultRevertWorker::UpdateStates() const
 		TSharedRef<FFlexVaultSourceControlState, ESPMode::ThreadSafe> State = Provider.GetStateInternal(File);
 		State->SetState(EFlexVaultState::Unchanged);
 		State->bModified = false;
+		State->bConflicted = false;
 		State->TimeStamp = FDateTime::Now();
 		UE_LOG(LogFlexVault, Log, TEXT("FlexVault Revert: Updated state for reverted file: %s"), *File);
 
@@ -45,6 +72,14 @@ bool FFlexVaultRevertWorker::UpdateStates() const
 			PlatformFile.SetReadOnly(*File, true);
 		}
 	}
+
+	if (RevertedFiles.Num() > 0)
+	{
+		Provider.OutputStateChangedEvent();
+		TArray<FSourceControlStateRef> States;
+		Provider.GetState(RevertedFiles, States, EStateCacheUsage::ForceUpdate);
+	}
+
 	UE_LOG(LogFlexVault, Display, TEXT("FlexVault SCM: Successfully reverted %d files."), RevertedFiles.Num());
 	return RevertedFiles.Num() > 0;
 }

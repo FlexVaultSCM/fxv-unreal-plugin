@@ -39,7 +39,7 @@ bool FFlexVaultGetSourceControlRevisionInfoWorker::Execute(FFlexVaultSourceContr
 
 	// 1. Query the full commit history and detailed file actions
 	TMap<FString, TArray<FFlexVaultRevisionDetail>> FileRevisionMap;
-	if (!QueryFlexVaultFileHistoryDetails(InCommand.BinaryPath, InCommand.WorkspacePath, FileRevisionMap, InCommand.ResultInfo))
+	if (!QueryFlexVaultFileHistoryDetails(InCommand.BinaryPath, InCommand.WorkspacePath, FileRevisionMap, InCommand.ResultInfo, &InCommand))
 	{
 		return false;
 	}

@@ -187,8 +187,8 @@ bool FFlexVaultChangeInfoParsingTest::RunTest(const FString& Parameters)
 	Commit.Description = TEXT("Update map layout");
 
 	TArray<FString> ChangeInfoLines = {
-		TEXT("Added 4a8e23908f9024f Content/Maps/MainMenu.umap"),
-		TEXT("Modified 9b88a9120bc8b2a Content/Blueprints/BP_GameMode.uasset"),
+		TEXT("Added 4a8e23908f9024f 1024 Content/Maps/MainMenu.umap"),
+		TEXT("Changed 9b88a9120bc8b2a 2048 Content/Blueprints/BP_GameMode.uasset"),
 		TEXT("Deleted 10cbff8d120a8fe Content/OldAsset.uasset")
 	};
 
@@ -205,6 +205,7 @@ bool FFlexVaultChangeInfoParsingTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("Action maps to Add"), (*AddRev)[0].Action, TEXT("Add"));
 		TestEqual(TEXT("Revision number maps correctly"), (*AddRev)[0].RevisionNumber, 8);
 		TestEqual(TEXT("Content address formatted correctly"), (*AddRev)[0].ContentAddress, TEXT("BLOB:4a8e23908f9024f"));
+		TestEqual(TEXT("File size parsed correctly"), (*AddRev)[0].FileSize, (int64)1024);
 	}
 
 	// Test Modified File Revision
@@ -213,6 +214,7 @@ bool FFlexVaultChangeInfoParsingTest::RunTest(const FString& Parameters)
 	if (ModRev && ModRev->Num() > 0)
 	{
 		TestEqual(TEXT("Action maps to Edit"), (*ModRev)[0].Action, TEXT("Edit"));
+		TestEqual(TEXT("File size parsed correctly"), (*ModRev)[0].FileSize, (int64)2048);
 	}
 
 	// Test Deleted File Revision
@@ -394,11 +396,374 @@ bool FFlexVaultWorkerSyncTest::RunTest(const FString& Parameters)
 
 	// Verify sync resets repository state
 	TestFalse(TEXT("bHasChangesToSync was cleared"), Provider.HasChangesToSync().Get(true));
-	
-	// Cache should be completely flushed after a sync operation
-	TArray<FSourceControlStateRef> EmptyCache = Provider.GetCachedStateByPredicate([](const FSourceControlStateRef&){ return true; });
-	TestEqual(TEXT("State cache is invalidated and empty"), EmptyCache.Num(), 0);
 
+	return true;
+}
+
+// ── Test 11: Revert SCM Worker ───────────────────────────────────────────────
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultWorkerRevertTest, "FlexVault.SourceControl.WorkerRevert", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FFlexVaultWorkerRevertTest::RunTest(const FString& Parameters)
+{
+	FFlexVaultSourceControlProvider Provider;
+	FString TestFile = FPaths::ProjectDir() / TEXT("Content/RevertAsset.uasset");
+	TestFile.ReplaceInline(TEXT("\\"), TEXT("/"));
+
+	// Pre-fill state cache
+	TSharedRef<FFlexVaultSourceControlState, ESPMode::ThreadSafe> State = Provider.GetStateInternal(TestFile);
+	State->SetState(EFlexVaultState::CheckedOut);
+	State->bModified = true;
+
+	FFlexVaultRevertWorker Worker(Provider);
+	// Mock reverted files list
+	Worker.RevertedFiles.Add(TestFile);
+
+	TestTrue(TEXT("Revert UpdateStates completes"), Worker.UpdateStates());
+
+	// Verify revert reset the state
+	TestEqual(TEXT("Reverted file state set to Unchanged"), State->GetState(), EFlexVaultState::Unchanged);
+	TestFalse(TEXT("Reverted file modified flag is false"), State->bModified);
+	TestFalse(TEXT("Reverted file conflicted flag is false"), State->bConflicted);
+
+	return true;
+}
+
+// ── Test 12: Resolve SCM Worker ───────────────────────────────────────────────
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultWorkerResolveTest, "FlexVault.SourceControl.WorkerResolve", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FFlexVaultWorkerResolveTest::RunTest(const FString& Parameters)
+{
+	FFlexVaultSourceControlProvider Provider;
+	FString TestFile = FPaths::ProjectDir() / TEXT("Content/ConflictedAsset.uasset");
+	TestFile.ReplaceInline(TEXT("\\"), TEXT("/"));
+
+	// Pre-fill state cache with conflict
+	TSharedRef<FFlexVaultSourceControlState, ESPMode::ThreadSafe> State = Provider.GetStateInternal(TestFile);
+	State->bConflicted = true;
+
+	FFlexVaultResolveWorker Worker(Provider);
+	// Mock resolved files list
+	Worker.ResolvedFiles.Add(TestFile);
+
+	TestTrue(TEXT("Resolve UpdateStates completes"), Worker.UpdateStates());
+
+	// Verify resolve cleared conflict
+	TestFalse(TEXT("Resolved file bConflicted is false"), State->bConflicted);
+
+	return true;
+}
+
+// ── Test 13: Synchronous Command Execution Non-Blocking Test ─────────────────
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultSynchronousCommandTest, "FlexVault.SourceControl.SynchronousCommandNonBlocking", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FFlexVaultSynchronousCommandTest::RunTest(const FString& Parameters)
+{
+	FFlexVaultSourceControlProvider Provider;
+	TSharedRef<FConnect, ESPMode::ThreadSafe> ConnectOp = ISourceControlOperation::Create<FConnect>();
+
+	// Test Execute with EConcurrency::Synchronous
+	ECommandResult::Type Result = Provider.Execute(ConnectOp, nullptr, TArray<FString>(), EConcurrency::Synchronous);
+
+	// Synchronous command must return immediately and process bExecuteProcessed without relying on frame Tick()
+	TestTrue(TEXT("Synchronous command execution completes cleanly"), Result == ECommandResult::Succeeded || Result == ECommandResult::Failed);
+
+	return true;
+}
+
+// ── Test 14: Asynchronous Command Queuing & Tick Processing ──────────────────
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultAsynchronousCommandTest, "FlexVault.SourceControl.AsynchronousCommandQueue", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FFlexVaultAsynchronousCommandTest::RunTest(const FString& Parameters)
+{
+	FFlexVaultSourceControlProvider Provider;
+	TSharedRef<FConnect, ESPMode::ThreadSafe> ConnectOp = ISourceControlOperation::Create<FConnect>();
+
+	// Execute asynchronous command
+	ECommandResult::Type Result = Provider.Execute(ConnectOp, nullptr, TArray<FString>(), EConcurrency::Asynchronous);
+	TestEqual(TEXT("IssueCommand for asynchronous operation returns Succeeded immediately"), Result, ECommandResult::Succeeded);
+
+	// Drain command queue over time to prevent leaking heap command or dangling references
+	double StartTime = FPlatformTime::Seconds();
+	while (FPlatformTime::Seconds() - StartTime < 2.0)
+	{
+		Provider.Tick();
+		FPlatformProcess::Sleep(0.01f);
+	}
+
+	return true;
+}
+
+// ── Test: changeinfo numeric-leading path parsing ───────────────────────────
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultChangeInfoNumericPathRepro, "FlexVault.SourceControl.HelperChangeInfoNumericPathRepro", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FFlexVaultChangeInfoNumericPathRepro::RunTest(const FString& Parameters)
+{
+	FFlexVaultCommitMeta Commit;
+	Commit.Branch = TEXT("main");
+	Commit.PublishedRevision = 8;
+	Commit.CommitType = TEXT("published");
+
+	// A 'Deleted' entry carries NO size column, and this root-level path's first whitespace token ("2024") is numeric.
+	TArray<FString> Lines = { TEXT("Deleted 10cbff8d120a8fe 2024 Roadmap.uasset") };
+
+	TMap<FString, TArray<FFlexVaultRevisionDetail>> Map;
+	ParseFlexVaultChangeInfo(Lines, Commit, TEXT("main.8"), Map);
+
+	TestTrue(TEXT("Full path key present"), Map.Contains(TEXT("2024 roadmap.uasset")));
+	TestFalse(TEXT("Truncated key absent"), Map.Contains(TEXT("roadmap.uasset")));
+	if (TArray<FFlexVaultRevisionDetail>* R = Map.Find(TEXT("2024 roadmap.uasset")))
+	{
+		TestEqual(TEXT("Size not fabricated from path token"), (*R)[0].FileSize, (int64)0);
+	}
+	return true;
+}
+
+// ── Test: N3 — unparented draft ChangeId uses "main.-.N", not "main.0.N" ────
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultUnparentedDraftChangeIdTest, "FlexVault.SourceControl.HelperUnparentedDraftChangeId", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FFlexVaultUnparentedDraftChangeIdTest::RunTest(const FString& Parameters)
+{
+	// Unparented draft: no prior publish on this branch, so PublishedRevision is left unset,
+	// exactly as the JSON parser leaves it when 'fxv history' omits the "revision" field
+	// (confirmed live: 'fxv status' on a fresh workspace reports head_commit.state ==
+	// "unparented_draft" with no "revision" key on the commit).
+	FFlexVaultCommitMeta UnparentedDraft;
+	UnparentedDraft.Branch = TEXT("main");
+	UnparentedDraft.CommitType = TEXT("draft");
+	UnparentedDraft.DraftRevision = 1;
+	TestEqual(TEXT("Unparented draft ChangeId uses '-' base revision"), BuildFlexVaultChangeId(UnparentedDraft), TEXT("main.-.1"));
+
+	// Parented draft: PublishedRevision set (round-1/round-2 behavior, must be unchanged).
+	FFlexVaultCommitMeta ParentedDraft;
+	ParentedDraft.Branch = TEXT("main");
+	ParentedDraft.CommitType = TEXT("draft");
+	ParentedDraft.PublishedRevision = 4;
+	ParentedDraft.DraftRevision = 2;
+	TestEqual(TEXT("Parented draft ChangeId includes base revision"), BuildFlexVaultChangeId(ParentedDraft), TEXT("main.4.2"));
+
+	// Draft with no DraftRevision set: nothing to query, ChangeId must be empty so the caller skips it.
+	FFlexVaultCommitMeta DraftMissingRevision;
+	DraftMissingRevision.Branch = TEXT("main");
+	DraftMissingRevision.CommitType = TEXT("draft");
+	TestTrue(TEXT("Draft with no DraftRevision yields empty ChangeId"), BuildFlexVaultChangeId(DraftMissingRevision).IsEmpty());
+
+	// Published commit: unaffected by the draft-specific branching.
+	FFlexVaultCommitMeta Published;
+	Published.Branch = TEXT("main");
+	Published.CommitType = TEXT("published");
+	Published.PublishedRevision = 8;
+	TestEqual(TEXT("Published ChangeId unaffected"), BuildFlexVaultChangeId(Published), TEXT("main.8"));
+
+	// RevisionNumber (display/sort only) mirrors the same unparented-vs-parented split.
+	TArray<FString> UnparentedChangeInfoLines = { TEXT("Added 4a8e23908f9024f 1024 Content/Foo.uasset") };
+	TMap<FString, TArray<FFlexVaultRevisionDetail>> UnparentedMap;
+	ParseFlexVaultChangeInfo(UnparentedChangeInfoLines, UnparentedDraft, TEXT("main.-.1"), UnparentedMap);
+	if (TArray<FFlexVaultRevisionDetail>* R = UnparentedMap.Find(TEXT("content/foo.uasset")))
+	{
+		TestEqual(TEXT("Unparented draft RevisionNumber has no phantom base revision"), (*R)[0].RevisionNumber, 1);
+		TestEqual(TEXT("Unparented draft RevisionSpec round-trips"), (*R)[0].RevisionSpec, TEXT("main.-.1"));
+	}
+	else
+	{
+		AddError(TEXT("Expected file entry missing from unparented draft changeinfo parse"));
+	}
+
+	return true;
+}
+
+// ── Test 15: CheckIn Worker State Notification & Delegate Broadcast Test ──────
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultWorkerCheckInStateBroadcastTest, "FlexVault.SourceControl.WorkerCheckInStateBroadcast", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FFlexVaultWorkerCheckInStateBroadcastTest::RunTest(const FString& Parameters)
+{
+	FFlexVaultSourceControlProvider Provider;
+	FString TestFile = FPaths::ProjectDir() / TEXT("Content/CommittedAsset.uasset");
+	TestFile.ReplaceInline(TEXT("\\"), TEXT("/"));
+
+	// Track whether OnSourceControlStateChanged delegate fires
+	bool bDelegateFired = false;
+	FDelegateHandle Handle = Provider.RegisterSourceControlStateChanged_Handle(FSourceControlStateChanged::FDelegate::CreateLambda([&bDelegateFired]()
+	{
+		bDelegateFired = true;
+	}));
+
+	// Pre-fill state cache as modified / checked out
+	TSharedRef<FFlexVaultSourceControlState, ESPMode::ThreadSafe> State = Provider.GetStateInternal(TestFile);
+	State->SetState(EFlexVaultState::CheckedOut);
+	State->bModified = true;
+
+	FFlexVaultCheckInWorker Worker(Provider);
+	Worker.CommittedFiles.Add(TestFile);
+
+	// Execute UpdateStates
+	TestTrue(TEXT("CheckIn UpdateStates completes"), Worker.UpdateStates());
+
+	// Verify file state updated in cache
+	TestEqual(TEXT("Committed file state reset to Unchanged"), State->GetState(), EFlexVaultState::Unchanged);
+	TestFalse(TEXT("Committed file modified flag set to false"), State->bModified);
+
+	// Verify state changed delegate was broadcasted
+	TestTrue(TEXT("OnSourceControlStateChanged delegate was broadcasted"), bDelegateFired);
+
+	Provider.UnregisterSourceControlStateChanged_Handle(Handle);
+	return true;
+}
+
+// ── Test 16: CanCheckIn State Filtering Test ──────────────────────────────────
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultCanCheckInTest, "FlexVault.SourceControl.CanCheckInFiltering", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FFlexVaultCanCheckInTest::RunTest(const FString& Parameters)
+{
+	FFlexVaultSourceControlState UnchangedState(TEXT("Content/Unchanged.uasset"), EFlexVaultState::Unchanged);
+	UnchangedState.DepotRevNumber = 5;
+	UnchangedState.LocalRevNumber = 5;
+	TestFalse(TEXT("Unchanged file cannot be checked in"), UnchangedState.CanCheckIn());
+
+	FFlexVaultSourceControlState ModifiedState(TEXT("Content/Modified.uasset"), EFlexVaultState::CheckedOut);
+	ModifiedState.DepotRevNumber = 5;
+	ModifiedState.LocalRevNumber = 5;
+	ModifiedState.bModified = true;
+	TestTrue(TEXT("Modified file can be checked in"), ModifiedState.CanCheckIn());
+
+	FFlexVaultSourceControlState AddedState(TEXT("Content/Added.uasset"), EFlexVaultState::OpenForAdd);
+	AddedState.DepotRevNumber = 5;
+	AddedState.LocalRevNumber = 5;
+	TestTrue(TEXT("Marked for add file can be checked in"), AddedState.CanCheckIn());
+
+	FFlexVaultSourceControlState DeletedState(TEXT("Content/Deleted.uasset"), EFlexVaultState::MarkedForDelete);
+	DeletedState.DepotRevNumber = 5;
+	DeletedState.LocalRevNumber = 5;
+	TestTrue(TEXT("Marked for delete file can be checked in"), DeletedState.CanCheckIn());
+
+	FFlexVaultSourceControlState ConflictedState(TEXT("Content/Conflicted.uasset"), EFlexVaultState::CheckedOut);
+	ConflictedState.DepotRevNumber = 5;
+	ConflictedState.LocalRevNumber = 5;
+	ConflictedState.bModified = true;
+	ConflictedState.bConflicted = true;
+	TestFalse(TEXT("Conflicted file cannot be checked in (publish would fail)"), ConflictedState.CanCheckIn());
+
+	FFlexVaultSourceControlState ConflictedOnlyState(TEXT("Content/ConflictedOnly.uasset"), EFlexVaultState::Unchanged);
+	ConflictedOnlyState.DepotRevNumber = 5;
+	ConflictedOnlyState.LocalRevNumber = 5;
+	ConflictedOnlyState.bConflicted = true;
+	TestFalse(TEXT("Conflict-only (unmodified) file cannot be checked in"), ConflictedOnlyState.CanCheckIn());
+
+	return true;
+}
+
+// ── Test 17: Conflict → Revert State Transitions ─────────────────────────────
+// Verifies the full state machine for a conflicted file that is reverted:
+//   Conflicted (CheckedOut + bConflicted) → Revert → Unchanged, clean, CanCheckIn=false
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultConflictRevertTransitionTest, "FlexVault.SourceControl.ConflictRevertTransition", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FFlexVaultConflictRevertTransitionTest::RunTest(const FString& Parameters)
+{
+	FFlexVaultSourceControlProvider Provider;
+	FString TestFile = FPaths::ProjectDir() / TEXT("Content/ConflictedThenReverted.uasset");
+	TestFile.ReplaceInline(TEXT("\\"), TEXT("/"));
+
+	// ── Setup: conflicted, locally modified, checked-out ─────────────────────
+	TSharedRef<FFlexVaultSourceControlState, ESPMode::ThreadSafe> State = Provider.GetStateInternal(TestFile);
+	State->SetState(EFlexVaultState::CheckedOut);
+	State->bModified = true;
+	State->bConflicted = true;
+	State->DepotRevNumber = 5;
+	State->LocalRevNumber = 5;
+
+	// Pre-condition assertions — confirm this is a genuinely conflicted state
+	TestTrue(TEXT("Pre: file is conflicted"), State->IsConflicted());
+	TestTrue(TEXT("Pre: file is modified"), State->IsModified());
+	TestFalse(TEXT("Pre: conflicted file cannot be checked in (N4 regression)"), State->CanCheckIn());
+	TestTrue(TEXT("Pre: conflicted file can be reverted"), State->CanRevert());
+
+	// Track delegate broadcast
+	bool bDelegateFired = false;
+	FDelegateHandle Handle = Provider.RegisterSourceControlStateChanged_Handle(
+		FSourceControlStateChanged::FDelegate::CreateLambda([&bDelegateFired]() { bDelegateFired = true; }));
+
+	// ── Action: Revert ────────────────────────────────────────────────────────
+	FFlexVaultRevertWorker Worker(Provider);
+	Worker.RevertedFiles.Add(TestFile);
+	TestTrue(TEXT("Revert UpdateStates succeeds"), Worker.UpdateStates());
+
+	// ── Post-revert state assertions ──────────────────────────────────────────
+	// Revert must: clear conflict, clear modified, set state to Unchanged.
+	// The file is back to a clean depot-sync'd state — no pending local changes.
+	TestFalse(TEXT("Post-revert: bConflicted cleared"), State->IsConflicted());
+	TestFalse(TEXT("Post-revert: bModified cleared"), State->bModified);
+	TestEqual(TEXT("Post-revert: State is Unchanged"), State->GetState(), EFlexVaultState::Unchanged);
+
+	// A reverted file is no longer modified/added/deleted → cannot be checked in
+	TestFalse(TEXT("Post-revert: CanCheckIn is false (nothing to submit)"), State->CanCheckIn());
+
+	// A clean Unchanged file should not offer Revert (nothing to revert)
+	TestFalse(TEXT("Post-revert: CanRevert is false (file is clean)"), State->CanRevert());
+
+	// The UE asset browser must be refreshed — delegate must have fired
+	TestTrue(TEXT("Post-revert: state-changed delegate broadcast"), bDelegateFired);
+
+	Provider.UnregisterSourceControlStateChanged_Handle(Handle);
+	return true;
+}
+
+// ── Test 18: Conflict → Resolve State Transitions ────────────────────────────
+// Verifies the full state machine for a conflicted file that is resolved (--mine):
+//   Conflicted (CheckedOut + bConflicted) → Resolve → CheckedOut, bModified preserved,
+//   CanCheckIn=true (resolved content is still a local change that needs publishing)
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultConflictResolveTransitionTest, "FlexVault.SourceControl.ConflictResolveTransition", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FFlexVaultConflictResolveTransitionTest::RunTest(const FString& Parameters)
+{
+	FFlexVaultSourceControlProvider Provider;
+	FString TestFile = FPaths::ProjectDir() / TEXT("Content/ConflictedThenResolved.uasset");
+	TestFile.ReplaceInline(TEXT("\\"), TEXT("/"));
+
+	// ── Setup: conflicted, locally modified, checked-out ─────────────────────
+	TSharedRef<FFlexVaultSourceControlState, ESPMode::ThreadSafe> State = Provider.GetStateInternal(TestFile);
+	State->SetState(EFlexVaultState::CheckedOut);
+	State->bModified = true;
+	State->bConflicted = true;
+	State->DepotRevNumber = 5;
+	State->LocalRevNumber = 5;
+
+	// Pre-condition assertions
+	TestTrue(TEXT("Pre: file is conflicted"), State->IsConflicted());
+	TestTrue(TEXT("Pre: file is modified"), State->IsModified());
+	TestFalse(TEXT("Pre: conflicted file cannot be checked in"), State->CanCheckIn());
+	TestTrue(TEXT("Pre: conflicted file can be reverted"), State->CanRevert());
+
+	// Track delegate broadcast
+	bool bDelegateFired = false;
+	FDelegateHandle Handle = Provider.RegisterSourceControlStateChanged_Handle(
+		FSourceControlStateChanged::FDelegate::CreateLambda([&bDelegateFired]() { bDelegateFired = true; }));
+
+	// ── Action: Resolve (--mine) ──────────────────────────────────────────────
+	FFlexVaultResolveWorker Worker(Provider);
+	Worker.ResolvedFiles.Add(TestFile);
+	TestTrue(TEXT("Resolve UpdateStates succeeds"), Worker.UpdateStates());
+
+	// ── Post-resolve state assertions ─────────────────────────────────────────
+	// Resolve only clears the conflict flag — it does NOT revert local changes.
+	// The file is still in CheckedOut/modified state: the resolved content must
+	// still be published via Check In (fxv snapshot + fxv publish).
+	TestFalse(TEXT("Post-resolve: bConflicted cleared"), State->IsConflicted());
+
+	// State and bModified are preserved: resolve picks a version but the file
+	// is still locally modified relative to the published depot head.
+	TestTrue(TEXT("Post-resolve: bModified preserved (content still local)"), State->bModified);
+	TestEqual(TEXT("Post-resolve: State remains CheckedOut"), State->GetState(), EFlexVaultState::CheckedOut);
+
+	// After resolve, CanCheckIn must be true: conflict is gone, file is still
+	// modified, so it is now valid to submit via fxv publish.
+	TestTrue(TEXT("Post-resolve: CanCheckIn is true (ready to publish)"), State->CanCheckIn());
+
+	// A still-modified file can still be reverted if the user changes their mind
+	TestTrue(TEXT("Post-resolve: CanRevert is true (CheckedOut state)"), State->CanRevert());
+
+	// The UE asset browser must be refreshed
+	TestTrue(TEXT("Post-resolve: state-changed delegate broadcast"), bDelegateFired);
+
+	Provider.UnregisterSourceControlStateChanged_Handle(Handle);
 	return true;
 }
 

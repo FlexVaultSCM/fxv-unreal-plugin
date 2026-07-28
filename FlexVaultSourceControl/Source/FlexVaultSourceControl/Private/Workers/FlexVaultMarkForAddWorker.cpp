@@ -40,6 +40,14 @@ bool FFlexVaultMarkForAddWorker::UpdateStates() const
 		State->bModified = true;
 		State->TimeStamp = FDateTime::Now();
 	}
+
+	if (AddedFiles.Num() > 0)
+	{
+		Provider.OutputStateChangedEvent();
+		TArray<FSourceControlStateRef> States;
+		Provider.GetState(AddedFiles, States, EStateCacheUsage::ForceUpdate);
+	}
+
 	UE_LOG(LogFlexVault, Display, TEXT("FlexVault SCM: Marked %d files for add."), AddedFiles.Num());
 	return AddedFiles.Num() > 0;
 }

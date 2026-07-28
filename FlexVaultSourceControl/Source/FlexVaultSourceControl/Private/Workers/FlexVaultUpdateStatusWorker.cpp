@@ -55,6 +55,7 @@ bool FFlexVaultUpdateStatusWorker::Execute(FFlexVaultSourceControlCommand& InCom
 	LocalRevision = 0;
 	DepotRevision = 0;
 	ModifiedFiles.Empty();
+	ConflictedFiles.Empty();
 	FileHistories.Empty();
 	bHasChangesToSync.Reset();
 
@@ -72,7 +73,9 @@ bool FFlexVaultUpdateStatusWorker::Execute(FFlexVaultSourceControlCommand& InCom
 		InCommand.WorkspacePath,
 		StatusArgs,
 		OutputLines,
-		InCommand.ResultInfo
+		InCommand.ResultInfo,
+		false,
+		&InCommand
 	);
 	if (!bSucceeded)
 	{
@@ -139,14 +142,23 @@ bool FFlexVaultUpdateStatusWorker::Execute(FFlexVaultSourceControlCommand& InCom
 	}
 	
 	const TSharedPtr<FJsonObject>* SyncStatusObj = nullptr;
-	if (Payload->TryGetObjectField(TEXT("sync_status"), SyncStatusObj))
+	if (Payload->TryGetObjectField(TEXT("sync_status"), SyncStatusObj) && SyncStatusObj != nullptr && (*SyncStatusObj).IsValid())
 	{
-		// Since TryGetObjectField succeeded, SyncStatusObj is guaranteed to be a valid pointer to a valid TSharedPtr<FJsonObject>
 		bool bUpToDate = true;
 		if ((*SyncStatusObj)->TryGetBoolField(TEXT("up_to_date"), bUpToDate))
 		{
 			bHasChangesToSync = !bUpToDate;
 		}
+		else
+		{
+			bHasChangesToSync = false;
+		}
+	}
+	else
+	{
+		// When sync_status is omitted (e.g. unparented/local draft or up-to-date branch),
+		// default bHasChangesToSync to false so Unreal Engine does not perform unnecessary full-project Sync/Reload.
+		bHasChangesToSync = false;
 	}
 
 	UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault: Parsed head_commit metadata. LocalRevision: %d, DepotRevision: %d, bHasChangesToSync: %d"), LocalRevision, DepotRevision, bHasChangesToSync.IsSet() ? (bHasChangesToSync.GetValue() ? 1 : 0) : -1);
@@ -195,6 +207,12 @@ bool FFlexVaultUpdateStatusWorker::Execute(FFlexVaultSourceControlCommand& InCom
 			// Keep paths using forward slashes for internal consistency.
 			FilePath.ReplaceInline(TEXT("\\"), TEXT("/"));
 			ModifiedFiles.Add(FilePath, MappedState);
+
+			if ((*FileObj)->HasField(TEXT("conflict_state")))
+			{
+				ConflictedFiles.Add(FilePath);
+			}
+
 			UE_LOG(LogFlexVault, VeryVerbose, TEXT("FlexVault: Parsed modified file: %s (MappedState: %d, SourceStateStr: %s)"), *FilePath, (int32)MappedState, *StateStr);
 		}
 	}
@@ -204,7 +222,7 @@ bool FFlexVaultUpdateStatusWorker::Execute(FFlexVaultSourceControlCommand& InCom
 	if (Operation->ShouldUpdateHistory() && InCommand.Files.Num() > 0)
 	{
 		TMap<FString, TArray<FFlexVaultRevisionDetail>> FileRevisionMap;
-		if (QueryFlexVaultFileHistoryDetails(InCommand.BinaryPath, InCommand.WorkspacePath, FileRevisionMap, InCommand.ResultInfo))
+		if (QueryFlexVaultFileHistoryDetails(InCommand.BinaryPath, InCommand.WorkspacePath, FileRevisionMap, InCommand.ResultInfo, &InCommand))
 		{
 			FFlexVaultSourceControlProvider& Provider = GetSCCProvider();
 			for (const FString& File : InCommand.Files)
@@ -265,6 +283,11 @@ bool FFlexVaultUpdateStatusWorker::UpdateStates() const
 			NewState.DepotRevNumber = DepotRevision;
 			NewState.LocalRevNumber = LocalRevision;
 
+			if (ConflictedFiles.Contains(RelativePath))
+			{
+				NewState.bConflicted = true;
+			}
+
 			if (const EFlexVaultState::Type* FoundState = ModifiedFiles.Find(RelativePath))
 			{
 				NewState.SetState(*FoundState);
@@ -297,20 +320,26 @@ bool FFlexVaultUpdateStatusWorker::UpdateStates() const
 		// Only perform update and register changes if the state has actually changed.
 		if (CachedState->State != NewState.State ||
 			CachedState->bModified != NewState.bModified ||
+			CachedState->bConflicted != NewState.bConflicted ||
 			CachedState->DepotRevNumber != NewState.DepotRevNumber ||
 			CachedState->LocalRevNumber != NewState.LocalRevNumber ||
 			CachedState->History.Num() != NewState.History.Num())
 		{
 			UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault SCM state changed for: %s (UnderWorkspace: %d)\n"
-				"  Old: State=%d, bModified=%d, DepotRev=%d, LocalRev=%d, HistoryCount=%d\n"
-				"  New: State=%d, bModified=%d, DepotRev=%d, LocalRev=%d, HistoryCount=%d"),
+				"  Old: State=%d, bModified=%d, bConflicted=%d, DepotRev=%d, LocalRev=%d, HistoryCount=%d\n"
+				"  New: State=%d, bModified=%d, bConflicted=%d, DepotRev=%d, LocalRev=%d, HistoryCount=%d"),
 				*File, bIsUnderWorkspace,
-				(int32)CachedState->State, CachedState->bModified, CachedState->DepotRevNumber, CachedState->LocalRevNumber, CachedState->History.Num(),
-				(int32)NewState.State, NewState.bModified, NewState.DepotRevNumber, NewState.LocalRevNumber, NewState.History.Num());
+				(int32)CachedState->State, CachedState->bModified, CachedState->bConflicted, CachedState->DepotRevNumber, CachedState->LocalRevNumber, CachedState->History.Num(),
+				(int32)NewState.State, NewState.bModified, NewState.bConflicted, NewState.DepotRevNumber, NewState.LocalRevNumber, NewState.History.Num());
 
 			CachedState->Update(NewState, &NewState.TimeStamp);
 			bStatesUpdated = true;
 		}
+	}
+
+	if (bStatesUpdated)
+	{
+		Provider.OutputStateChangedEvent();
 	}
 
 	return bStatesUpdated;

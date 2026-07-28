@@ -10,6 +10,7 @@
 #include "Workers/FlexVaultMarkForAddWorker.h"
 #include "Workers/FlexVaultDeleteWorker.h"
 #include "Workers/FlexVaultRevertWorker.h"
+#include "Workers/FlexVaultResolveWorker.h"
 #include "Workers/FlexVaultSyncWorker.h"
 #include "Workers/FlexVaultGetSourceControlRevisionInfoWorker.h"
 #include "SourceControlOperations.h"
@@ -40,6 +41,7 @@ namespace FlexVaultSourceControlConstants
 	const FName MarkForAdd(TEXT("MarkForAdd"));
 	const FName Delete(TEXT("Delete"));
 	const FName Revert(TEXT("Revert"));
+	const FName Resolve(TEXT("Resolve"));
 	const FName Sync(TEXT("Sync"));
 	const FName GetSourceControlRevisionInfo(TEXT("GetSourceControlRevisionInfo"));
 }
@@ -223,6 +225,7 @@ bool FFlexVaultSourceControlProvider::CanExecuteOperation(const FSourceControlOp
 		   OpName == FlexVaultSourceControlConstants::MarkForAdd ||
 		   OpName == FlexVaultSourceControlConstants::Delete ||
 		   OpName == FlexVaultSourceControlConstants::Revert ||
+		   OpName == FlexVaultSourceControlConstants::Resolve ||
 		   OpName == FlexVaultSourceControlConstants::Sync ||
 		   OpName == FlexVaultSourceControlConstants::GetSourceControlRevisionInfo;
 }
@@ -253,6 +256,13 @@ void FFlexVaultSourceControlProvider::Tick()
 		{
 			Execute(ISourceControlOperation::Create<FUpdateStatus>(), nullptr, FilesToUpdate, EConcurrency::Asynchronous);
 		}
+	}
+
+	// Guard against returning results or updating states while Engine Initial Load, Garbage Collection, or Async Package Loading is in progress.
+	// Executing callbacks or notifying object reloads during GC/Async Loading/Initial Load can cause memory corruption or crashes.
+	if (GIsInitialLoad || IsGarbageCollecting() || IsAsyncLoading())
+	{
+		return;
 	}
 
 	for (int32 Index = 0; Index < CommandQueue.Num(); ++Index)
@@ -383,6 +393,10 @@ TSharedPtr<IFlexVaultSourceControlWorker, ESPMode::ThreadSafe> FFlexVaultSourceC
 	{
 		return TSharedPtr<IFlexVaultSourceControlWorker, ESPMode::ThreadSafe>(new FFlexVaultRevertWorker(*this));
 	}
+	else if (InOperationName == FlexVaultSourceControlConstants::Resolve)
+	{
+		return TSharedPtr<IFlexVaultSourceControlWorker, ESPMode::ThreadSafe>(new FFlexVaultResolveWorker(*this));
+	}
 	else if (InOperationName == FlexVaultSourceControlConstants::Sync)
 	{
 		return TSharedPtr<IFlexVaultSourceControlWorker, ESPMode::ThreadSafe>(new FFlexVaultSyncWorker(*this));
@@ -394,6 +408,7 @@ TSharedPtr<IFlexVaultSourceControlWorker, ESPMode::ThreadSafe> FFlexVaultSourceC
 
 	return nullptr;
 }
+
 ECommandResult::Type FFlexVaultSourceControlProvider::ExecuteSynchronousCommand(TUniquePtr<FFlexVaultSourceControlCommand> InCommand, const FText& Task)
 {
 	UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault SCM: ExecuteSynchronousCommand starting for operation: %s"), *InCommand->Operation->GetName().ToString());
@@ -405,35 +420,74 @@ ECommandResult::Type FFlexVaultSourceControlProvider::ExecuteSynchronousCommand(
 	CommandQueue.Add(CommandPtr);
 	GThreadPool->AddQueuedWork(CommandPtr);
 
-	// Wait until the command has been processed and removed from the queue by Tick()
-	while (CommandQueue.Contains(CommandPtr))
+	// Wait directly until the background worker thread sets bExecuteProcessed.
+	// We must NOT rely on Tick() to process completed commands here because Tick() early-returns
+	// when IsAsyncLoading() or IsGarbageCollecting() is true (e.g., during engine startup).
+	// Bypassing Tick() for synchronous calls prevents main thread deadlocks/hangs during launch while
+	// preserving Tick()'s async-loading safety guard for asynchronous operations.
+	const double StartWaitTime = FPlatformTime::Seconds();
+	const UFlexVaultSourceControlDeveloperSettings* Settings = GetDefault<UFlexVaultSourceControlDeveloperSettings>();
+	const double TimeoutSeconds = (Settings && Settings->CommandTimeoutSeconds > 0.0) ? Settings->CommandTimeoutSeconds : 30.0;
+	while (!CommandPtr->bExecuteProcessed.Load())
 	{
-		Tick();
 		Progress.Tick();
 		FPlatformProcess::Sleep(0.01f);
+		if (!CommandPtr->IsCanceled() && (FPlatformTime::Seconds() - StartWaitTime > TimeoutSeconds))
+		{
+			// Cooperatively cancel rather than reclaiming/deleting the command out from under the
+			// thread pool: Cancel() is observed by RunFlexVaultCommand's poll loop (worker thread),
+			// which terminates the underlying 'fxv' child process and lets DoWork() return promptly.
+			// This mirrors how the Perforce plugin's synchronous wait is cancelled cooperatively rather
+			// than the wait loop unilaterally giving up on the command object while the pool still owns it.
+			UE_LOG(LogFlexVault, Error, TEXT("FlexVault SCM: Synchronous command timed out after %.1f seconds; canceling."), TimeoutSeconds);
+			CommandPtr->Cancel();
+		}
 	}
 
-	UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault SCM: Synchronous command %s loop finished. processed=%d, success=%d"), *CommandPtr->Operation->GetName().ToString(), CommandPtr->bExecuteProcessed.Load() ? 1 : 0, CommandPtr->bCommandSuccessful ? 1 : 0);
+	// Remove from CommandQueue and return results directly on the calling thread
+	CommandQueue.Remove(CommandPtr);
 
-	// Run a final Tick() to process other state updates and completions
-	Tick();
+#if SOURCE_CONTROL_WITH_SLATE
+	bool bIsLaunchError = false;
+	for (const FText& ErrorMsg : CommandPtr->ResultInfo.ErrorMessages)
+	{
+		if (ErrorMsg.ToString().Contains(TEXT("Failed to launch FlexVault SCM executable")))
+		{
+			bIsLaunchError = true;
+			break;
+		}
+	}
 
-	const bool bSuccess = CommandPtr->bCommandSuccessful;
+	if (bIsLaunchError)
+	{
+		FNotificationInfo Info(LOCTEXT("FlexVaultLaunchErrorNotification", "FlexVault: Failed to launch SCM executable. Please verify your Binary Path in Developer Settings."));
+		Info.ExpireDuration = 5.0f;
+		Info.bUseSuccessFailIcons = true;
+		FSlateNotificationManager::Get().AddNotification(Info);
+	}
+#endif
 
-	UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault SCM: ExecuteSynchronousCommand finished for operation: %s, Success=%d"), *CommandPtr->Operation->GetName().ToString(), bSuccess ? 1 : 0);
+	const ECommandResult::Type Result = CommandPtr->ReturnResults();
+
+	UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault SCM: ExecuteSynchronousCommand finished for operation: %s, Result=%d"), *CommandPtr->Operation->GetName().ToString(), (int32)Result);
 
 	// InCommand will go out of scope and delete the heap-allocated command automatically and safely.
-	return bSuccess ? ECommandResult::Succeeded : ECommandResult::Failed;
+	return Result;
 }
 
 ECommandResult::Type FFlexVaultSourceControlProvider::IssueCommand(TUniquePtr<FFlexVaultSourceControlCommand> InCommand, const bool bSynchronous)
 {
 	UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault SCM: IssueCommand: %s, bSynchronous=%d"), *InCommand->Operation->GetName().ToString(), bSynchronous ? 1 : 0);
 	InCommand->WorkspacePath = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
-	InCommand->BinaryPath = GetDefault<UFlexVaultSourceControlDeveloperSettings>()->GetEffectiveBinaryPath();
+	if (const UFlexVaultSourceControlDeveloperSettings* Settings = GetDefault<UFlexVaultSourceControlDeveloperSettings>())
+	{
+		InCommand->BinaryPath = Settings->GetEffectiveBinaryPath();
+		InCommand->CommandCancelGracePeriodSeconds = Settings->CommandCancelGracePeriodSeconds;
+	}
 	if (bSynchronous)
 	{
-		return ExecuteSynchronousCommand(MoveTemp(InCommand), InCommand->Operation->GetInProgressString());
+		const FText Task = InCommand->Operation->GetInProgressString();
+		return ExecuteSynchronousCommand(MoveTemp(InCommand), Task);
 	}
 	else
 	{

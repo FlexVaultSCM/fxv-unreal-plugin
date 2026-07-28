@@ -5,6 +5,7 @@
 #include "SourceControlOperations.h"
 
 struct FSourceControlResultInfo;
+class FFlexVaultSourceControlCommand;
 
 /**
  * Common SCM execution helper function
@@ -32,13 +33,20 @@ struct FFlexVaultRevisionDetail
 	int64 FileSize;
 };
 
+/**
+ * Runs the FlexVault CLI as a child process and blocks the calling thread until it exits.
+ * If InCancelCommand is provided and InCancelCommand->IsCanceled() becomes true while the
+ * process is running (e.g. a synchronous wait timed out), the child process is terminated
+ * and the call returns promptly with a failure result, rather than blocking indefinitely.
+ */
 bool RunFlexVaultCommand(
 	const FString& InBinaryPath,
 	const FString& InWorkspacePath,
 	const TArray<FString>& InArgs,
 	TArray<FString>& OutOutputLines,
 	FSourceControlResultInfo& OutResultInfo,
-	bool bIgnoreError = false
+	bool bIgnoreError = false,
+	const FFlexVaultSourceControlCommand* InCancelCommand = nullptr
 );
 
 /**
@@ -57,6 +65,14 @@ bool ParseFlexVaultHistory(
 	TArray<FFlexVaultCommitMeta>& OutCommits,
 	FSourceControlResultInfo& OutResultInfo
 );
+
+/**
+ * Builds the 'fxv changeinfo'-compatible revision spec ("ChangeId") for a commit, e.g. "main.8",
+ * "main.8.2" for a draft parented on published revision 8, or "main.-.2" for a draft with no
+ * published parent on its branch (the CLI's literal syntax for that state). Returns an empty
+ * string for a draft commit with no DraftRevision set (nothing to query).
+ */
+FString BuildFlexVaultChangeId(const FFlexVaultCommitMeta& InCommit);
 
 /**
  * Parses the plaintext output lines of 'fxv changeinfo' for a specific commit and groups them by file path.
@@ -89,5 +105,6 @@ bool QueryFlexVaultFileHistoryDetails(
 	const FString& InBinaryPath,
 	const FString& InWorkspacePath,
 	TMap<FString, TArray<FFlexVaultRevisionDetail>>& OutFileRevisionMap,
-	FSourceControlResultInfo& OutResultInfo
+	FSourceControlResultInfo& OutResultInfo,
+	const FFlexVaultSourceControlCommand* InCancelCommand = nullptr
 );

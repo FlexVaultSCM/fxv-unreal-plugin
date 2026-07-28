@@ -32,14 +32,22 @@ bool FFlexVaultDeleteWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 		TEXT("--unattended"),
 		TEXT("--no-color")
 	};
-	RunFlexVaultCommand(
+	bool bSnapshotSucceeded = RunFlexVaultCommand(
 		InCommand.BinaryPath,
 		InCommand.WorkspacePath,
 		SnapshotArgs,
 		SnapshotOutputLines,
 		SnapshotResultInfo,
-		true // Ignore errors to ensure filesystem deletion still proceeds
+		true, // Ignore errors so a snapshot failure doesn't also spam the CLI error output; we surface our own message below instead.
+		&InCommand
 	);
+
+	if (!bSnapshotSucceeded)
+	{
+		InCommand.ResultInfo.ErrorMessages.Add(NSLOCTEXT("FlexVaultSourceControl", "DeleteSnapshotFailed", "FlexVault: Pre-delete safety snapshot failed or was canceled; aborting deletion to avoid data loss."));
+		DeletedFiles.Empty();
+		return false;
+	}
 
 	// 2. Perform local filesystem deletion
 	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();

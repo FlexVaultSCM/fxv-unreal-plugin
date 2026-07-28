@@ -41,4 +41,16 @@ public:
 	/** Suppress SCM prompts automatically */
 	UPROPERTY(Config, EditAnywhere, Category="FlexVault", meta=(DisplayName="Use Unattended Mode"))
 	bool bUseUnattendedMode;
+
+	/** Default conflict resolution preference */
+	UPROPERTY(Config, EditAnywhere, Category="FlexVault", meta=(DisplayName="Conflict Resolution Preference", ToolTip="Conflict resolution strategy: 'mine' (keep local draft version) or 'theirs' (accept published remote version)."))
+	FString ResolvePreference;
+
+	/** Command execution timeout in seconds for synchronous operations */
+	UPROPERTY(Config, EditAnywhere, Category="FlexVault", meta=(DisplayName="Command Timeout (Seconds)", ClampMin="1.0", ClampMax="300.0", ToolTip="Maximum time in seconds to wait for synchronous CLI commands to complete before timing out."))
+	double CommandTimeoutSeconds;
+
+	/** Grace period allotted for a timed-out CLI process to exit after being terminated */
+	UPROPERTY(Config, EditAnywhere, Category="FlexVault", meta=(DisplayName="Command Cancel Grace Period (Seconds)", ClampMin="0.1", ClampMax="10.0", ToolTip="Maximum time in seconds to wait for the FlexVault CLI process to exit after it is terminated due to a command timeout."))
+	double CommandCancelGracePeriodSeconds;
 };
