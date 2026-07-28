@@ -401,8 +401,7 @@ bool ParseFlexVaultChangeInfo(
 			int64 ParsedSize = 0;
 			int32 PathStartIndex = 2;
 
-			const bool bIsDeleted = ActionStr.Equals(TEXT("Deleted"), ESearchCase::IgnoreCase) || ActionStr.Equals(TEXT("Removed"), ESearchCase::IgnoreCase) || ActionStr.Equals(TEXT("Delete"), ESearchCase::IgnoreCase);
-			if (!bIsDeleted && Tokens.Num() >= 4 && Tokens[2].IsNumeric())
+			if (Tokens.Num() >= 4 && Tokens[2].IsNumeric())
 			{
 				ParsedSize = FCString::Atoi64(*Tokens[2]);
 				PathStartIndex = 3;
