@@ -173,7 +173,7 @@ bool FFlexVaultHistoryParsingTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-// ── Test 5: ChangeInfo Plaintext Parsing ─────────────────────────────────────
+// ── Test 5: ChangeInfo JSON Parsing ─────────────────────────────────────
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultChangeInfoParsingTest, "FlexVault.SourceControl.HelperChangeInfoParsing", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 bool FFlexVaultChangeInfoParsingTest::RunTest(const FString& Parameters)
@@ -187,9 +187,19 @@ bool FFlexVaultChangeInfoParsingTest::RunTest(const FString& Parameters)
 	Commit.Description = TEXT("Update map layout");
 
 	TArray<FString> ChangeInfoLines = {
-		TEXT("Added 4a8e23908f9024f 1024 Content/Maps/MainMenu.umap"),
-		TEXT("Changed 9b88a9120bc8b2a 2048 Content/Blueprints/BP_GameMode.uasset"),
-		TEXT("Deleted 10cbff8d120a8fe Content/OldAsset.uasset")
+		TEXT("{"),
+		TEXT("  \"status\": \"success\","),
+		TEXT("  \"message\": {"),
+		TEXT("    \"kind\": \"changeinfo\","),
+		TEXT("    \"payload\": {"),
+		TEXT("      \"changes\": ["),
+		TEXT("        { \"path\": \"Content/Maps/MainMenu.umap\", \"action\": \"added\", \"size\": 1024, \"new_hash\": \"4a8e23908f9024f\" },"),
+		TEXT("        { \"path\": \"Content/Blueprints/BP_GameMode.uasset\", \"action\": \"modified\", \"size\": 2048, \"new_hash\": \"9b88a9120bc8b2a\" },"),
+		TEXT("        { \"path\": \"Content/OldAsset.uasset\", \"action\": \"deleted\", \"old_hash\": \"10cbff8d120a8fe\" }"),
+		TEXT("      ]"),
+		TEXT("    }"),
+		TEXT("  }"),
+		TEXT("}")
 	};
 
 	TMap<FString, TArray<FFlexVaultRevisionDetail>> FileRevisionMap;
@@ -503,8 +513,19 @@ bool FFlexVaultChangeInfoNumericPathRepro::RunTest(const FString& Parameters)
 	Commit.PublishedRevision = 8;
 	Commit.CommitType = TEXT("published");
 
-	// A 'Deleted' entry carries NO size column, and this root-level path's first whitespace token ("2024") is numeric.
-	TArray<FString> Lines = { TEXT("Deleted 10cbff8d120a8fe 2024 Roadmap.uasset") };
+	TArray<FString> Lines = {
+		TEXT("{"),
+		TEXT("  \"status\": \"success\","),
+		TEXT("  \"message\": {"),
+		TEXT("    \"kind\": \"changeinfo\","),
+		TEXT("    \"payload\": {"),
+		TEXT("      \"changes\": ["),
+		TEXT("        { \"path\": \"2024 Roadmap.uasset\", \"action\": \"deleted\", \"old_hash\": \"10cbff8d120a8fe\" }"),
+		TEXT("      ]"),
+		TEXT("    }"),
+		TEXT("  }"),
+		TEXT("}")
+	};
 
 	TMap<FString, TArray<FFlexVaultRevisionDetail>> Map;
 	ParseFlexVaultChangeInfo(Lines, Commit, TEXT("main.8"), Map);
@@ -555,7 +576,19 @@ bool FFlexVaultUnparentedDraftChangeIdTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Published ChangeId unaffected"), BuildFlexVaultChangeId(Published), TEXT("main.8"));
 
 	// RevisionNumber (display/sort only) mirrors the same unparented-vs-parented split.
-	TArray<FString> UnparentedChangeInfoLines = { TEXT("Added 4a8e23908f9024f 1024 Content/Foo.uasset") };
+	TArray<FString> UnparentedChangeInfoLines = {
+		TEXT("{"),
+		TEXT("  \"status\": \"success\","),
+		TEXT("  \"message\": {"),
+		TEXT("    \"kind\": \"changeinfo\","),
+		TEXT("    \"payload\": {"),
+		TEXT("      \"changes\": ["),
+		TEXT("        { \"path\": \"Content/Foo.uasset\", \"action\": \"added\", \"size\": 1024, \"new_hash\": \"4a8e23908f9024f\" }"),
+		TEXT("      ]"),
+		TEXT("    }"),
+		TEXT("  }"),
+		TEXT("}")
+	};
 	TMap<FString, TArray<FFlexVaultRevisionDetail>> UnparentedMap;
 	ParseFlexVaultChangeInfo(UnparentedChangeInfoLines, UnparentedDraft, TEXT("main.-.1"), UnparentedMap);
 	if (TArray<FFlexVaultRevisionDetail>* R = UnparentedMap.Find(TEXT("content/foo.uasset")))

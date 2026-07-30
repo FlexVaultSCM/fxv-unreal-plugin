@@ -24,7 +24,7 @@ bool FFlexVaultGetSourceControlRevisionInfoWorker::Execute(FFlexVaultSourceContr
 	// 1. 'fxv history --format json': Queries the commit history log. FlexVault commits are 
 	//    represented as branch-relative revisions: published commits ('branch.revision', e.g., 'main.1') 
 	//    and local drafts ('branch.revision.draft_revision', e.g., 'main.1.1').
-	// 2. 'fxv changeinfo <change_id> -e': Runs for each commit to retrieve the detailed file actions
+	// 2. 'fxv changeinfo <change_id> --format json': Runs for each commit to retrieve the detailed file actions
 	//    (Added, Modified, Deleted), their file sizes, and cryptographic CAS content addresses (hashes)
 	//    within that specific snapshot.
 	// We map the parsed file actions to Unreal's standard action strings (Add, Edit, Delete) and associate 

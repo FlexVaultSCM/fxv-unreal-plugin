@@ -385,34 +385,60 @@ bool ParseFlexVaultChangeInfo(
 	TMap<FString, TArray<FFlexVaultRevisionDetail>>& OutFileRevisionMap
 )
 {
-	// Plaintext parsing of changeinfo output:
-	// Format is: <Action> <Hash> [<Size>] <Path>
-	// E.g.: Changed 82d69ce3c61a6300fc41c2d68e63e722841c85228caffedc89831e56aa467de6 3226909 Content\Images\loot.uasset
-	// E.g.: Added 3c9b23ad7a002458ec6ec130aea451eab768d4965b8d0f6ac83ddcbf54df6234 651 .fxvignore
-	for (const FString& Line : InChangeInfoOutputLines)
+	FString RawJson = FString::Join(InChangeInfoOutputLines, TEXT("\n"));
+	TSharedPtr<FJsonObject> JsonEnvelope;
+	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(RawJson);
+	if (!FJsonSerializer::Deserialize(Reader, JsonEnvelope) || !JsonEnvelope.IsValid())
 	{
-		FString TrimmedLine = Line.TrimStartAndEnd();
-		TArray<FString> Tokens;
-		TrimmedLine.ParseIntoArrayWS(Tokens);
-		if (Tokens.Num() >= 3)
-		{
-			FString ActionStr = Tokens[0];
-			FString HashStr = Tokens[1];
-			int64 ParsedSize = 0;
-			int32 PathStartIndex = 2;
+		return false;
+	}
 
-			if (Tokens.Num() >= 4 && Tokens[2].IsNumeric())
+	TSharedPtr<FJsonObject> MessageObj = JsonEnvelope->GetObjectField(TEXT("message"));
+	if (!MessageObj.IsValid())
+	{
+		return false;
+	}
+
+	TSharedPtr<FJsonObject> PayloadObj = MessageObj->GetObjectField(TEXT("payload"));
+	if (!PayloadObj.IsValid())
+	{
+		return false;
+	}
+
+	const TArray<TSharedPtr<FJsonValue>>* ChangesArray = nullptr;
+	if (PayloadObj->TryGetArrayField(TEXT("changes"), ChangesArray) && ChangesArray != nullptr)
+	{
+		for (const TSharedPtr<FJsonValue>& ChangeVal : *ChangesArray)
+		{
+			if (!ChangeVal.IsValid() || ChangeVal->Type != EJson::Object)
 			{
-				ParsedSize = FCString::Atoi64(*Tokens[2]);
-				PathStartIndex = 3;
+				continue;
 			}
 
-			FString RelPath = Tokens[PathStartIndex];
-			for (int32 i = PathStartIndex + 1; i < Tokens.Num(); ++i)
+			TSharedPtr<FJsonObject> ChangeObj = ChangeVal->AsObject();
+			if (!ChangeObj.IsValid())
 			{
-				RelPath += TEXT(" ") + Tokens[i];
+				continue;
+			}
+
+			FString RelPath;
+			if (!ChangeObj->TryGetStringField(TEXT("path"), RelPath) || RelPath.IsEmpty())
+			{
+				continue;
 			}
 			RelPath.ReplaceInline(TEXT("\\"), TEXT("/"));
+
+			FString ActionStr;
+			ChangeObj->TryGetStringField(TEXT("action"), ActionStr);
+
+			int64 ParsedSize = 0;
+			ChangeObj->TryGetNumberField(TEXT("size"), ParsedSize);
+
+			FString HashStr;
+			if (!ChangeObj->TryGetStringField(TEXT("new_hash"), HashStr) || HashStr.IsEmpty())
+			{
+				ChangeObj->TryGetStringField(TEXT("old_hash"), HashStr);
+			}
 
 			FFlexVaultRevisionDetail Rev;
 			if (InCommit.CommitType.Equals(TEXT("draft"), ESearchCase::IgnoreCase) && InCommit.DraftRevision.IsSet())
@@ -436,7 +462,7 @@ bool ParseFlexVaultChangeInfo(
 			{
 				Rev.Action = TEXT("Add");
 			}
-			else if (ActionStr.Equals(TEXT("Modified"), ESearchCase::IgnoreCase) || ActionStr.Equals(TEXT("Changed"), ESearchCase::IgnoreCase) || ActionStr.Equals(TEXT("Edit"), ESearchCase::IgnoreCase))
+			else if (ActionStr.Equals(TEXT("Modified"), ESearchCase::IgnoreCase) || ActionStr.Equals(TEXT("Changed"), ESearchCase::IgnoreCase) || ActionStr.Equals(TEXT("Edit"), ESearchCase::IgnoreCase) || ActionStr.Equals(TEXT("maybe_changed"), ESearchCase::IgnoreCase))
 			{
 				Rev.Action = TEXT("Edit");
 			}
@@ -450,7 +476,19 @@ bool ParseFlexVaultChangeInfo(
 			}
 
 			Rev.Date = InCommit.Date;
-			Rev.ContentAddress = FString::Printf(TEXT("BLOB:%s"), *HashStr);
+
+			if (HashStr.StartsWith(TEXT("BLOB:")) || HashStr.StartsWith(TEXT("content:")))
+			{
+				Rev.ContentAddress = HashStr;
+			}
+			else if (!HashStr.IsEmpty())
+			{
+				Rev.ContentAddress = FString::Printf(TEXT("BLOB:%s"), *HashStr);
+			}
+			else
+			{
+				Rev.ContentAddress.Empty();
+			}
 
 			UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault: Parsed file history change info - File: %s, Action: %s, RevisionSpec: %s, RevisionNumber: %d, Size: %lld"),
 				*RelPath, *Rev.Action, *Rev.RevisionSpec, Rev.RevisionNumber, Rev.FileSize);
@@ -458,6 +496,7 @@ bool ParseFlexVaultChangeInfo(
 			OutFileRevisionMap.FindOrAdd(RelPath.ToLower()).Add(Rev);
 		}
 	}
+
 	return true;
 }
 
@@ -557,7 +596,8 @@ bool QueryFlexVaultFileHistoryDetails(
 		TArray<FString> ChangeInfoArgs = {
 			TEXT("changeinfo"),
 			ChangeId,
-			TEXT("-e"),
+			TEXT("--format"),
+			TEXT("json"),
 			TEXT("--unattended"),
 			TEXT("--no-color")
 		};
