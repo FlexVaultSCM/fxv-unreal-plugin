@@ -283,23 +283,40 @@ bool FFlexVaultWorkerMarkForAddTest::RunTest(const FString& Parameters)
 	FString TestFile = FPaths::ProjectDir() / TEXT("Content/NewAsset.uasset");
 	TestFile.ReplaceInline(TEXT("\\"), TEXT("/"));
 
+	// Also create an on-disk sidecar to verify MarkForAdd stages it alongside its package.
+	FString SidecarFile = FPaths::ProjectDir() / TEXT("Intermediate/MarkForAddSidecarAsset.uexp");
+	SidecarFile.ReplaceInline(TEXT("\\"), TEXT("/"));
+	FString PackageFile = FPaths::ProjectDir() / TEXT("Intermediate/MarkForAddSidecarAsset.uasset");
+	PackageFile.ReplaceInline(TEXT("\\"), TEXT("/"));
+	FFileHelper::SaveStringToFile(TEXT("uasset"), *PackageFile);
+	FFileHelper::SaveStringToFile(TEXT("uexp"), *SidecarFile);
+
 	TSharedRef<FMarkForAdd, ESPMode::ThreadSafe> MarkForAddOp = ISourceControlOperation::Create<FMarkForAdd>();
-	
+
 	FFlexVaultMarkForAddWorker Worker(Provider);
 	FFlexVaultSourceControlCommand Command(MarkForAddOp, TSharedRef<IFlexVaultSourceControlWorker>(&Worker, [](IFlexVaultSourceControlWorker*){}));
 	Command.Files.Add(TestFile);
+	Command.Files.Add(PackageFile);
 
 	// Execute locally stages paths without calling external executable
 	TestTrue(TEXT("Execute succeeds"), Worker.Execute(Command));
-	TestEqual(TEXT("Assigned files saved in worker"), Worker.AddedFiles.Num(), 1);
+	TestEqual(TEXT("Assigned files include the on-disk sidecar"), Worker.AddedFiles.Num(), 3);
+	TestTrue(TEXT("Sidecar file staged alongside its package"), Worker.AddedFiles.Contains(SidecarFile));
 
 	// UpdateStates applies EFlexVaultState::OpenForAdd to SCM cache
 	TestTrue(TEXT("UpdateStates succeeds"), Worker.UpdateStates());
-	
+
 	TSharedRef<FFlexVaultSourceControlState, ESPMode::ThreadSafe> CachedState = Provider.GetStateInternal(TestFile);
 	TestEqual(TEXT("Cache updated to OpenForAdd"), CachedState->GetState(), EFlexVaultState::OpenForAdd);
 	TestTrue(TEXT("State marked as added"), CachedState->IsAdded());
 	TestTrue(TEXT("State is modified"), CachedState->IsModified());
+
+	TSharedRef<FFlexVaultSourceControlState, ESPMode::ThreadSafe> SidecarCachedState = Provider.GetStateInternal(SidecarFile);
+	TestEqual(TEXT("Sidecar cache updated to OpenForAdd"), SidecarCachedState->GetState(), EFlexVaultState::OpenForAdd);
+
+	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
+	PlatformFile.DeleteFile(*PackageFile);
+	PlatformFile.DeleteFile(*SidecarFile);
 
 	return true;
 }
@@ -310,24 +327,33 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultWorkerCheckOutTest, "FlexVault.Source
 bool FFlexVaultWorkerCheckOutTest::RunTest(const FString& Parameters)
 {
 	FFlexVaultSourceControlProvider Provider;
-	
+
 	// Create a temp file on disk to test read-only attribute toggling
 	FString TempFilePath = FPaths::ProjectDir() / TEXT("Intermediate/TempCheckoutAsset.uasset");
 	TempFilePath.ReplaceInline(TEXT("\\"), TEXT("/"));
 	FFileHelper::SaveStringToFile(TEXT("Temp Asset Data"), *TempFilePath);
-	
+
+	// Also create an on-disk sidecar to verify CheckOut clears read-only on it too.
+	FString TempSidecarPath = FPaths::ProjectDir() / TEXT("Intermediate/TempCheckoutAsset.ubulk");
+	TempSidecarPath.ReplaceInline(TEXT("\\"), TEXT("/"));
+	FFileHelper::SaveStringToFile(TEXT("Temp Sidecar Data"), *TempSidecarPath);
+
 	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
 	PlatformFile.SetReadOnly(*TempFilePath, true);
+	PlatformFile.SetReadOnly(*TempSidecarPath, true);
 	TestTrue(TEXT("Pre-requisite: File is read-only"), PlatformFile.IsReadOnly(*TempFilePath));
+	TestTrue(TEXT("Pre-requisite: Sidecar is read-only"), PlatformFile.IsReadOnly(*TempSidecarPath));
 
 	TSharedRef<FCheckOut, ESPMode::ThreadSafe> CheckOutOp = ISourceControlOperation::Create<FCheckOut>();
 	FFlexVaultCheckOutWorker Worker(Provider);
 	FFlexVaultSourceControlCommand Command(CheckOutOp, TSharedRef<IFlexVaultSourceControlWorker>(&Worker, [](IFlexVaultSourceControlWorker*){}));
 	Command.Files.Add(TempFilePath);
 
-	// Execute must remove the read-only flag
+	// Execute must remove the read-only flag from both the file and its sidecar
 	TestTrue(TEXT("Checkout executes successfully"), Worker.Execute(Command));
 	TestFalse(TEXT("File is no longer read-only on disk"), PlatformFile.IsReadOnly(*TempFilePath));
+	TestFalse(TEXT("Sidecar is no longer read-only on disk"), PlatformFile.IsReadOnly(*TempSidecarPath));
+	TestTrue(TEXT("Checked out files include the sidecar"), Worker.CheckedOutFiles.Contains(TempSidecarPath));
 
 	// UpdateStates transitions state cache to CheckedOut
 	TestTrue(TEXT("Checkout UpdateStates completes successfully"), Worker.UpdateStates());
@@ -335,8 +361,12 @@ bool FFlexVaultWorkerCheckOutTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Cached SCM State set to CheckedOut"), CachedState->GetState(), EFlexVaultState::CheckedOut);
 	TestTrue(TEXT("Asset is modified"), CachedState->IsModified());
 
+	TSharedRef<FFlexVaultSourceControlState, ESPMode::ThreadSafe> SidecarCachedState = Provider.GetStateInternal(TempSidecarPath);
+	TestEqual(TEXT("Sidecar cached SCM State set to CheckedOut"), SidecarCachedState->GetState(), EFlexVaultState::CheckedOut);
+
 	// Cleanup
 	PlatformFile.DeleteFile(*TempFilePath);
+	PlatformFile.DeleteFile(*TempSidecarPath);
 	return true;
 }
 
@@ -479,6 +509,35 @@ bool FFlexVaultWorkerRevertTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Reverted file state set to Unchanged"), State->GetState(), EFlexVaultState::Unchanged);
 	TestFalse(TEXT("Reverted file modified flag is false"), State->bModified);
 	TestFalse(TEXT("Reverted file conflicted flag is false"), State->bConflicted);
+
+	return true;
+}
+
+// ── Test 11b: Revert SCM Worker Sidecar Fallback ─────────────────────────────
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultWorkerRevertSidecarFallbackTest, "FlexVault.SourceControl.WorkerRevertSidecarFallback", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FFlexVaultWorkerRevertSidecarFallbackTest::RunTest(const FString& Parameters)
+{
+	FFlexVaultSourceControlProvider Provider;
+	FString TestFile = FPaths::ProjectDir() / TEXT("Content/RevertSidecarAsset.uasset");
+	TestFile.ReplaceInline(TEXT("\\"), TEXT("/"));
+
+	TSharedRef<FRevert, ESPMode::ThreadSafe> RevertOp = ISourceControlOperation::Create<FRevert>();
+	FFlexVaultRevertWorker Worker(Provider);
+	FFlexVaultSourceControlCommand Command(RevertOp, TSharedRef<IFlexVaultSourceControlWorker>(&Worker, [](IFlexVaultSourceControlWorker*){}));
+	Command.Files.Add(TestFile);
+	// Neither attempt can reach a real CLI here, so both the sidecar-candidate pass and the
+	// exact-file-list fallback fail to launch; this exercises the two-pass control flow itself
+	// (see FFlexVaultRevertWorker::Execute) without requiring a working fxv binary.
+	Command.BinaryPath = TEXT("invalid_binary_stub_no_real_cli");
+
+	TestFalse(TEXT("Execute fails when neither attempt can reach the CLI"), Worker.Execute(Command));
+	TestEqual(TEXT("No files are reported as reverted"), Worker.RevertedFiles.Num(), 0);
+
+	// The first (sidecar-candidate) attempt's error must not leak into the command's surfaced
+	// result info - only the second (exact-file-list) attempt's failure should be reported, so a
+	// real revert failure isn't obscured or duplicated by the discarded sidecar attempt.
+	TestEqual(TEXT("Only the fallback attempt's error is surfaced"), Command.ResultInfo.ErrorMessages.Num(), 1);
 
 	return true;
 }

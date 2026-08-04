@@ -60,7 +60,14 @@ bool FFlexVaultRevertWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 	}
 
 	// 2. Fall back to reverting exactly the requested files, now surfacing real errors, so an
-	//    untracked-sidecar-candidate failure above doesn't block a perfectly valid revert.
+	//    untracked-sidecar-candidate failure above doesn't block a perfectly valid revert. Log the
+	//    discarded sidecar-attempt error first: if the fallback also fails (or silently "succeeds"
+	//    for a different underlying reason), this is the only record of why the first attempt failed.
+	const FText SidecarAttemptErrorSummary = SidecarAttemptResultInfo.ErrorMessages.Num() > 0
+		? FText::Join(FText::FromString(TEXT(" | ")), SidecarAttemptResultInfo.ErrorMessages)
+		: FText::FromString(TEXT("<none>"));
+	UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault Revert: Sidecar-candidate revert attempt failed, falling back to exact file list. Discarded error(s): %s"), *SidecarAttemptErrorSummary.ToString());
+
 	OutputLines.Reset();
 	bSucceeded = RunFlexVaultCommand(
 		InCommand.BinaryPath,
