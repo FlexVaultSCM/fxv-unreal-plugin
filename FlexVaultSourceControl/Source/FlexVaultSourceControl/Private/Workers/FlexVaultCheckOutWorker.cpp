@@ -2,6 +2,7 @@
 #include "FlexVaultCheckOutWorker.h"
 #include "FlexVaultSourceControlCommand.h"
 #include "FlexVaultSourceControlProvider.h"
+#include "FlexVaultSourceControlWorkerHelper.h"
 #include "HAL/PlatformFileManager.h"
 #include "GenericPlatform/GenericPlatformFile.h"
 
@@ -22,8 +23,10 @@ bool FFlexVaultCheckOutWorker::Execute(FFlexVaultSourceControlCommand& InCommand
 
 	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
 
+	const TArray<FString> FilesToCheckOut = ExpandWithPackageSidecarFiles(InCommand.Files);
+
 	CheckedOutFiles.Empty();
-	for (const FString& File : InCommand.Files)
+	for (const FString& File : FilesToCheckOut)
 	{
 		if (PlatformFile.SetReadOnly(*File, false))
 		{

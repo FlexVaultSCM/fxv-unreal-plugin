@@ -228,6 +228,52 @@ bool FFlexVaultChangeInfoParsingTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+// ── Test 5b: Sidecar File Expansion Helper ────────────────────────────────────
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultSidecarExpansionTest, "FlexVault.SourceControl.HelperSidecarExpansion", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FFlexVaultSidecarExpansionTest::RunTest(const FString& Parameters)
+{
+	FString BaseDir = FPaths::ProjectDir() / TEXT("Intermediate/SidecarExpansionTest");
+	BaseDir.ReplaceInline(TEXT("\\"), TEXT("/"));
+
+	FString UAssetPath = BaseDir / TEXT("MyAsset.uasset");
+	FString UExpPath = BaseDir / TEXT("MyAsset.uexp");
+	FString UBulkPath = BaseDir / TEXT("MyAsset.ubulk");
+	FString OtherAssetPath = BaseDir / TEXT("NoSidecar.uasset");
+	FString PlainFilePath = BaseDir / TEXT("Notes.txt");
+
+	FFileHelper::SaveStringToFile(TEXT("uasset"), *UAssetPath);
+	FFileHelper::SaveStringToFile(TEXT("uexp"), *UExpPath);
+	FFileHelper::SaveStringToFile(TEXT("ubulk"), *UBulkPath);
+	FFileHelper::SaveStringToFile(TEXT("uasset - no sidecars"), *OtherAssetPath);
+	FFileHelper::SaveStringToFile(TEXT("plain"), *PlainFilePath);
+
+	TArray<FString> InputFiles = { UAssetPath, OtherAssetPath, PlainFilePath };
+
+	// Default (bRequireExistsOnDisk = true): only sidecars that actually exist on disk are included;
+	// .ufont/.uptnl are omitted since they were never written, and non-package files pass through untouched.
+	TArray<FString> ExistingOnly = ExpandWithPackageSidecarFiles(InputFiles);
+	TestEqual(TEXT("Existing-only expansion finds exactly the 2 sidecars that exist on disk"), ExistingOnly.Num(), 5);
+	TestTrue(TEXT("Existing-only expansion includes the .uexp sidecar"), ExistingOnly.Contains(UExpPath));
+	TestTrue(TEXT("Existing-only expansion includes the .ubulk sidecar"), ExistingOnly.Contains(UBulkPath));
+	TestTrue(TEXT("Existing-only expansion passes through the plain file"), ExistingOnly.Contains(PlainFilePath));
+
+	// bRequireExistsOnDisk = false: every candidate sidecar extension is included for each .uasset/.umap,
+	// regardless of on-disk presence (used by Revert to restore sidecars a delete already removed).
+	TArray<FString> AllCandidates = ExpandWithPackageSidecarFiles(InputFiles, /*bRequireExistsOnDisk=*/false);
+	TestEqual(TEXT("Candidate expansion includes all 4 sidecar extensions per .uasset"), AllCandidates.Num(), 3 + 4 + 4);
+	TestTrue(TEXT("Candidate expansion includes a non-existent .ufont candidate"), AllCandidates.Contains(BaseDir / TEXT("MyAsset.ufont")));
+
+	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
+	PlatformFile.DeleteFile(*UAssetPath);
+	PlatformFile.DeleteFile(*UExpPath);
+	PlatformFile.DeleteFile(*UBulkPath);
+	PlatformFile.DeleteFile(*OtherAssetPath);
+	PlatformFile.DeleteFile(*PlainFilePath);
+
+	return true;
+}
+
 // ── Test 6: Mark For Add SCM Worker ──────────────────────────────────────────
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultWorkerMarkForAddTest, "FlexVault.SourceControl.WorkerMarkForAdd", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
@@ -301,13 +347,18 @@ bool FFlexVaultWorkerDeleteTest::RunTest(const FString& Parameters)
 {
 	FFlexVaultSourceControlProvider Provider;
 	
-	// Create a temp file on disk to test deletion
+	// Create a temp file on disk, plus a sidecar, to test deletion
 	FString TempFilePath = FPaths::ProjectDir() / TEXT("Intermediate/TempDeleteAsset.uasset");
 	TempFilePath.ReplaceInline(TEXT("\\"), TEXT("/"));
 	FFileHelper::SaveStringToFile(TEXT("Temp Asset Data to Delete"), *TempFilePath);
 
+	FString TempSidecarPath = FPaths::ProjectDir() / TEXT("Intermediate/TempDeleteAsset.uexp");
+	TempSidecarPath.ReplaceInline(TEXT("\\"), TEXT("/"));
+	FFileHelper::SaveStringToFile(TEXT("Temp Sidecar Data to Delete"), *TempSidecarPath);
+
 	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
 	TestTrue(TEXT("Pre-requisite: Temp file exists"), PlatformFile.FileExists(*TempFilePath));
+	TestTrue(TEXT("Pre-requisite: Temp sidecar exists"), PlatformFile.FileExists(*TempSidecarPath));
 
 	TSharedRef<FDelete, ESPMode::ThreadSafe> DeleteOp = ISourceControlOperation::Create<FDelete>();
 	FFlexVaultDeleteWorker Worker(Provider);
@@ -315,15 +366,19 @@ bool FFlexVaultWorkerDeleteTest::RunTest(const FString& Parameters)
 	Command.Files.Add(TempFilePath);
 	Command.BinaryPath = TEXT("invalid_binary_stub_skip_snapshot"); // Let the fallback execution ignore errors
 
-	// Execute should delete the file
+	// Execute should delete both the file and its sidecar, so it doesn't reappear as a "ghost file"
 	TestTrue(TEXT("Delete worker execution succeeds"), Worker.Execute(Command));
 	TestFalse(TEXT("File has been deleted from filesystem"), PlatformFile.FileExists(*TempFilePath));
+	TestFalse(TEXT("Sidecar has been deleted from filesystem"), PlatformFile.FileExists(*TempSidecarPath));
 
-	// UpdateStates sets cache to MarkedForDelete
+	// UpdateStates sets cache to MarkedForDelete for both the file and its sidecar
 	TestTrue(TEXT("Delete UpdateStates succeeds"), Worker.UpdateStates());
 	TSharedRef<FFlexVaultSourceControlState, ESPMode::ThreadSafe> CachedState = Provider.GetStateInternal(TempFilePath);
 	TestEqual(TEXT("State marked as MarkedForDelete"), CachedState->GetState(), EFlexVaultState::MarkedForDelete);
 	TestTrue(TEXT("State is deleted"), CachedState->IsDeleted());
+
+	TSharedRef<FFlexVaultSourceControlState, ESPMode::ThreadSafe> SidecarCachedState = Provider.GetStateInternal(TempSidecarPath);
+	TestEqual(TEXT("Sidecar state marked as MarkedForDelete"), SidecarCachedState->GetState(), EFlexVaultState::MarkedForDelete);
 
 	return true;
 }

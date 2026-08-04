@@ -49,11 +49,14 @@ bool FFlexVaultDeleteWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 		return false;
 	}
 
-	// 2. Perform local filesystem deletion
+	// 2. Perform local filesystem deletion, including any sidecar files (.uexp, .ubulk, etc.) so
+	//    they don't linger on disk and reappear as "ghost files" on the next status scan.
 	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
 
+	const TArray<FString> FilesToDelete = ExpandWithPackageSidecarFiles(InCommand.Files);
+
 	DeletedFiles.Empty();
-	for (const FString& File : InCommand.Files)
+	for (const FString& File : FilesToDelete)
 	{
 		if (PlatformFile.DeleteFile(*File))
 		{

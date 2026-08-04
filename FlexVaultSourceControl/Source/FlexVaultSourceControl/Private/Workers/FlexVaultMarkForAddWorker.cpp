@@ -2,6 +2,7 @@
 #include "FlexVaultMarkForAddWorker.h"
 #include "FlexVaultSourceControlCommand.h"
 #include "FlexVaultSourceControlProvider.h"
+#include "FlexVaultSourceControlWorkerHelper.h"
 
 FName FFlexVaultMarkForAddWorker::GetName() const
 {
@@ -26,7 +27,9 @@ bool FFlexVaultMarkForAddWorker::Execute(FFlexVaultSourceControlCommand& InComma
 	//    the Content Browser UI (displaying the green '+' icon) without requiring a slow, full 
 	//    repository-wide status scan.
 
-	AddedFiles = InCommand.Files;
+	// Include on-disk sidecar files (.uexp, .ubulk, etc.) so newly imported packages show their
+	// sidecars as staged too, instead of leaving them appear untracked in the Content Browser.
+	AddedFiles = ExpandWithPackageSidecarFiles(InCommand.Files);
 	return AddedFiles.Num() > 0;
 }
 

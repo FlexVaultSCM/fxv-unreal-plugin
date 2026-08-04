@@ -90,6 +90,21 @@ bool ParseFlexVaultChangeInfo(
 FString GetRelativeWorkspacePath(const FString& InFile, const FString& InWorkspacePath);
 
 /**
+ * Expands a list of files to also include Unreal package sidecar files (.uexp, .ubulk, .ufont,
+ * .uptnl) alongside any .uasset/.umap in the list. Non-package files are passed through unchanged.
+ * The returned array preserves InFiles' order and contains no duplicates.
+ *
+ * If bRequireExistsOnDisk is true (the default; used by Delete/CheckOut, which operate on disk
+ * state), a sidecar candidate is only included if it currently exists on disk. If false (used by
+ * Revert, which restores from the repository rather than disk), all sidecar candidates are included
+ * regardless of on-disk presence, since a sidecar being reverted may have already been deleted.
+ *
+ * This keeps sidecar files in lockstep with their owning package across Delete/CheckOut/Revert so
+ * they never end up orphaned ("ghost files") or left in a stale state on disk.
+ */
+TArray<FString> ExpandWithPackageSidecarFiles(const TArray<FString>& InFiles, bool bRequireExistsOnDisk = true);
+
+/**
  * Creates and populates an FFlexVaultSourceControlRevision instance from a revision detail.
  */
 TSharedRef<class FFlexVaultSourceControlRevision, ESPMode::ThreadSafe> CreateFlexVaultRevision(

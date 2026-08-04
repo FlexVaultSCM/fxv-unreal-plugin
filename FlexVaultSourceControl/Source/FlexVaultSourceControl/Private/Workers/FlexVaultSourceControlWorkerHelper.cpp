@@ -4,6 +4,8 @@
 #include "FlexVaultSourceControlCommand.h"
 #include "FlexVaultSourceControlRevision.h"
 #include "HAL/PlatformProcess.h"
+#include "HAL/PlatformFileManager.h"
+#include "GenericPlatform/GenericPlatformFile.h"
 #include "Misc/Paths.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
@@ -467,6 +469,44 @@ FString GetRelativeWorkspacePath(const FString& InFile, const FString& InWorkspa
 	FPaths::MakePathRelativeTo(RelativePath, *InWorkspacePath);
 	RelativePath.ReplaceInline(TEXT("\\"), TEXT("/"));
 	return RelativePath;
+}
+
+TArray<FString> ExpandWithPackageSidecarFiles(const TArray<FString>& InFiles, bool bRequireExistsOnDisk)
+{
+	// Sidecar extensions Unreal may write alongside a .uasset/.umap package:
+	//  - .uexp:  cooked/uncooked export data split out of the main package when it grows large.
+	//  - .ubulk: bulk data (textures, meshes, etc.) stored outside the package for streaming.
+	//  - .ufont: bulk font data for embedded fonts.
+	//  - .uptnl: optional bulk data (patch-optional payloads).
+	static const TCHAR* SidecarExtensions[] = { TEXT("uexp"), TEXT("ubulk"), TEXT("ufont"), TEXT("uptnl") };
+
+	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
+
+	TArray<FString> Result;
+	Result.Reserve(InFiles.Num());
+
+	for (const FString& File : InFiles)
+	{
+		Result.AddUnique(File);
+
+		const FString Extension = FPaths::GetExtension(File, /*bIncludeDot=*/false);
+		if (!Extension.Equals(TEXT("uasset"), ESearchCase::IgnoreCase) && !Extension.Equals(TEXT("umap"), ESearchCase::IgnoreCase))
+		{
+			continue;
+		}
+
+		const FString BasePath = FPaths::GetBaseFilename(File, /*bRemovePath=*/false);
+		for (const TCHAR* SidecarExtension : SidecarExtensions)
+		{
+			FString SidecarPath = FString::Printf(TEXT("%s.%s"), *BasePath, SidecarExtension);
+			if (!bRequireExistsOnDisk || PlatformFile.FileExists(*SidecarPath))
+			{
+				Result.AddUnique(SidecarPath);
+			}
+		}
+	}
+
+	return Result;
 }
 
 FString BuildFlexVaultChangeId(const FFlexVaultCommitMeta& InCommit)

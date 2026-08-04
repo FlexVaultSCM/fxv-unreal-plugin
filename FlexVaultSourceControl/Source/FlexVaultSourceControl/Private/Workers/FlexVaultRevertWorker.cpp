@@ -21,23 +21,51 @@ bool FFlexVaultRevertWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 		return true;
 	}
 
-	TArray<FString> RevertArgs = {
-		TEXT("revert"),
-		TEXT("--unattended"),
-		TEXT("--no-color")
+	auto BuildRevertArgs = [&InCommand](const TArray<FString>& InFilesToRevert)
+	{
+		TArray<FString> RevertArgs = {
+			TEXT("revert"),
+			TEXT("--unattended"),
+			TEXT("--no-color")
+		};
+		for (const FString& File : InFilesToRevert)
+		{
+			RevertArgs.Add(GetRelativeWorkspacePath(File, InCommand.WorkspacePath));
+		}
+		return RevertArgs;
 	};
 
-	for (const FString& File : InCommand.Files)
-	{
-		FString RelativePath = GetRelativeWorkspacePath(File, InCommand.WorkspacePath);
-		RevertArgs.Add(RelativePath);
-	}
-
+	// 1. First try including sidecar candidates (.uexp, .ubulk, etc.) regardless of whether they
+	//    currently exist on disk, so a sidecar deleted alongside its package (see FFlexVaultDeleteWorker)
+	//    is restored too when the delete is reverted. The CLI rejects the whole batch if any path was
+	//    never tracked (e.g. a package that never had a given sidecar), so this can fail even when the
+	//    files the user actually asked to revert are all valid.
+	const TArray<FString> FilesWithSidecarCandidates = ExpandWithPackageSidecarFiles(InCommand.Files, /*bRequireExistsOnDisk=*/false);
 	TArray<FString> OutputLines;
+	FSourceControlResultInfo SidecarAttemptResultInfo;
 	bool bSucceeded = RunFlexVaultCommand(
 		InCommand.BinaryPath,
 		InCommand.WorkspacePath,
-		RevertArgs,
+		BuildRevertArgs(FilesWithSidecarCandidates),
+		OutputLines,
+		SidecarAttemptResultInfo,
+		/*bIgnoreError=*/true,
+		&InCommand
+	);
+
+	if (bSucceeded)
+	{
+		RevertedFiles = FilesWithSidecarCandidates;
+		return true;
+	}
+
+	// 2. Fall back to reverting exactly the requested files, now surfacing real errors, so an
+	//    untracked-sidecar-candidate failure above doesn't block a perfectly valid revert.
+	OutputLines.Reset();
+	bSucceeded = RunFlexVaultCommand(
+		InCommand.BinaryPath,
+		InCommand.WorkspacePath,
+		BuildRevertArgs(InCommand.Files),
 		OutputLines,
 		InCommand.ResultInfo,
 		false,
