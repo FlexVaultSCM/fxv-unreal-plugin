@@ -75,7 +75,7 @@ bool ParseFlexVaultHistory(
 FString BuildFlexVaultChangeId(const FFlexVaultCommitMeta& InCommit);
 
 /**
- * Parses the plaintext output lines of 'fxv changeinfo' for a specific commit and groups them by file path.
+ * Parses the JSON output lines of 'fxv changeinfo --format json' for a specific commit and groups them by file path.
  */
 bool ParseFlexVaultChangeInfo(
 	const TArray<FString>& InChangeInfoOutputLines,
