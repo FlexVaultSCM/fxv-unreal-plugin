@@ -22,6 +22,7 @@ public:
 private:
 	friend class FFlexVaultWorkerRevertTest;
 	friend class FFlexVaultConflictRevertTransitionTest;
+	friend class FFlexVaultWorkerRevertSidecarFallbackTest;
 
 	mutable TArray<FString> RevertedFiles;
 };
