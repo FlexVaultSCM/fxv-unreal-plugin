@@ -28,6 +28,14 @@ bool FFlexVaultCopyWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 	// Registering "Copy" here (instead of leaving it unsupported) is what matters: with it
 	// unsupported, the Editor falls back to raw, SCM-uncoordinated disk copies/deletes for moves,
 	// which is how duplicate file copies end up scattered across folders.
+	//
+	// NOTE: fxv-core has no rename/move concept yet - ChangeDiffInfo only has Added/Deleted/
+	// Modified/Unchanged variants (fxv-core/crates/fxv_workspace/src/change_diff.rs), so a move
+	// is unavoidably two unrelated flat entries (Modified at the source redirector, Added at the
+	// destination) once 'fxv snapshot' runs; no lineage survives into fxv's commit history. Once
+	// fxv-core adds real rename/move tracking (a Renamed variant + path-similarity detection),
+	// this worker should be revisited to call that directly instead of just updating local state
+	// and relying on the next scan to auto-discover the two halves as unrelated changes.
 
 	const FString SourceFile = InCommand.Files.Num() > 0 ? InCommand.Files[0] : FString();
 	const FString DestinationFile = Operation->GetDestination();

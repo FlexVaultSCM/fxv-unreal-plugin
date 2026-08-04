@@ -51,6 +51,7 @@ The plugin currently targets **Unreal Engine 5.8**. To support older UE 5 releas
   - Present clear error messages to the editor log if the binary is missing or cannot be executed.
 - [ ] **Check-In Partial Failure Recovery**:
   - `FFlexVaultCheckInWorker` runs `fxv snapshot` then `fxv publish` sequentially. If snapshot succeeds but publish fails, the workspace is left with an unpublished local draft that is not reflected in the Unreal state — the editor shows the files as clean when they are not. Add a recovery path (e.g. surface a distinct `PartialCheckIn` state, or attempt a compensating revert) so the user is never silently left in an inconsistent state.
+- [ ] **Rewire `FFlexVaultCopyWorker` once `fxv-core` supports real move/rename tracking**: `fxv-core` has no rename/move concept yet (`ChangeDiffInfo` is Added/Deleted/Modified/Unchanged only, no CLI command), so moves are currently just two unrelated flat changes with no lineage; once `fxv-core` adds move/rename support, call it directly here instead.
 - [ ] Implement FFlexVaultSourceControlRevision once CLI supports it (`fxv cat`)
 - [ ] Swap plaintext parsing of changeinfo output to JSON once CLI supports it (`fxv changeinfo`)
 - [ ] Log spam: `LogRendererCore: Warning: FlushRenderingCommands called recursively! 2 calls on the stack.`
