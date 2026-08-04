@@ -13,6 +13,7 @@
 #include "Workers/FlexVaultCheckOutWorker.h"
 #include "Workers/FlexVaultMarkForAddWorker.h"
 #include "Workers/FlexVaultDeleteWorker.h"
+#include "Workers/FlexVaultCopyWorker.h"
 #include "Workers/FlexVaultRevertWorker.h"
 #include "Workers/FlexVaultSyncWorker.h"
 
@@ -764,6 +765,73 @@ bool FFlexVaultConflictResolveTransitionTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Post-resolve: state-changed delegate broadcast"), bDelegateFired);
 
 	Provider.UnregisterSourceControlStateChanged_Handle(Handle);
+	return true;
+}
+
+// ── Test 19: Copy/Move SCM Worker ────────────────────────────────────────────
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultWorkerCopyTest, "FlexVault.SourceControl.WorkerCopy", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FFlexVaultWorkerCopyTest::RunTest(const FString& Parameters)
+{
+	FFlexVaultSourceControlProvider Provider;
+
+	FString SourceFile = FPaths::ProjectDir() / TEXT("Intermediate/TempCopySource.uasset");
+	FString DestinationFile = FPaths::ProjectDir() / TEXT("Intermediate/TempCopyDestination.uasset");
+	SourceFile.ReplaceInline(TEXT("\\"), TEXT("/"));
+	DestinationFile.ReplaceInline(TEXT("\\"), TEXT("/"));
+
+	TSharedRef<FCopy, ESPMode::ThreadSafe> CopyOp = ISourceControlOperation::Create<FCopy>();
+	CopyOp->SetDestination(DestinationFile);
+	CopyOp->CopyMethod = FCopy::ECopyMethod::Branch;
+
+	FFlexVaultCopyWorker Worker(Provider);
+	FFlexVaultSourceControlCommand Command(CopyOp, TSharedRef<IFlexVaultSourceControlWorker>(&Worker, [](IFlexVaultSourceControlWorker*){}));
+	Command.Files.Add(SourceFile);
+
+	// Rename/move (ECopyMethod::Branch) must track both the destination and the
+	// redirector left behind at the source path
+	TestTrue(TEXT("Copy/Move worker execution succeeds"), Worker.Execute(Command));
+	TestEqual(TEXT("Both source redirector and destination are tracked"), Worker.CopiedFiles.Num(), 2);
+
+	// UpdateStates marks both source (redirector) and destination as OpenForAdd
+	TestTrue(TEXT("Copy/Move UpdateStates succeeds"), Worker.UpdateStates());
+	TSharedRef<FFlexVaultSourceControlState, ESPMode::ThreadSafe> DestState = Provider.GetStateInternal(DestinationFile);
+	TSharedRef<FFlexVaultSourceControlState, ESPMode::ThreadSafe> SourceState = Provider.GetStateInternal(SourceFile);
+	TestEqual(TEXT("Destination state set to OpenForAdd"), DestState->GetState(), EFlexVaultState::OpenForAdd);
+	TestEqual(TEXT("Source redirector state set to OpenForAdd"), SourceState->GetState(), EFlexVaultState::OpenForAdd);
+
+	return true;
+}
+
+// ── Test 20: Copy (Duplicate) SCM Worker ─────────────────────────────────────
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultWorkerCopyDuplicateTest, "FlexVault.SourceControl.WorkerCopyDuplicate", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FFlexVaultWorkerCopyDuplicateTest::RunTest(const FString& Parameters)
+{
+	FFlexVaultSourceControlProvider Provider;
+
+	FString SourceFile = FPaths::ProjectDir() / TEXT("Intermediate/TempDuplicateSource.uasset");
+	FString DestinationFile = FPaths::ProjectDir() / TEXT("Intermediate/TempDuplicateDestination.uasset");
+	SourceFile.ReplaceInline(TEXT("\\"), TEXT("/"));
+	DestinationFile.ReplaceInline(TEXT("\\"), TEXT("/"));
+
+	TSharedRef<FCopy, ESPMode::ThreadSafe> CopyOp = ISourceControlOperation::Create<FCopy>();
+	CopyOp->SetDestination(DestinationFile);
+	CopyOp->CopyMethod = FCopy::ECopyMethod::Add;
+
+	FFlexVaultCopyWorker Worker(Provider);
+	FFlexVaultSourceControlCommand Command(CopyOp, TSharedRef<IFlexVaultSourceControlWorker>(&Worker, [](IFlexVaultSourceControlWorker*){}));
+	Command.Files.Add(SourceFile);
+
+	// Duplicate (ECopyMethod::Add) is an unrelated new asset: only the destination is tracked,
+	// the source is left untouched.
+	TestTrue(TEXT("Copy/Duplicate worker execution succeeds"), Worker.Execute(Command));
+	TestEqual(TEXT("Only the destination is tracked"), Worker.CopiedFiles.Num(), 1);
+
+	TestTrue(TEXT("Copy/Duplicate UpdateStates succeeds"), Worker.UpdateStates());
+	TSharedRef<FFlexVaultSourceControlState, ESPMode::ThreadSafe> DestState = Provider.GetStateInternal(DestinationFile);
+	TestEqual(TEXT("Destination state set to OpenForAdd"), DestState->GetState(), EFlexVaultState::OpenForAdd);
+
 	return true;
 }
 

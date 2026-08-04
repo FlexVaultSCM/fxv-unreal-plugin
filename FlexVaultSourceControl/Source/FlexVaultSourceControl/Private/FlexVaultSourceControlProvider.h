@@ -15,6 +15,7 @@ namespace FlexVaultSourceControlConstants
 	extern const FName CheckIn;
 	extern const FName MarkForAdd;
 	extern const FName Delete;
+	extern const FName Copy;
 	extern const FName Revert;
 	extern const FName Sync;
 	extern const FName GetSourceControlRevisionInfo;
