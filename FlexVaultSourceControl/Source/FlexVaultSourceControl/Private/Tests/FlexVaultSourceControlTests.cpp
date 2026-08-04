@@ -376,8 +376,8 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultWorkerDeleteTest, "FlexVault.SourceCo
 bool FFlexVaultWorkerDeleteTest::RunTest(const FString& Parameters)
 {
 	FFlexVaultSourceControlProvider Provider;
-	
-	// Create a temp file on disk, plus a sidecar, to test deletion
+
+	// Create a temp file on disk, plus a sidecar, to verify neither is touched
 	FString TempFilePath = FPaths::ProjectDir() / TEXT("Intermediate/TempDeleteAsset.uasset");
 	TempFilePath.ReplaceInline(TEXT("\\"), TEXT("/"));
 	FFileHelper::SaveStringToFile(TEXT("Temp Asset Data to Delete"), *TempFilePath);
@@ -394,10 +394,58 @@ bool FFlexVaultWorkerDeleteTest::RunTest(const FString& Parameters)
 	FFlexVaultDeleteWorker Worker(Provider);
 	FFlexVaultSourceControlCommand Command(DeleteOp, TSharedRef<IFlexVaultSourceControlWorker>(&Worker, [](IFlexVaultSourceControlWorker*){}));
 	Command.Files.Add(TempFilePath);
-	Command.BinaryPath = TEXT("invalid_binary_stub_skip_snapshot"); // Let the fallback execution ignore errors
+	Command.BinaryPath = TEXT("invalid_binary_stub_unreachable_cli");
 
-	// Execute should delete both the file and its sidecar, so it doesn't reappear as a "ghost file"
-	TestTrue(TEXT("Delete worker execution succeeds"), Worker.Execute(Command));
+	// The pre-delete safety snapshot can't reach a real CLI here, so Execute() must abort without
+	// touching the filesystem: deleting local files after a failed safety snapshot would risk losing
+	// any uncommitted changes on them. This is the correct, safe behavior (see FFlexVaultDeleteWorker::
+	// Execute's abort-on-snapshot-failure comment), not something being worked around here.
+	TestFalse(TEXT("Execute aborts when the pre-delete safety snapshot can't reach the CLI"), Worker.Execute(Command));
+	TestTrue(TEXT("File was left untouched on disk"), PlatformFile.FileExists(*TempFilePath));
+	TestTrue(TEXT("Sidecar was left untouched on disk"), PlatformFile.FileExists(*TempSidecarPath));
+	TestEqual(TEXT("Nothing is reported as deleted"), Worker.DeletedFiles.Num(), 0);
+
+	PlatformFile.DeleteFile(*TempFilePath);
+	PlatformFile.DeleteFile(*TempSidecarPath);
+
+	return true;
+}
+
+// ── Test 8b: Delete SCM Worker Sidecar State Propagation ─────────────────────
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultWorkerDeleteSidecarStateTest, "FlexVault.SourceControl.WorkerDeleteSidecarState", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FFlexVaultWorkerDeleteSidecarStateTest::RunTest(const FString& Parameters)
+{
+	FFlexVaultSourceControlProvider Provider;
+
+	// Create a temp file on disk, plus a sidecar, to test deletion
+	FString TempFilePath = FPaths::ProjectDir() / TEXT("Intermediate/TempDeleteSidecarStateAsset.uasset");
+	TempFilePath.ReplaceInline(TEXT("\\"), TEXT("/"));
+	FFileHelper::SaveStringToFile(TEXT("Temp Asset Data to Delete"), *TempFilePath);
+
+	FString TempSidecarPath = FPaths::ProjectDir() / TEXT("Intermediate/TempDeleteSidecarStateAsset.uexp");
+	TempSidecarPath.ReplaceInline(TEXT("\\"), TEXT("/"));
+	FFileHelper::SaveStringToFile(TEXT("Temp Sidecar Data to Delete"), *TempSidecarPath);
+
+	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
+	TestTrue(TEXT("Pre-requisite: Temp file exists"), PlatformFile.FileExists(*TempFilePath));
+	TestTrue(TEXT("Pre-requisite: Temp sidecar exists"), PlatformFile.FileExists(*TempSidecarPath));
+
+	// Exercises the sidecar-aware deletion and state propagation in isolation from the CLI-gated
+	// snapshot step covered by FFlexVaultWorkerDeleteTest: populate DeletedFiles the same way
+	// Execute() would if the safety snapshot had succeeded (see FFlexVaultWorkerRevertTest, which
+	// mocks RevertedFiles the same way), then verify the sidecar is deleted alongside its package and
+	// UpdateStates() propagates MarkedForDelete to both.
+	FFlexVaultDeleteWorker Worker(Provider);
+	TArray<FString> RequestedFiles = { TempFilePath };
+	Worker.DeletedFiles = ExpandWithPackageSidecarFiles(RequestedFiles);
+	TestEqual(TEXT("Sidecar expansion includes the file and its sidecar"), Worker.DeletedFiles.Num(), 2);
+	TestTrue(TEXT("Expansion includes the sidecar"), Worker.DeletedFiles.Contains(TempSidecarPath));
+
+	for (const FString& File : Worker.DeletedFiles)
+	{
+		PlatformFile.DeleteFile(*File);
+	}
 	TestFalse(TEXT("File has been deleted from filesystem"), PlatformFile.FileExists(*TempFilePath));
 	TestFalse(TEXT("Sidecar has been deleted from filesystem"), PlatformFile.FileExists(*TempSidecarPath));
 

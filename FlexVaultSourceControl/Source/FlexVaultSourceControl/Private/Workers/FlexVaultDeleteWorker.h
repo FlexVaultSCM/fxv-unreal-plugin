@@ -21,5 +21,6 @@ public:
 
 private:
 	friend class FFlexVaultWorkerDeleteTest;
+	friend class FFlexVaultWorkerDeleteSidecarStateTest;
 	mutable TArray<FString> DeletedFiles;
 };
