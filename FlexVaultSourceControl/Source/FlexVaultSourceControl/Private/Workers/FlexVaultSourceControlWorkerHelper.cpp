@@ -300,6 +300,102 @@ bool CheckFlexVaultVersion(
 	return true;
 }
 
+bool ParseFlexVaultCurrentUser(
+	const TSharedPtr<FJsonObject>& InEnvelope,
+	FString& OutCurrentUser
+)
+{
+	OutCurrentUser.Empty();
+
+	if (!InEnvelope.IsValid())
+	{
+		return false;
+	}
+
+	const TSharedPtr<FJsonObject>* MessageObj = nullptr;
+	if (!InEnvelope->TryGetObjectField(TEXT("message"), MessageObj))
+	{
+		return false;
+	}
+
+	const TSharedPtr<FJsonObject>* PayloadObj = nullptr;
+	if (!(*MessageObj)->TryGetObjectField(TEXT("payload"), PayloadObj))
+	{
+		return false;
+	}
+
+	return (*PayloadObj)->TryGetStringField(TEXT("current_user"), OutCurrentUser);
+}
+
+bool EnsureFlexVaultLoggedIn(
+	const FString& InBinaryPath,
+	const FString& InWorkspacePath,
+	const FString& InConfiguredUsername,
+	bool bInHasCurrentUser,
+	const FString& InCurrentUser,
+	FSourceControlResultInfo& OutResultInfo,
+	const FFlexVaultSourceControlCommand* InCancelCommand
+)
+{
+	// Already logged in, and either no username preference is configured or it already matches the
+	// active login - nothing to do. Login state persists in the workspace config across CLI
+	// invocations, so re-issuing 'fxv login' here would just be a wasted subprocess spawn.
+	if (bInHasCurrentUser && (InConfiguredUsername.IsEmpty() || InCurrentUser == InConfiguredUsername))
+	{
+		return true;
+	}
+
+	if (InConfiguredUsername.IsEmpty())
+	{
+		OutResultInfo.ErrorMessages.Add(LOCTEXT("FlexVaultNoUsernameConfigured",
+			"FlexVault: No username configured. Set a Username in Editor Preferences > Plugins > FlexVault (User) before publishing."));
+		return false;
+	}
+
+	TArray<FString> LoginArgs = {
+		TEXT("login"),
+		InConfiguredUsername,
+		TEXT("--unattended"),
+		TEXT("--no-color")
+	};
+	TArray<FString> LoginOutputLines;
+	return RunFlexVaultCommand(InBinaryPath, InWorkspacePath, LoginArgs, LoginOutputLines, OutResultInfo, false, InCancelCommand);
+}
+
+bool EnsureFlexVaultLoggedInViaStatusQuery(
+	const FString& InBinaryPath,
+	const FString& InWorkspacePath,
+	const FString& InConfiguredUsername,
+	FSourceControlResultInfo& OutResultInfo,
+	const FFlexVaultSourceControlCommand* InCancelCommand
+)
+{
+	TArray<FString> StatusOutputLines;
+	TArray<FString> StatusArgs = {
+		TEXT("status"),
+		TEXT("--format"),
+		TEXT("json"),
+		TEXT("--unattended"),
+		TEXT("--no-color"),
+		TEXT("--skip-remote-update"),
+		TEXT("--skip-scan")
+	};
+	if (!RunFlexVaultCommand(InBinaryPath, InWorkspacePath, StatusArgs, StatusOutputLines, OutResultInfo, false, InCancelCommand))
+	{
+		return false;
+	}
+
+	FString RawJson = FString::Join(StatusOutputLines, TEXT("\n"));
+	TSharedPtr<FJsonObject> Envelope;
+	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(RawJson);
+	FJsonSerializer::Deserialize(Reader, Envelope);
+
+	FString CurrentUser;
+	bool bHasCurrentUser = ParseFlexVaultCurrentUser(Envelope, CurrentUser);
+
+	return EnsureFlexVaultLoggedIn(InBinaryPath, InWorkspacePath, InConfiguredUsername, bHasCurrentUser, CurrentUser, OutResultInfo, InCancelCommand);
+}
+
 bool ParseFlexVaultHistory(
 	const TArray<FString>& InHistoryOutputLines,
 	TArray<FFlexVaultCommitMeta>& OutCommits,

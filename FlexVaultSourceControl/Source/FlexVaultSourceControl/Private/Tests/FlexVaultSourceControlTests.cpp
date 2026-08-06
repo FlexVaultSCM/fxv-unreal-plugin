@@ -6,6 +6,8 @@
 #include "FlexVaultSourceControlState.h"
 #include "FlexVaultSourceControlRevision.h"
 #include "FlexVaultSourceControlDeveloperSettings.h"
+#include "FlexVaultSourceControlUserSettings.h"
+#include "FlexVaultSourceControlCommand.h"
 #include "Workers/FlexVaultSourceControlWorkerHelper.h"
 
 #include "Workers/FlexVaultUpdateStatusWorker.h"
@@ -864,6 +866,124 @@ bool FFlexVaultWorkerCopyDuplicateTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Copy/Duplicate UpdateStates succeeds"), Worker.UpdateStates());
 	TSharedRef<FFlexVaultSourceControlState, ESPMode::ThreadSafe> DestState = Provider.GetStateInternal(DestinationFile);
 	TestEqual(TEXT("Destination state set to OpenForAdd"), DestState->GetState(), EFlexVaultState::OpenForAdd);
+
+	return true;
+}
+
+// ── Test: current_user parsing from 'fxv status' envelope ───────────────────
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultParseCurrentUserTest, "FlexVault.SourceControl.HelperParseCurrentUser", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FFlexVaultParseCurrentUserTest::RunTest(const FString& Parameters)
+{
+	FString CurrentUser;
+
+	// 1. Invalid/null envelope
+	TestFalse(TEXT("Null envelope has no current user"), ParseFlexVaultCurrentUser(nullptr, CurrentUser));
+	TestTrue(TEXT("OutCurrentUser cleared on failure"), CurrentUser.IsEmpty());
+
+	// 2. Logged in: message.payload.current_user present
+	TSharedPtr<FJsonObject> LoggedInPayload = MakeShared<FJsonObject>();
+	LoggedInPayload->SetStringField(TEXT("current_user"), TEXT("alice"));
+	TSharedPtr<FJsonObject> LoggedInMessage = MakeShared<FJsonObject>();
+	LoggedInMessage->SetObjectField(TEXT("payload"), LoggedInPayload);
+	TSharedPtr<FJsonObject> LoggedInEnvelope = MakeShared<FJsonObject>();
+	LoggedInEnvelope->SetObjectField(TEXT("message"), LoggedInMessage);
+
+	TestTrue(TEXT("Logged-in envelope reports a current user"), ParseFlexVaultCurrentUser(LoggedInEnvelope, CurrentUser));
+	TestEqual(TEXT("Current user matches"), CurrentUser, TEXT("alice"));
+
+	// 3. Logged out: message.payload has no current_user field at all (omitted by serde, see status.rs)
+	TSharedPtr<FJsonObject> LoggedOutPayload = MakeShared<FJsonObject>();
+	LoggedOutPayload->SetStringField(TEXT("current_branch"), TEXT("main"));
+	TSharedPtr<FJsonObject> LoggedOutMessage = MakeShared<FJsonObject>();
+	LoggedOutMessage->SetObjectField(TEXT("payload"), LoggedOutPayload);
+	TSharedPtr<FJsonObject> LoggedOutEnvelope = MakeShared<FJsonObject>();
+	LoggedOutEnvelope->SetObjectField(TEXT("message"), LoggedOutMessage);
+
+	TestFalse(TEXT("Logged-out envelope reports no current user"), ParseFlexVaultCurrentUser(LoggedOutEnvelope, CurrentUser));
+	TestTrue(TEXT("OutCurrentUser cleared when absent"), CurrentUser.IsEmpty());
+
+	return true;
+}
+
+// ── Test: EnsureFlexVaultLoggedIn decision logic ─────────────────────────────
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultEnsureLoggedInTest, "FlexVault.SourceControl.HelperEnsureLoggedIn", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FFlexVaultEnsureLoggedInTest::RunTest(const FString& Parameters)
+{
+	FSourceControlResultInfo ResultInfo;
+
+	// 1. Already logged in as the configured user: no login call needed, succeeds without touching
+	// the (invalid) binary path.
+	ResultInfo.ErrorMessages.Empty();
+	TestTrue(
+		TEXT("Already logged in as configured user is a no-op success"),
+		EnsureFlexVaultLoggedIn(TEXT("nonexistent_fxv_binary_stub"), TEXT("C:/nonexistent"), TEXT("alice"), /*bInHasCurrentUser=*/true, TEXT("alice"), ResultInfo)
+	);
+	TestEqual(TEXT("No error reported"), ResultInfo.ErrorMessages.Num(), 0);
+
+	// 2. Logged in, no username preference configured: whoever is logged in is accepted as-is.
+	ResultInfo.ErrorMessages.Empty();
+	TestTrue(
+		TEXT("Logged in with no configured preference is a no-op success"),
+		EnsureFlexVaultLoggedIn(TEXT("nonexistent_fxv_binary_stub"), TEXT("C:/nonexistent"), TEXT(""), /*bInHasCurrentUser=*/true, TEXT("whoever"), ResultInfo)
+	);
+	TestEqual(TEXT("No error reported"), ResultInfo.ErrorMessages.Num(), 0);
+
+	// 3. Not logged in, and no username configured: fails fast with a clear message, no login attempt.
+	ResultInfo.ErrorMessages.Empty();
+	TestFalse(
+		TEXT("No configured username and not logged in fails"),
+		EnsureFlexVaultLoggedIn(TEXT("nonexistent_fxv_binary_stub"), TEXT("C:/nonexistent"), TEXT(""), /*bInHasCurrentUser=*/false, TEXT(""), ResultInfo)
+	);
+	TestTrue(TEXT("Error reported for missing username configuration"), ResultInfo.ErrorMessages.Num() > 0);
+
+	// 4. Logged in as someone other than the configured user: must attempt 'fxv login', which fails
+	// cleanly (via RunFlexVaultCommand's launch-failure path) against a binary that doesn't exist,
+	// without crashing or silently succeeding.
+	ResultInfo.ErrorMessages.Empty();
+	TestFalse(
+		TEXT("Mismatched login attempts to re-login and reports the launch failure"),
+		EnsureFlexVaultLoggedIn(TEXT("nonexistent_fxv_binary_stub"), TEXT("C:/nonexistent"), TEXT("bob"), /*bInHasCurrentUser=*/true, TEXT("alice"), ResultInfo)
+	);
+	TestTrue(TEXT("Error reported for failed login attempt"), ResultInfo.ErrorMessages.Num() > 0);
+
+	// 5. Not logged in, username configured: must attempt 'fxv login' the same way.
+	ResultInfo.ErrorMessages.Empty();
+	TestFalse(
+		TEXT("Not logged in with configured username attempts login"),
+		EnsureFlexVaultLoggedIn(TEXT("nonexistent_fxv_binary_stub"), TEXT("C:/nonexistent"), TEXT("bob"), /*bInHasCurrentUser=*/false, TEXT(""), ResultInfo)
+	);
+	TestTrue(TEXT("Error reported for failed login attempt"), ResultInfo.ErrorMessages.Num() > 0);
+
+	return true;
+}
+
+// ── Test: per-user Username setting is isolated from the shared project settings ────
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultUserSettingsScopeTest, "FlexVault.SourceControl.UserSettingsScope", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FFlexVaultUserSettingsScopeTest::RunTest(const FString& Parameters)
+{
+	const UFlexVaultSourceControlUserSettings* UserSettings = GetDefault<UFlexVaultSourceControlUserSettings>();
+	TestNotNull(TEXT("User settings CDO exists"), UserSettings);
+	if (!UserSettings)
+	{
+		return false;
+	}
+
+	// The whole point of splitting this into its own UDeveloperSettings subclass is that Username
+	// must never share a config file with the team-wide, typically-versioned RepoUri/BinaryPath
+	// settings (see FlexVaultSourceControlUserSettings.h) - assert the two classes actually resolve
+	// to different config categories/containers rather than relying on that staying true by convention.
+	const UFlexVaultSourceControlDeveloperSettings* ProjectSettings = GetDefault<UFlexVaultSourceControlDeveloperSettings>();
+	TestNotNull(TEXT("Project settings CDO exists"), ProjectSettings);
+	if (!ProjectSettings)
+	{
+		return false;
+	}
+
+	TestNotEqual(TEXT("User settings container differs from project settings container"), UserSettings->GetContainerName(), ProjectSettings->GetContainerName());
+	TestNotEqual(TEXT("User settings ini category differs from project settings ini category"), UserSettings->GetClass()->ClassConfigName, ProjectSettings->GetClass()->ClassConfigName);
 
 	return true;
 }
