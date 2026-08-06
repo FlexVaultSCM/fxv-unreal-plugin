@@ -326,17 +326,21 @@ bool FFlexVaultWorkerDeleteTest::RunTest(const FString& Parameters)
 	FFlexVaultDeleteWorker Worker(Provider);
 	FFlexVaultSourceControlCommand Command(DeleteOp, TSharedRef<IFlexVaultSourceControlWorker>(&Worker, [](IFlexVaultSourceControlWorker*){}));
 	Command.Files.Add(TempFilePath);
-	Command.BinaryPath = TEXT("invalid_binary_stub_skip_snapshot"); // Let the fallback execution ignore errors
+	Command.BinaryPath = TEXT("invalid_binary_stub_that_cannot_launch"); // Forces the safety snapshot to fail to launch
 
-	// Execute should delete the file
-	TestTrue(TEXT("Delete worker execution succeeds"), Worker.Execute(Command));
-	TestFalse(TEXT("File has been deleted from filesystem"), PlatformFile.FileExists(*TempFilePath));
+	// FFlexVaultDeleteWorker runs a safety 'fxv snapshot' before deleting so dirty content is never
+	// lost; when that snapshot can't even launch, Execute must abort the deletion rather than proceed
+	// anyway - bIgnoreError only suppresses duplicate error-message spam, it doesn't turn a failed
+	// safety check into a success. The file must survive untouched.
+	TestFalse(TEXT("Delete worker execution fails when the safety snapshot can't run"), Worker.Execute(Command));
+	TestTrue(TEXT("File was NOT deleted from filesystem"), PlatformFile.FileExists(*TempFilePath));
+	TestEqual(TEXT("No files recorded as deleted"), Worker.DeletedFiles.Num(), 0);
+	TestTrue(TEXT("A specific error message was surfaced"), Command.ResultInfo.ErrorMessages.Num() > 0);
 
-	// UpdateStates sets cache to MarkedForDelete
-	TestTrue(TEXT("Delete UpdateStates succeeds"), Worker.UpdateStates());
+	// UpdateStates has nothing to do since no files were actually deleted.
+	TestFalse(TEXT("UpdateStates reports nothing changed"), Worker.UpdateStates());
 	TSharedRef<FFlexVaultSourceControlState, ESPMode::ThreadSafe> CachedState = Provider.GetStateInternal(TempFilePath);
-	TestEqual(TEXT("State marked as MarkedForDelete"), CachedState->GetState(), EFlexVaultState::MarkedForDelete);
-	TestTrue(TEXT("State is deleted"), CachedState->IsDeleted());
+	TestEqual(TEXT("State was never touched"), CachedState->GetState(), EFlexVaultState::DontCare);
 
 	return true;
 }
