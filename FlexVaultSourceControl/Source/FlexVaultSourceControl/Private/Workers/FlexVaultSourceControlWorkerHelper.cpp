@@ -706,7 +706,6 @@ TSharedRef<FFlexVaultSourceControlRevision, ESPMode::ThreadSafe> CreateFlexVault
 	Revision->UserName = InDetail.UserName;
 	Revision->Action = InDetail.Action;
 	Revision->Date = InDetail.Date;
-	Revision->ContentAddress = InDetail.ContentAddress;
 	Revision->FileSize = (int32)FMath::Min<int64>(InDetail.FileSize, (int64)MAX_int32);
 	return Revision;
 }

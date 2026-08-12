@@ -54,9 +54,6 @@ public:
 	/** File size in bytes */
 	int32 FileSize;
 
-	/** CAS Address of the content blob (e.g., BLOB:<hash>) */
-	FString ContentAddress;
-
 private:
 	FFlexVaultSourceControlProvider& GetSCCProvider() const { return SCCProvider; }
 	FFlexVaultSourceControlProvider& SCCProvider;
