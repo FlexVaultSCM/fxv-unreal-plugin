@@ -54,6 +54,7 @@ bool RunFlexVaultCommand(
  * Unlike RunFlexVaultCommand, output is read as bytes rather than text: cat's stdout is a file's
  * verbatim (possibly binary) content, which line-splitting/text decoding would corrupt. Does not
  * support cancellation, matching ISourceControlRevision::Get()'s synchronous, non-cancellable contract.
+ * Blocks the calling thread with no timeout, same as Perforce/Git's revision Get() implementations.
  */
 bool RunFlexVaultCatCommand(
 	const FString& InBinaryPath,
@@ -65,7 +66,9 @@ bool RunFlexVaultCatCommand(
 );
 
 /**
- * Verifies that the FlexVault CLI version in the JSON envelope is compatible (requires 0.1.x).
+ * Verifies that the FlexVault CLI version in the JSON envelope falls within this plugin's pinned
+ * compatible range (see FlexVaultCliCompatibility in FlexVaultSourceControlWorkerHelper.cpp for the
+ * current [Min, Max) bounds and the policy for widening them).
  */
 bool CheckFlexVaultVersion(
 	const TSharedPtr<class FJsonObject>& InEnvelope,

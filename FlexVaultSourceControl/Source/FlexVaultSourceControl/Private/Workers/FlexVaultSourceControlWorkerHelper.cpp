@@ -263,6 +263,12 @@ bool RunFlexVaultCatCommand(
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(RunFlexVaultCatCommand);
 
+	// This blocks the calling thread (typically the game thread, since ISourceControlRevision::Get()
+	// is invoked synchronously) with no timeout and no cancellation, matching how the built-in
+	// Perforce/Git source control plugins implement revision Get(). 'fxv cat' can in principle need to
+	// fetch a published object that isn't cached locally, which is a slower/network-bound path than a
+	// typical local git/P4-cache read - if that turns out to hang in practice, revisit with a timeout.
+
 	TArray<FString> Args = { TEXT("cat"), InRelativePath, TEXT("-r"), InRevision };
 	FString EscapedArgs = JoinCommandLineArgs(Args);
 	UE_LOG(LogFlexVault, Verbose, TEXT("Initiating FlexVault SCM Command: %s %s (Working Dir: %s)"), *InBinaryPath, *EscapedArgs, *InWorkspacePath);

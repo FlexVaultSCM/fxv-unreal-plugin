@@ -59,12 +59,10 @@ bool FFlexVaultSourceControlRevision::Get(FString& InOutFilename, EConcurrency::
 
 	TArray<uint8> BinaryData;
 	FSourceControlResultInfo ResultInfo;
+	// RunFlexVaultCatCommand already logs failures (CLI error output) at Error verbosity;
+	// no need to re-log ResultInfo.ErrorMessages here.
 	if (!RunFlexVaultCatCommand(BinaryPath, WorkspacePath, RelativePath, Revision, BinaryData, ResultInfo))
 	{
-		for (const FText& Err : ResultInfo.ErrorMessages)
-		{
-			UE_LOG(LogFlexVault, Warning, TEXT("FlexVault: %s"), *Err.ToString());
-		}
 		return false;
 	}
 
