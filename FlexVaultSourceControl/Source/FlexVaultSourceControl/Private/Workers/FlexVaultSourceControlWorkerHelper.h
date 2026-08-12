@@ -50,6 +50,21 @@ bool RunFlexVaultCommand(
 );
 
 /**
+ * Runs 'fxv cat <InRelativePath> -r <InRevision>' and captures the raw stdout bytes into OutData.
+ * Unlike RunFlexVaultCommand, output is read as bytes rather than text: cat's stdout is a file's
+ * verbatim (possibly binary) content, which line-splitting/text decoding would corrupt. Does not
+ * support cancellation, matching ISourceControlRevision::Get()'s synchronous, non-cancellable contract.
+ */
+bool RunFlexVaultCatCommand(
+	const FString& InBinaryPath,
+	const FString& InWorkspacePath,
+	const FString& InRelativePath,
+	const FString& InRevision,
+	TArray<uint8>& OutData,
+	FSourceControlResultInfo& OutResultInfo
+);
+
+/**
  * Verifies that the FlexVault CLI version in the JSON envelope is compatible (requires 0.1.x).
  */
 bool CheckFlexVaultVersion(
