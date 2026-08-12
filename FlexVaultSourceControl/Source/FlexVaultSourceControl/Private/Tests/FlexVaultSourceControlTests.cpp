@@ -105,6 +105,10 @@ bool FFlexVaultVersionCheckTest::RunTest(const FString& Parameters)
 	FSourceControlResultInfo ResultInfo;
 
 	// 1. Invalid Envelope
+	// CheckFlexVaultVersion UE_LOGs at Error on this path (so the editor log surfaces it too, not just
+	// ResultInfo); the automation framework auto-fails a test on any unexpected Error-severity log, so
+	// tell it this one is intentional.
+	AddExpectedErrorPlain(TEXT("Invalid JSON envelope passed to version check"), EAutomationExpectedErrorFlags::Contains, 1);
 	TestFalse(TEXT("Null JSON envelope fails"), CheckFlexVaultVersion(nullptr, ResultInfo));
 
 	// 2. Compatible version (0.1.0), lower bound of the pinned [0.1.0, 0.5.0) range
@@ -132,6 +136,7 @@ bool FFlexVaultVersionCheckTest::RunTest(const FString& Parameters)
 	InvalidEnv->SetObjectField(TEXT("program"), InvalidProg);
 
 	ResultInfo.ErrorMessages.Empty();
+	AddExpectedErrorPlain(TEXT("Incompatible FlexVault CLI version '0.5.0'"), EAutomationExpectedErrorFlags::Contains, 1);
 	TestFalse(TEXT("CLI version 0.5.0 is incompatible"), CheckFlexVaultVersion(InvalidEnv, ResultInfo));
 	TestTrue(TEXT("Error reported for version mismatch"), ResultInfo.ErrorMessages.Num() > 0);
 
@@ -333,18 +338,31 @@ bool FFlexVaultWorkerDeleteTest::RunTest(const FString& Parameters)
 	FFlexVaultDeleteWorker Worker(Provider);
 	FFlexVaultSourceControlCommand Command(DeleteOp, TSharedRef<IFlexVaultSourceControlWorker>(&Worker, [](IFlexVaultSourceControlWorker*){}));
 	Command.Files.Add(TempFilePath);
-	Command.BinaryPath = TEXT("invalid_binary_stub_skip_snapshot"); // Let the fallback execution ignore errors
+	Command.BinaryPath = TEXT("invalid_binary_stub_skip_snapshot"); // Deliberately unlaunchable, to exercise the pre-delete snapshot failure path.
 
-	// Execute should delete the file
-	TestTrue(TEXT("Delete worker execution succeeds"), Worker.Execute(Command));
-	TestFalse(TEXT("File has been deleted from filesystem"), PlatformFile.FileExists(*TempFilePath));
+	// The invalid BinaryPath above is expected to fail process launch; RunFlexVaultCommand UE_LOGs that
+	// at Error (in addition to recording it in ResultInfo, which the worker ignores here), so tell the
+	// automation framework this Error is intentional rather than a real failure.
+	AddExpectedErrorPlain(TEXT("Failed to launch SCM executable: invalid_binary_stub_skip_snapshot"), EAutomationExpectedErrorFlags::Contains, 1);
 
-	// UpdateStates sets cache to MarkedForDelete
-	TestTrue(TEXT("Delete UpdateStates succeeds"), Worker.UpdateStates());
+	// FFlexVaultDeleteWorker::Execute() takes a pre-delete safety snapshot before touching the
+	// filesystem, and deliberately aborts the whole delete - rather than deleting without a backup -
+	// if that snapshot can't even be launched. This is intentional data-loss prevention that the caller
+	// can't override, so Execute() is expected to fail here and leave the file and its cached state
+	// untouched.
+	TestFalse(TEXT("Delete worker execution aborts when the pre-delete snapshot fails"), Worker.Execute(Command));
+	TestTrue(TEXT("File was NOT deleted from filesystem"), PlatformFile.FileExists(*TempFilePath));
+
+	// In production, FFlexVaultSourceControlCommand::ReturnResults() only calls UpdateStates() when
+	// Execute() succeeded, so a failed Execute() would never reach this - calling it directly here just
+	// confirms UpdateStates() is itself a no-op when Execute() recorded nothing to update.
+	TestFalse(TEXT("Delete UpdateStates reports nothing to update"), Worker.UpdateStates());
 	TSharedRef<FFlexVaultSourceControlState, ESPMode::ThreadSafe> CachedState = Provider.GetStateInternal(TempFilePath);
-	TestEqual(TEXT("State marked as MarkedForDelete"), CachedState->GetState(), EFlexVaultState::MarkedForDelete);
-	TestTrue(TEXT("State is deleted"), CachedState->IsDeleted());
+	TestEqual(TEXT("State remains untouched"), CachedState->GetState(), EFlexVaultState::DontCare);
+	TestFalse(TEXT("State is not marked deleted"), CachedState->IsDeleted());
 
+	// Cleanup: the delete was correctly aborted, so the temp file is still on disk.
+	PlatformFile.DeleteFile(*TempFilePath);
 	return true;
 }
 
