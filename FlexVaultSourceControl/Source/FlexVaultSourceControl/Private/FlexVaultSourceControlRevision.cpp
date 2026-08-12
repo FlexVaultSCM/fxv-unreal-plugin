@@ -37,7 +37,14 @@ bool FFlexVaultSourceControlRevision::Get(FString& InOutFilename, EConcurrency::
 		// Unreal Engine passes an empty InOutFilename when it wants the source control provider
 		// to write the revision to a temporary file (e.g. for diffing). In this case, we
 		// generate a unique temporary file path within the engine's diff directory.
-		const FString File = FString::Printf(TEXT("%s-Rev-%s-"), *FPaths::GetBaseFilename(FileName), *Revision);
+		//
+		// Revision strings contain literal dots (e.g. "main.11.2", "main.-.1"); Unreal's package-path
+		// parser treats a dot in a mounted path as the Package.Object separator, so embedding one raw
+		// truncates the package name and the resulting temp package silently fails to load. Replace dots
+		// before using the revision in the filename.
+		FString SanitizedRevision = Revision;
+		SanitizedRevision.ReplaceInline(TEXT("."), TEXT("_"));
+		const FString File = FString::Printf(TEXT("%s-Rev-%s-"), *FPaths::GetBaseFilename(FileName), *SanitizedRevision);
 		const FString Extension = TEXT(".") + FPaths::GetExtension(FileName);
 		const FString TempFileName = FPaths::CreateTempFilename(*FPaths::DiffDir(), *File, *Extension);
 		AbsoluteFileName = FPaths::ConvertRelativePathToFull(TempFileName);
