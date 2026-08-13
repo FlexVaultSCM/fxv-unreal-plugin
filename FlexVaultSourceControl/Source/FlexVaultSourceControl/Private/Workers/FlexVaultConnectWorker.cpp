@@ -75,10 +75,22 @@ bool FFlexVaultConnectWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 	}
 	else if (InCommand.ResultInfo.ErrorMessages.Num() > 0)
 	{
-		// RunFlexVaultCommand already logged the failure details (or, for a launch failure, populated
-		// ErrorMessages without logging - see RunFlexVaultCommand). Surface the first message, which is
-		// always the summary line (exit code or launch failure), not the raw stdout lines appended after it.
-		ConnectOperation->SetErrorText(InCommand.ResultInfo.ErrorMessages[0]);
+		// RunFlexVaultCommand populates ErrorMessages[0] with a general summary line (exit code or launch failure)
+		// and appends raw CLI stdout/stderr lines afterward (indices 1..N). Surface the actionable error details
+		// from the CLI if present; otherwise fall back to the summary line.
+		if (InCommand.ResultInfo.ErrorMessages.Num() > 1)
+		{
+			TArray<FString> DetailMessages;
+			for (int32 Index = 1; Index < InCommand.ResultInfo.ErrorMessages.Num(); ++Index)
+			{
+				DetailMessages.Add(InCommand.ResultInfo.ErrorMessages[Index].ToString());
+			}
+			ConnectOperation->SetErrorText(FText::FromString(FString::Join(DetailMessages, TEXT("\n"))));
+		}
+		else
+		{
+			ConnectOperation->SetErrorText(InCommand.ResultInfo.ErrorMessages[0]);
+		}
 	}
 
 	return bSucceeded;

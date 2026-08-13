@@ -301,6 +301,7 @@ bool RunFlexVaultCatCommand(
 	{
 		FPlatformProcess::ClosePipe(PipeRead, PipeWrite);
 		OutResultInfo.ErrorMessages.Add(FText::Format(LOCTEXT("CatProcessLaunchError", "Failed to launch FlexVault SCM executable: {0}"), FText::FromString(InBinaryPath)));
+		UE_LOG(LogFlexVault, Error, TEXT("FlexVault: Failed to launch SCM executable (cat): %s %s (Working Dir: %s)"), *InBinaryPath, *EscapedArgs, *InWorkspacePath);
 		return false;
 	}
 
@@ -381,15 +382,46 @@ namespace
 		static bool TryParse(const FString& InVersionStr, FFlexVaultCliVersion& OutVersion)
 		{
 			TArray<FString> Parts;
-			InVersionStr.ParseIntoArray(Parts, TEXT("."));
-			if (Parts.Num() < 2)
+			InVersionStr.ParseIntoArray(Parts, TEXT("."), false);
+			if (Parts.Num() < 2 || Parts.Num() > 3)
+			{
+				return false;
+			}
+
+			if (!FCString::IsNumeric(*Parts[0]) || !FCString::IsNumeric(*Parts[1]))
 			{
 				return false;
 			}
 
 			OutVersion.Major = FCString::Atoi(*Parts[0]);
 			OutVersion.Minor = FCString::Atoi(*Parts[1]);
-			OutVersion.Patch = Parts.Num() >= 3 ? FCString::Atoi(*Parts[2]) : 0;
+
+			if (Parts.Num() >= 3)
+			{
+				FString PatchStr = Parts[2];
+				int32 DashIdx = INDEX_NONE;
+				if (PatchStr.FindChar(TEXT('-'), DashIdx))
+				{
+					PatchStr = PatchStr.Left(DashIdx);
+				}
+				int32 PlusIdx = INDEX_NONE;
+				if (PatchStr.FindChar(TEXT('+'), PlusIdx))
+				{
+					PatchStr = PatchStr.Left(PlusIdx);
+				}
+
+				if (!FCString::IsNumeric(*PatchStr))
+				{
+					return false;
+				}
+
+				OutVersion.Patch = FCString::Atoi(*PatchStr);
+			}
+			else
+			{
+				OutVersion.Patch = 0;
+			}
+
 			return true;
 		}
 	};

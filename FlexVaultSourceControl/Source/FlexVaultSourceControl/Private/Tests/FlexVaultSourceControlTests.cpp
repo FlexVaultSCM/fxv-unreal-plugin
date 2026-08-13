@@ -114,11 +114,11 @@ bool FFlexVaultVersionCheckTest::RunTest(const FString& Parameters)
 	// 2. Compatible version (0.1.0), lower bound of the pinned [0.1.0, 0.5.0) range
 	TSharedPtr<FJsonObject> ValidEnv = MakeShared<FJsonObject>();
 	TSharedPtr<FJsonObject> ValidProg = MakeShared<FJsonObject>();
-	ValidProg->SetStringField(TEXT("version"), TEXT("0.1.5"));
+	ValidProg->SetStringField(TEXT("version"), TEXT("0.1.0"));
 	ValidEnv->SetObjectField(TEXT("program"), ValidProg);
 
 	ResultInfo.ErrorMessages.Empty();
-	TestTrue(TEXT("CLI version 0.1.5 is compatible"), CheckFlexVaultVersion(ValidEnv, ResultInfo));
+	TestTrue(TEXT("CLI version 0.1.0 is compatible"), CheckFlexVaultVersion(ValidEnv, ResultInfo));
 
 	// 3. Compatible version (0.4.2), within the widened range but above the old exact-match (0.1.x) check
 	TSharedPtr<FJsonObject> WidenedEnv = MakeShared<FJsonObject>();
@@ -139,6 +139,16 @@ bool FFlexVaultVersionCheckTest::RunTest(const FString& Parameters)
 	AddExpectedErrorPlain(TEXT("Incompatible FlexVault CLI version '0.5.0'"), EAutomationExpectedErrorFlags::Contains, 1);
 	TestFalse(TEXT("CLI version 0.5.0 is incompatible"), CheckFlexVaultVersion(InvalidEnv, ResultInfo));
 	TestTrue(TEXT("Error reported for version mismatch"), ResultInfo.ErrorMessages.Num() > 0);
+
+	// 5. Malformed non-numeric version string (x.4.2)
+	TSharedPtr<FJsonObject> MalformedEnv = MakeShared<FJsonObject>();
+	TSharedPtr<FJsonObject> MalformedProg = MakeShared<FJsonObject>();
+	MalformedProg->SetStringField(TEXT("version"), TEXT("x.4.2"));
+	MalformedEnv->SetObjectField(TEXT("program"), MalformedProg);
+
+	ResultInfo.ErrorMessages.Empty();
+	AddExpectedErrorPlain(TEXT("Invalid FlexVault CLI version string 'x.4.2'"), EAutomationExpectedErrorFlags::Contains, 1);
+	TestFalse(TEXT("Malformed version string 'x.4.2' fails"), CheckFlexVaultVersion(MalformedEnv, ResultInfo));
 
 	return true;
 }
