@@ -27,12 +27,7 @@ bool FFlexVaultSourceControlRevision::Get(FString& InOutFilename, EConcurrency::
 		return false;
 	}
 
-	FString AbsoluteFileName;
-	if (InOutFilename.Len() > 0)
-	{
-		AbsoluteFileName = InOutFilename;
-	}
-	else
+	if (InOutFilename.IsEmpty())
 	{
 		// Unreal Engine passes an empty InOutFilename when it wants the source control provider
 		// to write the revision to a temporary file (e.g. for diffing). In this case, we
@@ -44,10 +39,9 @@ bool FFlexVaultSourceControlRevision::Get(FString& InOutFilename, EConcurrency::
 		// before using the revision in the filename.
 		FString SanitizedRevision = Revision;
 		SanitizedRevision.ReplaceInline(TEXT("."), TEXT("_"));
-		const FString File = FString::Printf(TEXT("%s-Rev-%s-"), *FPaths::GetBaseFilename(FileName), *SanitizedRevision);
+		const FString Prefix = FString::Printf(TEXT("%s-Rev-%s-"), *FPaths::GetBaseFilename(FileName), *SanitizedRevision);
 		const FString Extension = TEXT(".") + FPaths::GetExtension(FileName);
-		const FString TempFileName = FPaths::CreateTempFilename(*FPaths::DiffDir(), *File, *Extension);
-		AbsoluteFileName = FPaths::ConvertRelativePathToFull(TempFileName);
+		InOutFilename = FPaths::ConvertRelativePathToFull(FPaths::CreateTempFilename(*FPaths::DiffDir(), *Prefix, *Extension));
 	}
 
 	// The plugin only ever opens a workspace rooted at the project directory (see
@@ -57,22 +51,10 @@ bool FFlexVaultSourceControlRevision::Get(FString& InOutFilename, EConcurrency::
 	const FString BinaryPath = GetDefault<UFlexVaultSourceControlDeveloperSettings>()->GetEffectiveBinaryPath();
 	const FString RelativePath = GetRelativeWorkspacePath(FileName, WorkspacePath);
 
-	TArray<uint8> BinaryData;
 	FSourceControlResultInfo ResultInfo;
-	// RunFlexVaultCatCommand already logs failures (CLI error output) at Error verbosity;
+	// RunFlexVaultCatCommand streams stdout chunks directly to InOutFilename and logs failures at Error verbosity;
 	// no need to re-log ResultInfo.ErrorMessages here.
-	if (!RunFlexVaultCatCommand(BinaryPath, WorkspacePath, RelativePath, Revision, BinaryData, ResultInfo))
-	{
-		return false;
-	}
-
-	if (FFileHelper::SaveArrayToFile(BinaryData, *AbsoluteFileName))
-	{
-		InOutFilename = AbsoluteFileName;
-		return true;
-	}
-
-	return false;
+	return RunFlexVaultCatCommand(BinaryPath, WorkspacePath, RelativePath, Revision, InOutFilename, ResultInfo);
 }
 
 const FString& FFlexVaultSourceControlRevision::GetFilename() const

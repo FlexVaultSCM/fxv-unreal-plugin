@@ -4,6 +4,8 @@
 #include "FlexVaultSourceControlCommand.h"
 #include "FlexVaultSourceControlRevision.h"
 #include "HAL/PlatformProcess.h"
+#include "HAL/PlatformFileManager.h"
+#include "GenericPlatform/GenericPlatformFile.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "Dom/JsonObject.h"
@@ -280,7 +282,7 @@ bool RunFlexVaultCatCommand(
 	const FString& InWorkspacePath,
 	const FString& InRelativePath,
 	const FString& InRevision,
-	TArray<uint8>& OutData,
+	const FString& InDestinationPath,
 	FSourceControlResultInfo& OutResultInfo
 )
 {
@@ -292,6 +294,18 @@ bool RunFlexVaultCatCommand(
 	// fetch a published object that isn't cached locally, which is a slower/network-bound path than a
 	// typical local git/P4-cache read - if that turns out to hang in practice, revisit with a timeout.
 
+	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
+	TUniquePtr<IFileHandle> FileHandle(PlatformFile.OpenWrite(*InDestinationPath));
+	if (!FileHandle.IsValid())
+	{
+		OutResultInfo.ErrorMessages.Add(FText::Format(
+			LOCTEXT("CatFileOpenError", "Failed to open destination file for writing: {0}"),
+			FText::FromString(InDestinationPath)
+		));
+		UE_LOG(LogFlexVault, Error, TEXT("FlexVault: Failed to open destination file for writing: %s"), *InDestinationPath);
+		return false;
+	}
+
 	TArray<FString> Args = { TEXT("cat"), InRelativePath, TEXT("-r"), InRevision };
 	FString EscapedArgs = JoinCommandLineArgs(Args);
 	UE_LOG(LogFlexVault, Verbose, TEXT("Initiating FlexVault SCM Command: %s %s (Working Dir: %s)"), *InBinaryPath, *EscapedArgs, *InWorkspacePath);
@@ -302,25 +316,34 @@ bool RunFlexVaultCatCommand(
 	FProcHandle Process;
 	if (!LaunchProcessWithPipe(InBinaryPath, EscapedArgs, InWorkspacePath, PipeRead, PipeWrite, Process, OutResultInfo))
 	{
+		FileHandle.Reset();
+		PlatformFile.DeleteFile(*InDestinationPath);
 		return false;
 	}
 
-	OutData.Reset();
+	int64 TotalBytesWritten = 0;
+	TArray<uint8> Chunk;
 	while (FPlatformProcess::IsProcRunning(Process))
 	{
-		TArray<uint8> Chunk;
-		if (FPlatformProcess::ReadPipeToArray(PipeRead, Chunk) && Chunk.Num() > 0)
+		bool bReadAnyData = false;
+		while (FPlatformProcess::ReadPipeToArray(PipeRead, Chunk) && Chunk.Num() > 0)
 		{
-			OutData.Append(Chunk);
+			FileHandle->Write(Chunk.GetData(), Chunk.Num());
+			TotalBytesWritten += Chunk.Num();
+			bReadAnyData = true;
 		}
-		FPlatformProcess::Sleep(0.01f);
+
+		if (!bReadAnyData)
+		{
+			FPlatformProcess::Sleep(0.001f);
+		}
 	}
 
 	// Drain any remaining data after the process exits.
-	TArray<uint8> Chunk;
 	while (FPlatformProcess::ReadPipeToArray(PipeRead, Chunk) && Chunk.Num() > 0)
 	{
-		OutData.Append(Chunk);
+		FileHandle->Write(Chunk.GetData(), Chunk.Num());
+		TotalBytesWritten += Chunk.Num();
 	}
 
 	int32 ReturnCode = 0;
@@ -328,16 +351,21 @@ bool RunFlexVaultCatCommand(
 	FPlatformProcess::CloseProc(Process);
 	FPlatformProcess::ClosePipe(PipeRead, PipeWrite);
 
+	// Close the file handle so the file is flushed and accessible on disk.
+	FileHandle.Reset();
+
 	double ElapsedTime = FPlatformTime::Seconds() - StartTime;
 
 	if (ReturnCode != 0)
 	{
 		// cat writes nothing to stdout before it has confirmed the file is readable, so a non-zero
-		// exit means OutData holds the CLI's UTF-8 error text rather than partial binary content -
-		// safe to decode and surface as a message.
+		// exit means the destination file holds the CLI's UTF-8 error text rather than partial binary content -
+		// safe to decode, surface as a message, and clean up the failed destination file.
 		FString ErrorText;
-		FFileHelper::BufferToString(ErrorText, OutData.GetData(), OutData.Num());
+		FFileHelper::LoadFileToString(ErrorText, *InDestinationPath);
 		ErrorText.TrimStartAndEndInline();
+
+		PlatformFile.DeleteFile(*InDestinationPath);
 
 		OutResultInfo.ErrorMessages.Add(FText::Format(
 			LOCTEXT("CatCommandError", "FlexVault 'cat' command failed with exit code {0}: {1}"),
@@ -346,12 +374,11 @@ bool RunFlexVaultCatCommand(
 		));
 		UE_LOG(LogFlexVault, Error, TEXT("FlexVault SCM Command Failed (cat): %s %s (Working Dir: %s, %.4fs) - %s"),
 			*InBinaryPath, *EscapedArgs, *InWorkspacePath, ElapsedTime, *ErrorText);
-		OutData.Reset();
 		return false;
 	}
 
-	UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault SCM Command Succeeded (cat): %s %s (Working Dir: %s, %.4fs, %d bytes)"),
-		*InBinaryPath, *EscapedArgs, *InWorkspacePath, ElapsedTime, OutData.Num());
+	UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault SCM Command Succeeded (cat): %s %s (Working Dir: %s, %.4fs, %lld bytes written to %s)"),
+		*InBinaryPath, *EscapedArgs, *InWorkspacePath, ElapsedTime, TotalBytesWritten, *InDestinationPath);
 	return true;
 }
 

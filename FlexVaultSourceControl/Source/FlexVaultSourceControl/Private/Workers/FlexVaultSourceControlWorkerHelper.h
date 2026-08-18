@@ -50,18 +50,17 @@ bool RunFlexVaultCommand(
 );
 
 /**
- * Runs 'fxv cat <InRelativePath> -r <InRevision>' and captures the raw stdout bytes into OutData.
- * Unlike RunFlexVaultCommand, output is read as bytes rather than text: cat's stdout is a file's
- * verbatim (possibly binary) content, which line-splitting/text decoding would corrupt. Does not
- * support cancellation, matching ISourceControlRevision::Get()'s synchronous, non-cancellable contract.
- * Blocks the calling thread with no timeout, same as Perforce/Git's revision Get() implementations.
+ * Runs 'fxv cat <InRelativePath> -r <InRevision>' and streams the stdout bytes directly into InDestinationPath.
+ * Unlike RunFlexVaultCommand, output is written as binary chunks directly to the destination file rather than
+ * accumulated into memory or line-split as text. Blocks the calling thread with no timeout, matching
+ * ISourceControlRevision::Get()'s synchronous contract.
  */
 bool RunFlexVaultCatCommand(
 	const FString& InBinaryPath,
 	const FString& InWorkspacePath,
 	const FString& InRelativePath,
 	const FString& InRevision,
-	TArray<uint8>& OutData,
+	const FString& InDestinationPath,
 	FSourceControlResultInfo& OutResultInfo
 );
 
