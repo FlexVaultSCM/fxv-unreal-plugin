@@ -79,6 +79,52 @@ static FString JoinCommandLineArgs(const TArray<FString>& InArgs)
 	return FString::Join(EscapedArgs, TEXT(" "));
 }
 
+static bool LaunchProcessWithPipe(
+	const FString& InBinaryPath,
+	const FString& InEscapedArgs,
+	const FString& InWorkspacePath,
+	void*& OutPipeRead,
+	void*& OutPipeWrite,
+	FProcHandle& OutProcess,
+	FSourceControlResultInfo& OutResultInfo
+)
+{
+	OutPipeRead = nullptr;
+	OutPipeWrite = nullptr;
+	if (!FPlatformProcess::CreatePipe(OutPipeRead, OutPipeWrite))
+	{
+		OutResultInfo.ErrorMessages.Add(LOCTEXT("PipeCreateError", "Failed to create internal pipe for command execution"));
+		UE_LOG(LogFlexVault, Error, TEXT("FlexVault: Failed to create internal pipe for command execution: %s %s"), *InBinaryPath, *InEscapedArgs);
+		return false;
+	}
+
+	uint32 ProcessID = 0;
+	OutProcess = FPlatformProcess::CreateProc(
+		*InBinaryPath,
+		*InEscapedArgs,
+		false, // bLaunchDetached
+		true,  // bLaunchHidden
+		true,  // bLaunchReallyHidden
+		&ProcessID,
+		0,     // PriorityModifier
+		*InWorkspacePath,
+		OutPipeWrite, // PipeWriteChild
+		nullptr       // PipeReadChild
+	);
+
+	if (!OutProcess.IsValid())
+	{
+		FPlatformProcess::ClosePipe(OutPipeRead, OutPipeWrite);
+		OutPipeRead = nullptr;
+		OutPipeWrite = nullptr;
+		OutResultInfo.ErrorMessages.Add(FText::Format(LOCTEXT("ProcessLaunchError", "Failed to launch FlexVault SCM executable: {0}"), FText::FromString(InBinaryPath)));
+		UE_LOG(LogFlexVault, Error, TEXT("FlexVault: Failed to launch SCM executable: %s %s (Working Dir: %s)"), *InBinaryPath, *InEscapedArgs, *InWorkspacePath);
+		return false;
+	}
+
+	return true;
+}
+
 bool RunFlexVaultCommand(
 	const FString& InBinaryPath,
 	const FString& InWorkspacePath,
@@ -97,32 +143,9 @@ bool RunFlexVaultCommand(
 
 	void* PipeRead = nullptr;
 	void* PipeWrite = nullptr;
-	if (!FPlatformProcess::CreatePipe(PipeRead, PipeWrite))
+	FProcHandle Process;
+	if (!LaunchProcessWithPipe(InBinaryPath, EscapedArgs, InWorkspacePath, PipeRead, PipeWrite, Process, OutResultInfo))
 	{
-		OutResultInfo.ErrorMessages.Add(LOCTEXT("PipeCreateError", "Failed to create internal pipe for command execution"));
-		UE_LOG(LogFlexVault, Error, TEXT("FlexVault: Failed to create internal pipe for command execution: %s %s"), *InBinaryPath, *EscapedArgs);
-		return false;
-	}
-
-	uint32 ProcessID = 0;
-	FProcHandle Process = FPlatformProcess::CreateProc(
-		*InBinaryPath,
-		*EscapedArgs,
-		false, // bLaunchDetached
-		true,  // bLaunchHidden
-		true,  // bLaunchReallyHidden
-		&ProcessID,
-		0,     // PriorityModifier
-		*InWorkspacePath,
-		PipeWrite, // PipeWriteChild
-		nullptr    // PipeReadChild
-	);
-
-	if (!Process.IsValid())
-	{
-		FPlatformProcess::ClosePipe(PipeRead, PipeWrite);
-		OutResultInfo.ErrorMessages.Add(FText::Format(LOCTEXT("ProcessLaunchError", "Failed to launch FlexVault SCM executable: {0}"), FText::FromString(InBinaryPath)));
-		UE_LOG(LogFlexVault, Error, TEXT("FlexVault: Failed to launch SCM executable: %s %s (Working Dir: %s)"), *InBinaryPath, *EscapedArgs, *InWorkspacePath);
 		return false;
 	}
 
@@ -276,32 +299,9 @@ bool RunFlexVaultCatCommand(
 
 	void* PipeRead = nullptr;
 	void* PipeWrite = nullptr;
-	if (!FPlatformProcess::CreatePipe(PipeRead, PipeWrite))
+	FProcHandle Process;
+	if (!LaunchProcessWithPipe(InBinaryPath, EscapedArgs, InWorkspacePath, PipeRead, PipeWrite, Process, OutResultInfo))
 	{
-		OutResultInfo.ErrorMessages.Add(LOCTEXT("CatPipeCreateError", "Failed to create internal pipe for 'fxv cat'"));
-		UE_LOG(LogFlexVault, Error, TEXT("FlexVault: Failed to create internal pipe for command execution: %s %s"), *InBinaryPath, *EscapedArgs);
-		return false;
-	}
-
-	uint32 ProcessID = 0;
-	FProcHandle Process = FPlatformProcess::CreateProc(
-		*InBinaryPath,
-		*EscapedArgs,
-		false, // bLaunchDetached
-		true,  // bLaunchHidden
-		true,  // bLaunchReallyHidden
-		&ProcessID,
-		0,     // PriorityModifier
-		*InWorkspacePath,
-		PipeWrite, // PipeWriteChild
-		nullptr    // PipeReadChild
-	);
-
-	if (!Process.IsValid())
-	{
-		FPlatformProcess::ClosePipe(PipeRead, PipeWrite);
-		OutResultInfo.ErrorMessages.Add(FText::Format(LOCTEXT("CatProcessLaunchError", "Failed to launch FlexVault SCM executable: {0}"), FText::FromString(InBinaryPath)));
-		UE_LOG(LogFlexVault, Error, TEXT("FlexVault: Failed to launch SCM executable (cat): %s %s (Working Dir: %s)"), *InBinaryPath, *EscapedArgs, *InWorkspacePath);
 		return false;
 	}
 
