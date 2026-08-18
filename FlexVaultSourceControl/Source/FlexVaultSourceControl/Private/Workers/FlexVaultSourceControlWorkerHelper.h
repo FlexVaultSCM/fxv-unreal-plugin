@@ -50,7 +50,24 @@ bool RunFlexVaultCommand(
 );
 
 /**
- * Verifies that the FlexVault CLI version in the JSON envelope is compatible (requires 0.1.x).
+ * Runs 'fxv cat <InRelativePath> -r <InRevision>' and streams the stdout bytes directly into InDestinationPath.
+ * Unlike RunFlexVaultCommand, output is written as binary chunks directly to the destination file rather than
+ * accumulated into memory or line-split as text. Blocks the calling thread with no timeout, matching
+ * ISourceControlRevision::Get()'s synchronous contract.
+ */
+bool RunFlexVaultCatCommand(
+	const FString& InBinaryPath,
+	const FString& InWorkspacePath,
+	const FString& InRelativePath,
+	const FString& InRevision,
+	const FString& InDestinationPath,
+	FSourceControlResultInfo& OutResultInfo
+);
+
+/**
+ * Verifies that the FlexVault CLI version in the JSON envelope falls within this plugin's pinned
+ * compatible range (see FlexVaultCliCompatibility in FlexVaultSourceControlWorkerHelper.cpp for the
+ * current [Min, Max) bounds and the policy for widening them).
  */
 bool CheckFlexVaultVersion(
 	const TSharedPtr<class FJsonObject>& InEnvelope,

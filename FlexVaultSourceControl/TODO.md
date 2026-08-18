@@ -39,7 +39,6 @@ The plugin currently targets **Unreal Engine 5.8**. To support older UE 5 releas
   - Unreal's `ISourceControlRevision` interface stores `FileSize` as `int32`, capping displayable sizes at ~2.1 GB. The CLI reports sizes as `int64`. Files larger than this limit will silently display incorrect sizes in the History panel. Track upstream (`ISourceControlRevision`) for a widened type, or display a clamped/formatted value with a tooltip for oversized assets.
 - [ ] **Process Pool & Warm Up Optimization**:
   - Spawning `fxv.exe` for every status check on the background thread works well but incurs minor OS process spawn overhead. Explore communicating with the local daemon via named pipes or caching queries in memory if performance becomes a bottleneck in massive workspaces.
-- [ ] Support for unity build discovery ("Using 'git status' to determine working set for adaptive non-unity build") 
 - [ ] **Lock Server Integration (Exclusive Checkouts)**:
   - Replace the stub checkout behavior in `FFlexVaultCheckOutWorker` with the real lock server synchronization protocol.
   - Query remote exclusive locks during status updates to prevent multiple users from editing the same binary assets (`.uasset`, `.umap`).
@@ -51,6 +50,16 @@ The plugin currently targets **Unreal Engine 5.8**. To support older UE 5 releas
   - Present clear error messages to the editor log if the binary is missing or cannot be executed.
 - [ ] **Check-In Partial Failure Recovery**:
   - `FFlexVaultCheckInWorker` runs `fxv snapshot` then `fxv publish` sequentially. If snapshot succeeds but publish fails, the workspace is left with an unpublished local draft that is not reflected in the Unreal state — the editor shows the files as clean when they are not. Add a recovery path (e.g. surface a distinct `PartialCheckIn` state, or attempt a compensating revert) so the user is never silently left in an inconsistent state.
-- [ ] **Rewire `FFlexVaultCopyWorker` once `fxv-core` supports real move/rename tracking**: `fxv-core` has no rename/move concept yet (`ChangeDiffInfo` is Added/Deleted/Modified/Unchanged only, no CLI command), so moves are currently just two unrelated flat changes with no lineage; once `fxv-core` adds move/rename support, call it directly here instead.
-- [ ] Implement FFlexVaultSourceControlRevision once CLI supports it (`fxv cat`)
+- [ ] **Rewire `FFlexVaultCopyWorker` once `fxv-core` supports real move/rename tracking**:
+  - Moves/renames are currently handled as `MarkForAdd` + `Delete` without lineage because `fxv-core` `ChangeDiffInfo` only supports `Added`, `Deleted`, `Modified`, `Unchanged`.
+  - **Required `fxv-core` Feature**: Move/rename detection in `fxv snapshot` (e.g. CAS content hash similarity matching) and `Renamed`/`Moved` variants in `fxv status`/`changeinfo`/`history`.
+- [x] **Implement `FFlexVaultSourceControlRevision::Get()` for In-Editor Visual Diffing**:
+  - `fxv-core` now has `fxv cat <path> -r <revision>` (streams the file to stdout, from the working tree or a given revision).
+  - `FFlexVaultSourceControlRevision::Get()` now shells out to it via a new `RunFlexVaultCatCommand` helper (reads stdout as raw bytes, not text, so binary assets aren't corrupted) and saves the result to a temp file for Unreal's diff/visualizer tools.
+- [ ] **User Identity & Authentication Integration (`fxv login`)**:
+  - `fxv-core` PR #106 requires user identity before `fxv publish` is permitted. Submitting changes in `FlexVaultCheckInWorker` fails if no user is logged in.
+  - Add `Username` setting in `FlexVaultSourceControlDeveloperSettings` and issue `fxv login <username>` automatically during `FlexVaultConnectWorker` or before `fxv publish`.
+- [ ] **Structured JSON Error Handling (PR #113)**:
+  - `fxv-core` PR #113 outputs structured JSON error envelopes (`status: "error"`, `code`, `message`) under `--format json`.
+  - Parse `status == "error"` in JSON responses within `RunFlexVaultCommand` / worker helpers to extract precise error messages into `FSourceControlResultInfo` for Unreal's Message Log.
 - [ ] Log spam: `LogRendererCore: Warning: FlushRenderingCommands called recursively! 2 calls on the stack.`

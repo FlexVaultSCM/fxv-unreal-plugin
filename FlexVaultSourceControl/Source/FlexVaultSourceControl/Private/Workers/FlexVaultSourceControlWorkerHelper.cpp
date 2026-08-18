@@ -4,6 +4,9 @@
 #include "FlexVaultSourceControlCommand.h"
 #include "FlexVaultSourceControlRevision.h"
 #include "HAL/PlatformProcess.h"
+#include "HAL/PlatformFileManager.h"
+#include "GenericPlatform/GenericPlatformFile.h"
+#include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
@@ -78,6 +81,52 @@ static FString JoinCommandLineArgs(const TArray<FString>& InArgs)
 	return FString::Join(EscapedArgs, TEXT(" "));
 }
 
+static bool LaunchProcessWithPipe(
+	const FString& InBinaryPath,
+	const FString& InEscapedArgs,
+	const FString& InWorkspacePath,
+	void*& OutPipeRead,
+	void*& OutPipeWrite,
+	FProcHandle& OutProcess,
+	FSourceControlResultInfo& OutResultInfo
+)
+{
+	OutPipeRead = nullptr;
+	OutPipeWrite = nullptr;
+	if (!FPlatformProcess::CreatePipe(OutPipeRead, OutPipeWrite))
+	{
+		OutResultInfo.ErrorMessages.Add(LOCTEXT("PipeCreateError", "Failed to create internal pipe for command execution"));
+		UE_LOG(LogFlexVault, Error, TEXT("FlexVault: Failed to create internal pipe for command execution: %s %s"), *InBinaryPath, *InEscapedArgs);
+		return false;
+	}
+
+	uint32 ProcessID = 0;
+	OutProcess = FPlatformProcess::CreateProc(
+		*InBinaryPath,
+		*InEscapedArgs,
+		false, // bLaunchDetached
+		true,  // bLaunchHidden
+		true,  // bLaunchReallyHidden
+		&ProcessID,
+		0,     // PriorityModifier
+		*InWorkspacePath,
+		OutPipeWrite, // PipeWriteChild
+		nullptr       // PipeReadChild
+	);
+
+	if (!OutProcess.IsValid())
+	{
+		FPlatformProcess::ClosePipe(OutPipeRead, OutPipeWrite);
+		OutPipeRead = nullptr;
+		OutPipeWrite = nullptr;
+		OutResultInfo.ErrorMessages.Add(FText::Format(LOCTEXT("ProcessLaunchError", "Failed to launch FlexVault SCM executable: {0}"), FText::FromString(InBinaryPath)));
+		UE_LOG(LogFlexVault, Error, TEXT("FlexVault: Failed to launch SCM executable: %s %s (Working Dir: %s)"), *InBinaryPath, *InEscapedArgs, *InWorkspacePath);
+		return false;
+	}
+
+	return true;
+}
+
 bool RunFlexVaultCommand(
 	const FString& InBinaryPath,
 	const FString& InWorkspacePath,
@@ -96,30 +145,9 @@ bool RunFlexVaultCommand(
 
 	void* PipeRead = nullptr;
 	void* PipeWrite = nullptr;
-	if (!FPlatformProcess::CreatePipe(PipeRead, PipeWrite))
+	FProcHandle Process;
+	if (!LaunchProcessWithPipe(InBinaryPath, EscapedArgs, InWorkspacePath, PipeRead, PipeWrite, Process, OutResultInfo))
 	{
-		OutResultInfo.ErrorMessages.Add(LOCTEXT("PipeCreateError", "Failed to create internal pipe for command execution"));
-		return false;
-	}
-
-	uint32 ProcessID = 0;
-	FProcHandle Process = FPlatformProcess::CreateProc(
-		*InBinaryPath,
-		*EscapedArgs,
-		false, // bLaunchDetached
-		true,  // bLaunchHidden
-		true,  // bLaunchReallyHidden
-		&ProcessID,
-		0,     // PriorityModifier
-		*InWorkspacePath,
-		PipeWrite, // PipeWriteChild
-		nullptr    // PipeReadChild
-	);
-
-	if (!Process.IsValid())
-	{
-		FPlatformProcess::ClosePipe(PipeRead, PipeWrite);
-		OutResultInfo.ErrorMessages.Add(FText::Format(LOCTEXT("ProcessLaunchError", "Failed to launch FlexVault SCM executable: {0}"), FText::FromString(InBinaryPath)));
 		return false;
 	}
 
@@ -249,6 +277,190 @@ bool RunFlexVaultCommand(
 	return !bWasCanceled && ReturnCode == 0;
 }
 
+bool RunFlexVaultCatCommand(
+	const FString& InBinaryPath,
+	const FString& InWorkspacePath,
+	const FString& InRelativePath,
+	const FString& InRevision,
+	const FString& InDestinationPath,
+	FSourceControlResultInfo& OutResultInfo
+)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(RunFlexVaultCatCommand);
+
+	// This blocks the calling thread (typically the game thread, since ISourceControlRevision::Get()
+	// is invoked synchronously) with no timeout and no cancellation, matching how the built-in
+	// Perforce/Git source control plugins implement revision Get(). 'fxv cat' can in principle need to
+	// fetch a published object that isn't cached locally, which is a slower/network-bound path than a
+	// typical local git/P4-cache read - if that turns out to hang in practice, revisit with a timeout.
+
+	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
+	TUniquePtr<IFileHandle> FileHandle(PlatformFile.OpenWrite(*InDestinationPath));
+	if (!FileHandle.IsValid())
+	{
+		OutResultInfo.ErrorMessages.Add(FText::Format(
+			LOCTEXT("CatFileOpenError", "Failed to open destination file for writing: {0}"),
+			FText::FromString(InDestinationPath)
+		));
+		UE_LOG(LogFlexVault, Error, TEXT("FlexVault: Failed to open destination file for writing: %s"), *InDestinationPath);
+		return false;
+	}
+
+	TArray<FString> Args = { TEXT("cat"), InRelativePath, TEXT("-r"), InRevision };
+	FString EscapedArgs = JoinCommandLineArgs(Args);
+	UE_LOG(LogFlexVault, Verbose, TEXT("Initiating FlexVault SCM Command: %s %s (Working Dir: %s)"), *InBinaryPath, *EscapedArgs, *InWorkspacePath);
+	double StartTime = FPlatformTime::Seconds();
+
+	void* PipeRead = nullptr;
+	void* PipeWrite = nullptr;
+	FProcHandle Process;
+	if (!LaunchProcessWithPipe(InBinaryPath, EscapedArgs, InWorkspacePath, PipeRead, PipeWrite, Process, OutResultInfo))
+	{
+		FileHandle.Reset();
+		PlatformFile.DeleteFile(*InDestinationPath);
+		return false;
+	}
+
+	int64 TotalBytesWritten = 0;
+	TArray<uint8> Chunk;
+	while (FPlatformProcess::IsProcRunning(Process))
+	{
+		bool bReadAnyData = false;
+		while (FPlatformProcess::ReadPipeToArray(PipeRead, Chunk) && Chunk.Num() > 0)
+		{
+			FileHandle->Write(Chunk.GetData(), Chunk.Num());
+			TotalBytesWritten += Chunk.Num();
+			bReadAnyData = true;
+		}
+
+		if (!bReadAnyData)
+		{
+			FPlatformProcess::Sleep(0.001f);
+		}
+	}
+
+	// Drain any remaining data after the process exits.
+	while (FPlatformProcess::ReadPipeToArray(PipeRead, Chunk) && Chunk.Num() > 0)
+	{
+		FileHandle->Write(Chunk.GetData(), Chunk.Num());
+		TotalBytesWritten += Chunk.Num();
+	}
+
+	int32 ReturnCode = 0;
+	FPlatformProcess::GetProcReturnCode(Process, &ReturnCode);
+	FPlatformProcess::CloseProc(Process);
+	FPlatformProcess::ClosePipe(PipeRead, PipeWrite);
+
+	// Close the file handle so the file is flushed and accessible on disk.
+	FileHandle.Reset();
+
+	double ElapsedTime = FPlatformTime::Seconds() - StartTime;
+
+	if (ReturnCode != 0)
+	{
+		// cat writes nothing to stdout before it has confirmed the file is readable, so a non-zero
+		// exit means the destination file holds the CLI's UTF-8 error text rather than partial binary content -
+		// safe to decode, surface as a message, and clean up the failed destination file.
+		FString ErrorText;
+		FFileHelper::LoadFileToString(ErrorText, *InDestinationPath);
+		ErrorText.TrimStartAndEndInline();
+
+		PlatformFile.DeleteFile(*InDestinationPath);
+
+		OutResultInfo.ErrorMessages.Add(FText::Format(
+			LOCTEXT("CatCommandError", "FlexVault 'cat' command failed with exit code {0}: {1}"),
+			FText::AsNumber(ReturnCode),
+			FText::FromString(ErrorText)
+		));
+		UE_LOG(LogFlexVault, Error, TEXT("FlexVault SCM Command Failed (cat): %s %s (Working Dir: %s, %.4fs) - %s"),
+			*InBinaryPath, *EscapedArgs, *InWorkspacePath, ElapsedTime, *ErrorText);
+		return false;
+	}
+
+	UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault SCM Command Succeeded (cat): %s %s (Working Dir: %s, %.4fs, %lld bytes written to %s)"),
+		*InBinaryPath, *EscapedArgs, *InWorkspacePath, ElapsedTime, TotalBytesWritten, *InDestinationPath);
+	return true;
+}
+
+namespace FlexVaultCliCompatibility
+{
+	// fxv-core's VERSIONING.md "Downstream pinning policy": pin a compatible RANGE of fxv-core versions
+	// ([Min, Max), Max exclusive), not a single version, and re-pin deliberately once a newer release has
+	// been reviewed/verified compatible. fxv-core is pre-1.0, where a MINOR bump (not just MAJOR) can carry
+	// a breaking change - a plain feature release also bumps MINOR, so the version number alone can't tell
+	// the two apart. Until fxv-core reaches 1.0, treat every MINOR as a potential break and only widen Max
+	// after checking fxv-core/CHANGELOG.md for a "Breaking Changes" entry between the old and new Max.
+	//
+	// Current range: fxv-core's CHANGELOG.md has no "Breaking Changes" entries between 0.1.0 and 0.4.0
+	// (the latest release as of this writing), so the whole 0.1.x-0.4.x span is accepted; 0.5.0+ hasn't
+	// been reviewed yet.
+	constexpr int32 MinMajor = 0, MinMinor = 1, MinPatch = 0; // >= 0.1.0
+	constexpr int32 MaxMajor = 0, MaxMinor = 5, MaxPatch = 0; // < 0.5.0
+}
+
+namespace
+{
+	struct FFlexVaultCliVersion
+	{
+		int32 Major = 0;
+		int32 Minor = 0;
+		int32 Patch = 0;
+
+		static bool TryParse(const FString& InVersionStr, FFlexVaultCliVersion& OutVersion)
+		{
+			TArray<FString> Parts;
+			InVersionStr.ParseIntoArray(Parts, TEXT("."), false);
+			if (Parts.Num() < 2 || Parts.Num() > 3)
+			{
+				return false;
+			}
+
+			if (!FCString::IsNumeric(*Parts[0]) || !FCString::IsNumeric(*Parts[1]))
+			{
+				return false;
+			}
+
+			OutVersion.Major = FCString::Atoi(*Parts[0]);
+			OutVersion.Minor = FCString::Atoi(*Parts[1]);
+
+			if (Parts.Num() >= 3)
+			{
+				FString PatchStr = Parts[2];
+				int32 DashIdx = INDEX_NONE;
+				if (PatchStr.FindChar(TEXT('-'), DashIdx))
+				{
+					PatchStr = PatchStr.Left(DashIdx);
+				}
+				int32 PlusIdx = INDEX_NONE;
+				if (PatchStr.FindChar(TEXT('+'), PlusIdx))
+				{
+					PatchStr = PatchStr.Left(PlusIdx);
+				}
+
+				if (!FCString::IsNumeric(*PatchStr))
+				{
+					return false;
+				}
+
+				OutVersion.Patch = FCString::Atoi(*PatchStr);
+			}
+			else
+			{
+				OutVersion.Patch = 0;
+			}
+
+			return true;
+		}
+	};
+
+	bool operator<(const FFlexVaultCliVersion& A, const FFlexVaultCliVersion& B)
+	{
+		if (A.Major != B.Major) return A.Major < B.Major;
+		if (A.Minor != B.Minor) return A.Minor < B.Minor;
+		return A.Patch < B.Patch;
+	}
+}
+
 bool CheckFlexVaultVersion(
 	const TSharedPtr<FJsonObject>& InEnvelope,
 	FSourceControlResultInfo& OutResultInfo
@@ -256,44 +468,50 @@ bool CheckFlexVaultVersion(
 {
 	if (!InEnvelope.IsValid())
 	{
-		OutResultInfo.ErrorMessages.Add(
-			LOCTEXT("ConnectInvalidEnvelope", "FlexVault: Invalid JSON envelope passed to version check")
-		);
+		const FText Error = LOCTEXT("ConnectInvalidEnvelope", "FlexVault: Invalid JSON envelope passed to version check");
+		OutResultInfo.ErrorMessages.Add(Error);
+		UE_LOG(LogFlexVault, Error, TEXT("FlexVault: %s"), *Error.ToString());
 		return false;
 	}
 
-	// Parse program metadata version and verify compatibility (requires 0.1.x)
+	// Parse program metadata version and verify it falls within the plugin's pinned compatible range.
 	const TSharedPtr<FJsonObject>* ProgramObj = nullptr;
 	FString CliVersionStr;
 	if (!InEnvelope->TryGetObjectField(TEXT("program"), ProgramObj) ||
 		!(*ProgramObj)->TryGetStringField(TEXT("version"), CliVersionStr))
 	{
-		OutResultInfo.ErrorMessages.Add(
-			LOCTEXT("ConnectMissingVersion", "FlexVault: Unable to determine CLI version from status output (missing program.version).")
+		const FText Error = LOCTEXT("ConnectMissingVersion", "FlexVault: Unable to determine CLI version from status output (missing program.version).");
+		OutResultInfo.ErrorMessages.Add(Error);
+		UE_LOG(LogFlexVault, Error, TEXT("FlexVault: %s"), *Error.ToString());
+		return false;
+	}
+
+	FFlexVaultCliVersion CliVersion;
+	if (!FFlexVaultCliVersion::TryParse(CliVersionStr, CliVersion))
+	{
+		const FText Error = FText::Format(
+			LOCTEXT("ConnectInvalidVersion", "Invalid FlexVault CLI version string '{0}'."),
+			FText::FromString(CliVersionStr)
 		);
+		OutResultInfo.ErrorMessages.Add(Error);
+		UE_LOG(LogFlexVault, Error, TEXT("FlexVault: %s"), *Error.ToString());
 		return false;
 	}
 
-	TArray<FString> VersionParts;
-	CliVersionStr.ParseIntoArray(VersionParts, TEXT("."));
-	if (VersionParts.Num() < 2)
-	{
-		OutResultInfo.ErrorMessages.Add(FText::Format(
-			LOCTEXT("ConnectInvalidVersion", "Invalid FlexVault CLI version string '{0}'. The plugin requires version 0.1.x."),
-			FText::FromString(CliVersionStr)
-		));
-		return false;
-	}
+	const FFlexVaultCliVersion MinVersion{ FlexVaultCliCompatibility::MinMajor, FlexVaultCliCompatibility::MinMinor, FlexVaultCliCompatibility::MinPatch };
+	const FFlexVaultCliVersion MaxVersion{ FlexVaultCliCompatibility::MaxMajor, FlexVaultCliCompatibility::MaxMinor, FlexVaultCliCompatibility::MaxPatch };
 
-	int32 Major = FCString::Atoi(*VersionParts[0]);
-	int32 Minor = FCString::Atoi(*VersionParts[1]);
-
-	if (Major != 0 || Minor != 1)
+	// [MinVersion, MaxVersion) - MinVersion inclusive, MaxVersion exclusive.
+	if (CliVersion < MinVersion || !(CliVersion < MaxVersion))
 	{
-		OutResultInfo.ErrorMessages.Add(FText::Format(
-			LOCTEXT("ConnectVersionMismatch", "Incompatible FlexVault CLI version '{0}'. The plugin requires version 0.1.x."),
-			FText::FromString(CliVersionStr)
-		));
+		const FText Error = FText::Format(
+			LOCTEXT("ConnectVersionMismatch", "Incompatible FlexVault CLI version '{0}'. This plugin supports fxv-core >= {1}.{2}.{3}, < {4}.{5}.{6}."),
+			FText::FromString(CliVersionStr),
+			FText::AsNumber(MinVersion.Major), FText::AsNumber(MinVersion.Minor), FText::AsNumber(MinVersion.Patch),
+			FText::AsNumber(MaxVersion.Major), FText::AsNumber(MaxVersion.Minor), FText::AsNumber(MaxVersion.Patch)
+		);
+		OutResultInfo.ErrorMessages.Add(Error);
+		UE_LOG(LogFlexVault, Error, TEXT("FlexVault: %s"), *Error.ToString());
 		return false;
 	}
 
@@ -547,7 +765,6 @@ TSharedRef<FFlexVaultSourceControlRevision, ESPMode::ThreadSafe> CreateFlexVault
 	Revision->UserName = InDetail.UserName;
 	Revision->Action = InDetail.Action;
 	Revision->Date = InDetail.Date;
-	Revision->ContentAddress = InDetail.ContentAddress;
 	Revision->FileSize = (int32)FMath::Min<int64>(InDetail.FileSize, (int64)MAX_int32);
 	return Revision;
 }
