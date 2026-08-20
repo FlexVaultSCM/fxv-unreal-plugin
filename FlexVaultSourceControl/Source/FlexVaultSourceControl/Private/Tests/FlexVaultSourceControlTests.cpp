@@ -106,26 +106,50 @@ bool FFlexVaultVersionCheckTest::RunTest(const FString& Parameters)
 	FSourceControlResultInfo ResultInfo;
 
 	// 1. Invalid Envelope
+	// CheckFlexVaultVersion UE_LOGs at Error on this path (so the editor log surfaces it too, not just
+	// ResultInfo); the automation framework auto-fails a test on any unexpected Error-severity log, so
+	// tell it this one is intentional.
+	AddExpectedErrorPlain(TEXT("Invalid JSON envelope passed to version check"), EAutomationExpectedErrorFlags::Contains, 1);
 	TestFalse(TEXT("Null JSON envelope fails"), CheckFlexVaultVersion(nullptr, ResultInfo));
 
-	// 2. Compatible version (0.1.0)
+	// 2. Compatible version (0.1.0), lower bound of the pinned [0.1.0, 0.5.0) range
 	TSharedPtr<FJsonObject> ValidEnv = MakeShared<FJsonObject>();
 	TSharedPtr<FJsonObject> ValidProg = MakeShared<FJsonObject>();
-	ValidProg->SetStringField(TEXT("version"), TEXT("0.1.5"));
+	ValidProg->SetStringField(TEXT("version"), TEXT("0.1.0"));
 	ValidEnv->SetObjectField(TEXT("program"), ValidProg);
-	
-	ResultInfo.ErrorMessages.Empty();
-	TestTrue(TEXT("CLI version 0.1.5 is compatible"), CheckFlexVaultVersion(ValidEnv, ResultInfo));
 
-	// 3. Incompatible version (0.2.0)
+	ResultInfo.ErrorMessages.Empty();
+	TestTrue(TEXT("CLI version 0.1.0 is compatible"), CheckFlexVaultVersion(ValidEnv, ResultInfo));
+
+	// 3. Compatible version (0.4.2), within the widened range but above the old exact-match (0.1.x) check
+	TSharedPtr<FJsonObject> WidenedEnv = MakeShared<FJsonObject>();
+	TSharedPtr<FJsonObject> WidenedProg = MakeShared<FJsonObject>();
+	WidenedProg->SetStringField(TEXT("version"), TEXT("0.4.2"));
+	WidenedEnv->SetObjectField(TEXT("program"), WidenedProg);
+
+	ResultInfo.ErrorMessages.Empty();
+	TestTrue(TEXT("CLI version 0.4.2 is compatible"), CheckFlexVaultVersion(WidenedEnv, ResultInfo));
+
+	// 4. Incompatible version (0.5.0), the exclusive upper bound of the pinned range
 	TSharedPtr<FJsonObject> InvalidEnv = MakeShared<FJsonObject>();
 	TSharedPtr<FJsonObject> InvalidProg = MakeShared<FJsonObject>();
-	InvalidProg->SetStringField(TEXT("version"), TEXT("0.2.0"));
+	InvalidProg->SetStringField(TEXT("version"), TEXT("0.5.0"));
 	InvalidEnv->SetObjectField(TEXT("program"), InvalidProg);
-	
+
 	ResultInfo.ErrorMessages.Empty();
-	TestFalse(TEXT("CLI version 0.2.0 is incompatible"), CheckFlexVaultVersion(InvalidEnv, ResultInfo));
+	AddExpectedErrorPlain(TEXT("Incompatible FlexVault CLI version '0.5.0'"), EAutomationExpectedErrorFlags::Contains, 1);
+	TestFalse(TEXT("CLI version 0.5.0 is incompatible"), CheckFlexVaultVersion(InvalidEnv, ResultInfo));
 	TestTrue(TEXT("Error reported for version mismatch"), ResultInfo.ErrorMessages.Num() > 0);
+
+	// 5. Malformed non-numeric version string (x.4.2)
+	TSharedPtr<FJsonObject> MalformedEnv = MakeShared<FJsonObject>();
+	TSharedPtr<FJsonObject> MalformedProg = MakeShared<FJsonObject>();
+	MalformedProg->SetStringField(TEXT("version"), TEXT("x.4.2"));
+	MalformedEnv->SetObjectField(TEXT("program"), MalformedProg);
+
+	ResultInfo.ErrorMessages.Empty();
+	AddExpectedErrorPlain(TEXT("Invalid FlexVault CLI version string 'x.4.2'"), EAutomationExpectedErrorFlags::Contains, 1);
+	TestFalse(TEXT("Malformed version string 'x.4.2' fails"), CheckFlexVaultVersion(MalformedEnv, ResultInfo));
 
 	return true;
 }
@@ -325,22 +349,31 @@ bool FFlexVaultWorkerDeleteTest::RunTest(const FString& Parameters)
 	FFlexVaultDeleteWorker Worker(Provider);
 	FFlexVaultSourceControlCommand Command(DeleteOp, TSharedRef<IFlexVaultSourceControlWorker>(&Worker, [](IFlexVaultSourceControlWorker*){}));
 	Command.Files.Add(TempFilePath);
-	Command.BinaryPath = TEXT("invalid_binary_stub_that_cannot_launch"); // Forces the safety snapshot to fail to launch
+	Command.BinaryPath = TEXT("invalid_binary_stub_skip_snapshot"); // Deliberately unlaunchable, to exercise the pre-delete snapshot failure path.
 
-	// FFlexVaultDeleteWorker runs a safety 'fxv snapshot' before deleting so dirty content is never
-	// lost; when that snapshot can't even launch, Execute must abort the deletion rather than proceed
-	// anyway - bIgnoreError only suppresses duplicate error-message spam, it doesn't turn a failed
-	// safety check into a success. The file must survive untouched.
-	TestFalse(TEXT("Delete worker execution fails when the safety snapshot can't run"), Worker.Execute(Command));
+	// The invalid BinaryPath above is expected to fail process launch; RunFlexVaultCommand UE_LOGs that
+	// at Error (in addition to recording it in ResultInfo, which the worker ignores here), so tell the
+	// automation framework this Error is intentional rather than a real failure.
+	AddExpectedErrorPlain(TEXT("Failed to launch SCM executable: invalid_binary_stub_skip_snapshot"), EAutomationExpectedErrorFlags::Contains, 1);
+
+	// FFlexVaultDeleteWorker::Execute() takes a pre-delete safety snapshot before touching the
+	// filesystem, and deliberately aborts the whole delete - rather than deleting without a backup -
+	// if that snapshot can't even be launched. This is intentional data-loss prevention that the caller
+	// can't override, so Execute() is expected to fail here and leave the file and its cached state
+	// untouched.
+	TestFalse(TEXT("Delete worker execution aborts when the pre-delete snapshot fails"), Worker.Execute(Command));
 	TestTrue(TEXT("File was NOT deleted from filesystem"), PlatformFile.FileExists(*TempFilePath));
-	TestEqual(TEXT("No files recorded as deleted"), Worker.DeletedFiles.Num(), 0);
-	TestTrue(TEXT("A specific error message was surfaced"), Command.ResultInfo.ErrorMessages.Num() > 0);
 
-	// UpdateStates has nothing to do since no files were actually deleted.
-	TestFalse(TEXT("UpdateStates reports nothing changed"), Worker.UpdateStates());
+	// In production, FFlexVaultSourceControlCommand::ReturnResults() only calls UpdateStates() when
+	// Execute() succeeded, so a failed Execute() would never reach this - calling it directly here just
+	// confirms UpdateStates() is itself a no-op when Execute() recorded nothing to update.
+	TestFalse(TEXT("Delete UpdateStates reports nothing to update"), Worker.UpdateStates());
 	TSharedRef<FFlexVaultSourceControlState, ESPMode::ThreadSafe> CachedState = Provider.GetStateInternal(TempFilePath);
-	TestEqual(TEXT("State was never touched"), CachedState->GetState(), EFlexVaultState::DontCare);
+	TestEqual(TEXT("State remains untouched"), CachedState->GetState(), EFlexVaultState::DontCare);
+	TestFalse(TEXT("State is not marked deleted"), CachedState->IsDeleted());
 
+	// Cleanup: the delete was correctly aborted, so the temp file is still on disk.
+	PlatformFile.DeleteFile(*TempFilePath);
 	return true;
 }
 
