@@ -300,6 +300,35 @@ bool CheckFlexVaultVersion(
 	return true;
 }
 
+/**
+ * Unwraps the `message.payload` object shared by all FlexVault CLI JSON envelopes.
+ */
+static bool TryGetFlexVaultEnvelopePayload(
+	const TSharedPtr<FJsonObject>& InEnvelope,
+	TSharedPtr<FJsonObject>& OutPayload
+)
+{
+	if (!InEnvelope.IsValid())
+	{
+		return false;
+	}
+
+	const TSharedPtr<FJsonObject>* MessageObj = nullptr;
+	if (!InEnvelope->TryGetObjectField(TEXT("message"), MessageObj) || !MessageObj->IsValid())
+	{
+		return false;
+	}
+
+	const TSharedPtr<FJsonObject>* PayloadObj = nullptr;
+	if (!(*MessageObj)->TryGetObjectField(TEXT("payload"), PayloadObj) || !PayloadObj->IsValid())
+	{
+		return false;
+	}
+
+	OutPayload = *PayloadObj;
+	return true;
+}
+
 bool ParseFlexVaultCurrentUser(
 	const TSharedPtr<FJsonObject>& InEnvelope,
 	FString& OutCurrentUser
@@ -307,24 +336,13 @@ bool ParseFlexVaultCurrentUser(
 {
 	OutCurrentUser.Empty();
 
-	if (!InEnvelope.IsValid())
+	TSharedPtr<FJsonObject> PayloadObj;
+	if (!TryGetFlexVaultEnvelopePayload(InEnvelope, PayloadObj))
 	{
 		return false;
 	}
 
-	const TSharedPtr<FJsonObject>* MessageObj = nullptr;
-	if (!InEnvelope->TryGetObjectField(TEXT("message"), MessageObj))
-	{
-		return false;
-	}
-
-	const TSharedPtr<FJsonObject>* PayloadObj = nullptr;
-	if (!(*MessageObj)->TryGetObjectField(TEXT("payload"), PayloadObj))
-	{
-		return false;
-	}
-
-	return (*PayloadObj)->TryGetStringField(TEXT("current_user"), OutCurrentUser);
+	return PayloadObj->TryGetStringField(TEXT("current_user"), OutCurrentUser);
 }
 
 bool EnsureFlexVaultLoggedIn(
@@ -388,7 +406,13 @@ bool EnsureFlexVaultLoggedInViaStatusQuery(
 	FString RawJson = FString::Join(StatusOutputLines, TEXT("\n"));
 	TSharedPtr<FJsonObject> Envelope;
 	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(RawJson);
-	FJsonSerializer::Deserialize(Reader, Envelope);
+	if (!FJsonSerializer::Deserialize(Reader, Envelope) || !Envelope.IsValid())
+	{
+		OutResultInfo.ErrorMessages.Add(
+			LOCTEXT("EnsureLoggedInJsonError", "FlexVault: Failed to parse JSON envelope while checking login status.")
+		);
+		return false;
+	}
 
 	FString CurrentUser;
 	bool bHasCurrentUser = ParseFlexVaultCurrentUser(Envelope, CurrentUser);
@@ -413,14 +437,8 @@ bool ParseFlexVaultHistory(
 		return false;
 	}
 
-	TSharedPtr<FJsonObject> MessageObj = JsonEnvelope->GetObjectField(TEXT("message"));
-	if (!MessageObj.IsValid())
-	{
-		return false;
-	}
-
-	TSharedPtr<FJsonObject> PayloadObj = MessageObj->GetObjectField(TEXT("payload"));
-	if (!PayloadObj.IsValid())
+	TSharedPtr<FJsonObject> PayloadObj;
+	if (!TryGetFlexVaultEnvelopePayload(JsonEnvelope, PayloadObj))
 	{
 		return false;
 	}

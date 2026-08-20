@@ -68,7 +68,13 @@ bool FFlexVaultConnectWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 		FSourceControlResultInfo LoginResultInfo;
 		if (!EnsureFlexVaultLoggedIn(InCommand.BinaryPath, InCommand.WorkspacePath, InCommand.Username, bHasCurrentUser, CurrentUser, LoginResultInfo, &InCommand))
 		{
-			UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault SCM: Could not establish login for '%s' during connect (will retry before publish)."), *InCommand.Username);
+			TArray<FString> LoginErrorStrings;
+			for (const FText& ErrorMessage : LoginResultInfo.ErrorMessages)
+			{
+				LoginErrorStrings.Add(ErrorMessage.ToString());
+			}
+			UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault SCM: Could not establish login for '%s' during connect (will retry before publish): %s"),
+				*InCommand.Username, *FString::Join(LoginErrorStrings, TEXT(" | ")));
 		}
 
 		InCommand.ResultInfo.InfoMessages.Add(LOCTEXT("ConnectSuccess", "Successfully connected to FlexVault Workspace"));
