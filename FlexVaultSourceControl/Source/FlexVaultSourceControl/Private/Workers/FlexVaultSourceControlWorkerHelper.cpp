@@ -391,11 +391,16 @@ namespace FlexVaultCliCompatibility
 	// the two apart. Until fxv-core reaches 1.0, treat every MINOR as a potential break and only widen Max
 	// after checking fxv-core/CHANGELOG.md for a "Breaking Changes" entry between the old and new Max.
 	//
-	// Current range: fxv-core's CHANGELOG.md has no "Breaking Changes" entries between 0.1.0 and 0.4.0
-	// (the latest release as of this writing), so the whole 0.1.x-0.4.x span is accepted; 0.5.0+ hasn't
-	// been reviewed yet.
+	// Current range: 0.5.0 has no "Breaking Changes" entry in fxv-core/CHANGELOG.md. 0.6.0 does
+	// ("fxv revert and fxv resolve now ... use the standard 'workspace path' pattern rather than the
+	// workspace root relative paths used before"), but it doesn't affect this plugin: 0.6.0 resolves a
+	// revert/resolve path as relative to the CLI's working directory (falling back to workspace-root
+	// only for a leading-separator path), and RunFlexVaultCommand always launches 'fxv' with the
+	// workspace root as its working directory, so FFlexVaultRevertWorker/FFlexVaultResolveWorker's
+	// existing GetRelativeWorkspacePath()-built paths resolve identically under old and new semantics.
+	// 0.7.0+ hasn't been reviewed yet.
 	constexpr int32 MinMajor = 0, MinMinor = 1, MinPatch = 0; // >= 0.1.0
-	constexpr int32 MaxMajor = 0, MaxMinor = 5, MaxPatch = 0; // < 0.5.0
+	constexpr int32 MaxMajor = 0, MaxMinor = 7, MaxPatch = 0; // < 0.7.0
 }
 
 namespace
@@ -518,6 +523,95 @@ bool CheckFlexVaultVersion(
 	return true;
 }
 
+/**
+ * Unwraps the `message.payload` object shared by all FlexVault CLI JSON envelopes.
+ */
+static bool TryGetFlexVaultEnvelopePayload(
+	const TSharedPtr<FJsonObject>& InEnvelope,
+	TSharedPtr<FJsonObject>& OutPayload
+)
+{
+	if (!InEnvelope.IsValid())
+	{
+		return false;
+	}
+
+	const TSharedPtr<FJsonObject>* MessageObj = nullptr;
+	if (!InEnvelope->TryGetObjectField(TEXT("message"), MessageObj) || !MessageObj->IsValid())
+	{
+		return false;
+	}
+
+	const TSharedPtr<FJsonObject>* PayloadObj = nullptr;
+	if (!(*MessageObj)->TryGetObjectField(TEXT("payload"), PayloadObj) || !PayloadObj->IsValid())
+	{
+		return false;
+	}
+
+	OutPayload = *PayloadObj;
+	return true;
+}
+
+bool ParseFlexVaultCurrentUser(
+	const TSharedPtr<FJsonObject>& InEnvelope,
+	FString& OutCurrentUser
+)
+{
+	OutCurrentUser.Empty();
+
+	TSharedPtr<FJsonObject> PayloadObj;
+	if (!TryGetFlexVaultEnvelopePayload(InEnvelope, PayloadObj))
+	{
+		return false;
+	}
+
+	return PayloadObj->TryGetStringField(TEXT("current_user"), OutCurrentUser);
+}
+
+bool EnsureFlexVaultLoggedIn(
+	const FString& InBinaryPath,
+	const FString& InWorkspacePath,
+	FSourceControlResultInfo& OutResultInfo,
+	const FFlexVaultSourceControlCommand* InCancelCommand
+)
+{
+	TArray<FString> StatusOutputLines;
+	TArray<FString> StatusArgs = {
+		TEXT("status"),
+		TEXT("--format"),
+		TEXT("json"),
+		TEXT("--unattended"),
+		TEXT("--no-color"),
+		TEXT("--skip-remote-update"),
+		TEXT("--skip-scan")
+	};
+	if (!RunFlexVaultCommand(InBinaryPath, InWorkspacePath, StatusArgs, StatusOutputLines, OutResultInfo, false, InCancelCommand))
+	{
+		return false;
+	}
+
+	FString RawJson = FString::Join(StatusOutputLines, TEXT("\n"));
+	TSharedPtr<FJsonObject> Envelope;
+	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(RawJson);
+	if (!FJsonSerializer::Deserialize(Reader, Envelope) || !Envelope.IsValid())
+	{
+		OutResultInfo.ErrorMessages.Add(
+			LOCTEXT("EnsureLoggedInJsonError", "FlexVault: Failed to parse JSON envelope while checking login status.")
+		);
+		return false;
+	}
+
+	FString CurrentUser;
+	if (!ParseFlexVaultCurrentUser(Envelope, CurrentUser))
+	{
+		OutResultInfo.ErrorMessages.Add(LOCTEXT("FlexVaultNotLoggedIn",
+			"FlexVault: No user is logged in for this workspace. Run 'fxv login <username>' from a terminal before publishing."));
+		return false;
+	}
+
+	return true;
+}
+
 bool ParseFlexVaultHistory(
 	const TArray<FString>& InHistoryOutputLines,
 	TArray<FFlexVaultCommitMeta>& OutCommits,
@@ -535,14 +629,8 @@ bool ParseFlexVaultHistory(
 		return false;
 	}
 
-	TSharedPtr<FJsonObject> MessageObj = JsonEnvelope->GetObjectField(TEXT("message"));
-	if (!MessageObj.IsValid())
-	{
-		return false;
-	}
-
-	TSharedPtr<FJsonObject> PayloadObj = MessageObj->GetObjectField(TEXT("payload"));
-	if (!PayloadObj.IsValid())
+	TSharedPtr<FJsonObject> PayloadObj;
+	if (!TryGetFlexVaultEnvelopePayload(JsonEnvelope, PayloadObj))
 	{
 		return false;
 	}

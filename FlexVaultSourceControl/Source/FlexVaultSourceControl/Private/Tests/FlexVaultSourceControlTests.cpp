@@ -6,6 +6,7 @@
 #include "FlexVaultSourceControlState.h"
 #include "FlexVaultSourceControlRevision.h"
 #include "FlexVaultSourceControlDeveloperSettings.h"
+#include "FlexVaultSourceControlCommand.h"
 #include "Workers/FlexVaultSourceControlWorkerHelper.h"
 
 #include "Workers/FlexVaultUpdateStatusWorker.h"
@@ -111,7 +112,7 @@ bool FFlexVaultVersionCheckTest::RunTest(const FString& Parameters)
 	AddExpectedErrorPlain(TEXT("Invalid JSON envelope passed to version check"), EAutomationExpectedErrorFlags::Contains, 1);
 	TestFalse(TEXT("Null JSON envelope fails"), CheckFlexVaultVersion(nullptr, ResultInfo));
 
-	// 2. Compatible version (0.1.0), lower bound of the pinned [0.1.0, 0.5.0) range
+	// 2. Compatible version (0.1.0), lower bound of the pinned [0.1.0, 0.7.0) range
 	TSharedPtr<FJsonObject> ValidEnv = MakeShared<FJsonObject>();
 	TSharedPtr<FJsonObject> ValidProg = MakeShared<FJsonObject>();
 	ValidProg->SetStringField(TEXT("version"), TEXT("0.1.0"));
@@ -120,24 +121,24 @@ bool FFlexVaultVersionCheckTest::RunTest(const FString& Parameters)
 	ResultInfo.ErrorMessages.Empty();
 	TestTrue(TEXT("CLI version 0.1.0 is compatible"), CheckFlexVaultVersion(ValidEnv, ResultInfo));
 
-	// 3. Compatible version (0.4.2), within the widened range but above the old exact-match (0.1.x) check
+	// 3. Compatible version (0.6.0), within the widened range but above the old exact-match (0.1.x) check
 	TSharedPtr<FJsonObject> WidenedEnv = MakeShared<FJsonObject>();
 	TSharedPtr<FJsonObject> WidenedProg = MakeShared<FJsonObject>();
-	WidenedProg->SetStringField(TEXT("version"), TEXT("0.4.2"));
+	WidenedProg->SetStringField(TEXT("version"), TEXT("0.6.0"));
 	WidenedEnv->SetObjectField(TEXT("program"), WidenedProg);
 
 	ResultInfo.ErrorMessages.Empty();
-	TestTrue(TEXT("CLI version 0.4.2 is compatible"), CheckFlexVaultVersion(WidenedEnv, ResultInfo));
+	TestTrue(TEXT("CLI version 0.6.0 is compatible"), CheckFlexVaultVersion(WidenedEnv, ResultInfo));
 
-	// 4. Incompatible version (0.5.0), the exclusive upper bound of the pinned range
+	// 4. Incompatible version (0.7.0), the exclusive upper bound of the pinned range
 	TSharedPtr<FJsonObject> InvalidEnv = MakeShared<FJsonObject>();
 	TSharedPtr<FJsonObject> InvalidProg = MakeShared<FJsonObject>();
-	InvalidProg->SetStringField(TEXT("version"), TEXT("0.5.0"));
+	InvalidProg->SetStringField(TEXT("version"), TEXT("0.7.0"));
 	InvalidEnv->SetObjectField(TEXT("program"), InvalidProg);
 
 	ResultInfo.ErrorMessages.Empty();
-	AddExpectedErrorPlain(TEXT("Incompatible FlexVault CLI version '0.5.0'"), EAutomationExpectedErrorFlags::Contains, 1);
-	TestFalse(TEXT("CLI version 0.5.0 is incompatible"), CheckFlexVaultVersion(InvalidEnv, ResultInfo));
+	AddExpectedErrorPlain(TEXT("Incompatible FlexVault CLI version '0.7.0'"), EAutomationExpectedErrorFlags::Contains, 1);
+	TestFalse(TEXT("CLI version 0.7.0 is incompatible"), CheckFlexVaultVersion(InvalidEnv, ResultInfo));
 	TestTrue(TEXT("Error reported for version mismatch"), ResultInfo.ErrorMessages.Num() > 0);
 
 	// 5. Malformed non-numeric version string (x.4.2)
@@ -901,6 +902,60 @@ bool FFlexVaultWorkerCopyDuplicateTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Copy/Duplicate UpdateStates succeeds"), Worker.UpdateStates());
 	TSharedRef<FFlexVaultSourceControlState, ESPMode::ThreadSafe> DestState = Provider.GetStateInternal(DestinationFile);
 	TestEqual(TEXT("Destination state set to OpenForAdd"), DestState->GetState(), EFlexVaultState::OpenForAdd);
+
+	return true;
+}
+
+// ── Test: current_user parsing from 'fxv status' envelope ───────────────────
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultParseCurrentUserTest, "FlexVault.SourceControl.HelperParseCurrentUser", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FFlexVaultParseCurrentUserTest::RunTest(const FString& Parameters)
+{
+	FString CurrentUser;
+
+	// 1. Invalid/null envelope
+	TestFalse(TEXT("Null envelope has no current user"), ParseFlexVaultCurrentUser(nullptr, CurrentUser));
+	TestTrue(TEXT("OutCurrentUser cleared on failure"), CurrentUser.IsEmpty());
+
+	// 2. Logged in: message.payload.current_user present
+	TSharedPtr<FJsonObject> LoggedInPayload = MakeShared<FJsonObject>();
+	LoggedInPayload->SetStringField(TEXT("current_user"), TEXT("alice"));
+	TSharedPtr<FJsonObject> LoggedInMessage = MakeShared<FJsonObject>();
+	LoggedInMessage->SetObjectField(TEXT("payload"), LoggedInPayload);
+	TSharedPtr<FJsonObject> LoggedInEnvelope = MakeShared<FJsonObject>();
+	LoggedInEnvelope->SetObjectField(TEXT("message"), LoggedInMessage);
+
+	TestTrue(TEXT("Logged-in envelope reports a current user"), ParseFlexVaultCurrentUser(LoggedInEnvelope, CurrentUser));
+	TestEqual(TEXT("Current user matches"), CurrentUser, TEXT("alice"));
+
+	// 3. Logged out: message.payload has no current_user field at all (omitted by serde, see status.rs)
+	TSharedPtr<FJsonObject> LoggedOutPayload = MakeShared<FJsonObject>();
+	LoggedOutPayload->SetStringField(TEXT("current_branch"), TEXT("main"));
+	TSharedPtr<FJsonObject> LoggedOutMessage = MakeShared<FJsonObject>();
+	LoggedOutMessage->SetObjectField(TEXT("payload"), LoggedOutPayload);
+	TSharedPtr<FJsonObject> LoggedOutEnvelope = MakeShared<FJsonObject>();
+	LoggedOutEnvelope->SetObjectField(TEXT("message"), LoggedOutMessage);
+
+	TestFalse(TEXT("Logged-out envelope reports no current user"), ParseFlexVaultCurrentUser(LoggedOutEnvelope, CurrentUser));
+	TestTrue(TEXT("OutCurrentUser cleared when absent"), CurrentUser.IsEmpty());
+
+	return true;
+}
+
+// ── Test: EnsureFlexVaultLoggedIn propagates status-query failure ───────────
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultEnsureLoggedInTest, "FlexVault.SourceControl.HelperEnsureLoggedIn", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FFlexVaultEnsureLoggedInTest::RunTest(const FString& Parameters)
+{
+	FSourceControlResultInfo ResultInfo;
+
+	// Against a CLI binary that doesn't exist, the underlying 'fxv status' query fails to launch, so
+	// EnsureFlexVaultLoggedIn must fail cleanly (not crash) and report an error rather than swallow it.
+	TestFalse(
+		TEXT("Status-query launch failure is reported, not swallowed"),
+		EnsureFlexVaultLoggedIn(TEXT("nonexistent_fxv_binary_stub"), TEXT("C:/nonexistent"), ResultInfo)
+	);
+	TestTrue(TEXT("Error reported for failed status query"), ResultInfo.ErrorMessages.Num() > 0);
 
 	return true;
 }

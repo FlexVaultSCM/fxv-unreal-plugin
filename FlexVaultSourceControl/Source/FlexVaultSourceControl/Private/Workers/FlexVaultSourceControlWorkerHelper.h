@@ -75,6 +75,32 @@ bool CheckFlexVaultVersion(
 );
 
 /**
+ * Extracts the workspace's current logged-in username (message.payload.current_user) from an
+ * `fxv status --format json` envelope. Returns false (leaving OutCurrentUser empty) if the envelope
+ * is malformed or the field is absent, which is the normal shape when nobody is logged in.
+ */
+bool ParseFlexVaultCurrentUser(
+	const TSharedPtr<class FJsonObject>& InEnvelope,
+	FString& OutCurrentUser
+);
+
+/**
+ * Checks whether the workspace already has a logged-in FlexVault user, required for `fxv publish`
+ * to succeed (fxv-core PR #106). Runs a cheap `fxv status` query; does NOT attempt to log anyone in
+ * itself - if nobody is logged in, fails with a message pointing at running `fxv login` from a
+ * terminal, rather than letting the eventual `fxv publish` call fail with a less specific error.
+ *
+ * NOTE: as of fxv-core PR #106, `fxv login` records commit attribution only - there is no credential
+ * verification yet. This function checks *who commits would be attributed to*, not authentication.
+ */
+bool EnsureFlexVaultLoggedIn(
+	const FString& InBinaryPath,
+	const FString& InWorkspacePath,
+	FSourceControlResultInfo& OutResultInfo,
+	const FFlexVaultSourceControlCommand* InCancelCommand = nullptr
+);
+
+/**
  * Parses the JSON output of 'fxv history' into commit metadata structures.
  */
 bool ParseFlexVaultHistory(
