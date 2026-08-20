@@ -6,7 +6,6 @@
 #include "FlexVaultSourceControlState.h"
 #include "FlexVaultSourceControlRevision.h"
 #include "FlexVaultSourceControlDeveloperSettings.h"
-#include "FlexVaultSourceControlUserSettings.h"
 #include "FlexVaultSourceControlCommand.h"
 #include "Workers/FlexVaultSourceControlWorkerHelper.h"
 
@@ -910,84 +909,20 @@ bool FFlexVaultParseCurrentUserTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-// ── Test: EnsureFlexVaultLoggedIn decision logic ─────────────────────────────
+// ── Test: EnsureFlexVaultLoggedIn propagates status-query failure ───────────
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultEnsureLoggedInTest, "FlexVault.SourceControl.HelperEnsureLoggedIn", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 bool FFlexVaultEnsureLoggedInTest::RunTest(const FString& Parameters)
 {
 	FSourceControlResultInfo ResultInfo;
 
-	// 1. Already logged in as the configured user: no login call needed, succeeds without touching
-	// the (invalid) binary path.
-	ResultInfo.ErrorMessages.Empty();
-	TestTrue(
-		TEXT("Already logged in as configured user is a no-op success"),
-		EnsureFlexVaultLoggedIn(TEXT("nonexistent_fxv_binary_stub"), TEXT("C:/nonexistent"), TEXT("alice"), /*bInHasCurrentUser=*/true, TEXT("alice"), ResultInfo)
-	);
-	TestEqual(TEXT("No error reported"), ResultInfo.ErrorMessages.Num(), 0);
-
-	// 2. Logged in, no username preference configured: whoever is logged in is accepted as-is.
-	ResultInfo.ErrorMessages.Empty();
-	TestTrue(
-		TEXT("Logged in with no configured preference is a no-op success"),
-		EnsureFlexVaultLoggedIn(TEXT("nonexistent_fxv_binary_stub"), TEXT("C:/nonexistent"), TEXT(""), /*bInHasCurrentUser=*/true, TEXT("whoever"), ResultInfo)
-	);
-	TestEqual(TEXT("No error reported"), ResultInfo.ErrorMessages.Num(), 0);
-
-	// 3. Not logged in, and no username configured: fails fast with a clear message, no login attempt.
-	ResultInfo.ErrorMessages.Empty();
+	// Against a CLI binary that doesn't exist, the underlying 'fxv status' query fails to launch, so
+	// EnsureFlexVaultLoggedIn must fail cleanly (not crash) and report an error rather than swallow it.
 	TestFalse(
-		TEXT("No configured username and not logged in fails"),
-		EnsureFlexVaultLoggedIn(TEXT("nonexistent_fxv_binary_stub"), TEXT("C:/nonexistent"), TEXT(""), /*bInHasCurrentUser=*/false, TEXT(""), ResultInfo)
+		TEXT("Status-query launch failure is reported, not swallowed"),
+		EnsureFlexVaultLoggedIn(TEXT("nonexistent_fxv_binary_stub"), TEXT("C:/nonexistent"), ResultInfo)
 	);
-	TestTrue(TEXT("Error reported for missing username configuration"), ResultInfo.ErrorMessages.Num() > 0);
-
-	// 4. Logged in as someone other than the configured user: must attempt 'fxv login', which fails
-	// cleanly (via RunFlexVaultCommand's launch-failure path) against a binary that doesn't exist,
-	// without crashing or silently succeeding.
-	ResultInfo.ErrorMessages.Empty();
-	TestFalse(
-		TEXT("Mismatched login attempts to re-login and reports the launch failure"),
-		EnsureFlexVaultLoggedIn(TEXT("nonexistent_fxv_binary_stub"), TEXT("C:/nonexistent"), TEXT("bob"), /*bInHasCurrentUser=*/true, TEXT("alice"), ResultInfo)
-	);
-	TestTrue(TEXT("Error reported for failed login attempt"), ResultInfo.ErrorMessages.Num() > 0);
-
-	// 5. Not logged in, username configured: must attempt 'fxv login' the same way.
-	ResultInfo.ErrorMessages.Empty();
-	TestFalse(
-		TEXT("Not logged in with configured username attempts login"),
-		EnsureFlexVaultLoggedIn(TEXT("nonexistent_fxv_binary_stub"), TEXT("C:/nonexistent"), TEXT("bob"), /*bInHasCurrentUser=*/false, TEXT(""), ResultInfo)
-	);
-	TestTrue(TEXT("Error reported for failed login attempt"), ResultInfo.ErrorMessages.Num() > 0);
-
-	return true;
-}
-
-// ── Test: per-user Username setting is isolated from the shared project settings ────
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultUserSettingsScopeTest, "FlexVault.SourceControl.UserSettingsScope", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
-
-bool FFlexVaultUserSettingsScopeTest::RunTest(const FString& Parameters)
-{
-	const UFlexVaultSourceControlUserSettings* UserSettings = GetDefault<UFlexVaultSourceControlUserSettings>();
-	TestNotNull(TEXT("User settings CDO exists"), UserSettings);
-	if (!UserSettings)
-	{
-		return false;
-	}
-
-	// The whole point of splitting this into its own UDeveloperSettings subclass is that Username
-	// must never share a config file with the team-wide, typically-versioned RepoUri/BinaryPath
-	// settings (see FlexVaultSourceControlUserSettings.h) - assert the two classes actually resolve
-	// to different config categories/containers rather than relying on that staying true by convention.
-	const UFlexVaultSourceControlDeveloperSettings* ProjectSettings = GetDefault<UFlexVaultSourceControlDeveloperSettings>();
-	TestNotNull(TEXT("Project settings CDO exists"), ProjectSettings);
-	if (!ProjectSettings)
-	{
-		return false;
-	}
-
-	TestNotEqual(TEXT("User settings container differs from project settings container"), UserSettings->GetContainerName(), ProjectSettings->GetContainerName());
-	TestNotEqual(TEXT("User settings ini category differs from project settings ini category"), UserSettings->GetClass()->ClassConfigName, ProjectSettings->GetClass()->ClassConfigName);
+	TestTrue(TEXT("Error reported for failed status query"), ResultInfo.ErrorMessages.Num() > 0);
 
 	return true;
 }

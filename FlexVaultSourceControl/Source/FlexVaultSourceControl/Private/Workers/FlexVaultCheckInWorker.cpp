@@ -36,10 +36,8 @@ bool FFlexVaultCheckInWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 
 	// 0. Ensure a FlexVault user is logged in before doing any work: 'fxv publish' is hard-gated on it
 	// (fxv-core PR #106), and snapshotting first only to fail on publish would leave a confusing
-	// unpublished local draft (see the "Check-In Partial Failure Recovery" TODO item). Checking here,
-	// strictly, is what actually enforces the requirement; FFlexVaultConnectWorker's login attempt is
-	// only best-effort.
-	if (!EnsureFlexVaultLoggedInViaStatusQuery(InCommand.BinaryPath, InCommand.WorkspacePath, InCommand.Username, InCommand.ResultInfo, &InCommand))
+	// unpublished local draft (see the "Check-In Partial Failure Recovery" TODO item).
+	if (!EnsureFlexVaultLoggedIn(InCommand.BinaryPath, InCommand.WorkspacePath, InCommand.ResultInfo, &InCommand))
 	{
 		UE_LOG(LogFlexVault, Error, TEXT("FlexVault SCM: Check-in blocked: unable to establish a logged-in FlexVault user."));
 		return false;

@@ -61,13 +61,6 @@ public:
 	FString WorkspacePath;
 
 	/**
-	 * Configured FlexVault username, resolved on the main thread from
-	 * UFlexVaultSourceControlUserSettings (see IssueCommand) so worker threads never read the
-	 * settings CDO directly. May be empty if the user has not configured one yet.
-	 */
-	FString Username;
-
-	/**
 	 * Grace period (seconds) for a canceled CLI process to exit after being terminated, snapshotted
 	 * from UFlexVaultSourceControlDeveloperSettings on the game thread (see IssueCommand) so worker
 	 * threads never read the settings CDO directly.

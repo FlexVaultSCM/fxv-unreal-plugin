@@ -2,7 +2,6 @@
 
 #include "FlexVaultSourceControlProvider.h"
 #include "FlexVaultSourceControlDeveloperSettings.h"
-#include "FlexVaultSourceControlUserSettings.h"
 #include "FlexVaultSourceControlCommand.h"
 #include "Workers/FlexVaultConnectWorker.h"
 #include "Workers/FlexVaultUpdateStatusWorker.h"
@@ -491,10 +490,6 @@ ECommandResult::Type FFlexVaultSourceControlProvider::IssueCommand(TUniquePtr<FF
 	{
 		InCommand->BinaryPath = Settings->GetEffectiveBinaryPath();
 		InCommand->CommandCancelGracePeriodSeconds = Settings->CommandCancelGracePeriodSeconds;
-	}
-	if (const UFlexVaultSourceControlUserSettings* UserSettings = GetDefault<UFlexVaultSourceControlUserSettings>())
-	{
-		InCommand->Username = UserSettings->Username;
 	}
 	if (bSynchronous)
 	{

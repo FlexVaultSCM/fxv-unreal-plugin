@@ -58,25 +58,6 @@ bool FFlexVaultConnectWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 			return false;
 		}
 
-		// Opportunistically sync login state with the configured Username. This is best-effort and must
-		// not fail Connect: fxv-core only requires a logged-in user for 'fxv publish' (fxv-core PR #106),
-		// not for read-only operations like status/history, so a missing/failed login here shouldn't take
-		// down the whole source control connection - FFlexVaultCheckInWorker enforces it strictly before
-		// publish, where it actually matters.
-		FString CurrentUser;
-		bool bHasCurrentUser = ParseFlexVaultCurrentUser(Envelope, CurrentUser);
-		FSourceControlResultInfo LoginResultInfo;
-		if (!EnsureFlexVaultLoggedIn(InCommand.BinaryPath, InCommand.WorkspacePath, InCommand.Username, bHasCurrentUser, CurrentUser, LoginResultInfo, &InCommand))
-		{
-			TArray<FString> LoginErrorStrings;
-			for (const FText& ErrorMessage : LoginResultInfo.ErrorMessages)
-			{
-				LoginErrorStrings.Add(ErrorMessage.ToString());
-			}
-			UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault SCM: Could not establish login for '%s' during connect (will retry before publish): %s"),
-				*InCommand.Username, *FString::Join(LoginErrorStrings, TEXT(" | ")));
-		}
-
 		InCommand.ResultInfo.InfoMessages.Add(LOCTEXT("ConnectSuccess", "Successfully connected to FlexVault Workspace"));
 		UE_LOG(LogFlexVault, Display, TEXT("FlexVault SCM: Connected successfully to repository (Workspace: %s)"), *InCommand.WorkspacePath);
 	}

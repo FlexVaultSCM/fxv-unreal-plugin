@@ -68,36 +68,17 @@ bool ParseFlexVaultCurrentUser(
 );
 
 /**
- * Ensures the workspace is logged in as InConfiguredUsername, given an already-known login state
- * (as returned by ParseFlexVaultCurrentUser). Issues `fxv login` only when actually needed - not
- * unconditionally - since the CLI persists login state in the workspace config across invocations.
- *
- * If InConfiguredUsername is empty and nobody is logged in, fails with a message pointing the user
- * at the (per-user) Username setting rather than letting the eventual `fxv publish` call fail with a
- * less specific error.
+ * Checks whether the workspace already has a logged-in FlexVault user, required for `fxv publish`
+ * to succeed (fxv-core PR #106). Runs a cheap `fxv status` query; does NOT attempt to log anyone in
+ * itself - if nobody is logged in, fails with a message pointing at running `fxv login` from a
+ * terminal, rather than letting the eventual `fxv publish` call fail with a less specific error.
  *
  * NOTE: as of fxv-core PR #106, `fxv login` records commit attribution only - there is no credential
- * verification yet. This function establishes *who commits are attributed to*, not authentication.
+ * verification yet. This function checks *who commits would be attributed to*, not authentication.
  */
 bool EnsureFlexVaultLoggedIn(
 	const FString& InBinaryPath,
 	const FString& InWorkspacePath,
-	const FString& InConfiguredUsername,
-	bool bInHasCurrentUser,
-	const FString& InCurrentUser,
-	FSourceControlResultInfo& OutResultInfo,
-	const FFlexVaultSourceControlCommand* InCancelCommand = nullptr
-);
-
-/**
- * Convenience wrapper for callers (e.g. FFlexVaultCheckInWorker) that don't already have a parsed
- * `fxv status` envelope on hand: runs a cheap status query, parses the current user, and delegates to
- * EnsureFlexVaultLoggedIn.
- */
-bool EnsureFlexVaultLoggedInViaStatusQuery(
-	const FString& InBinaryPath,
-	const FString& InWorkspacePath,
-	const FString& InConfiguredUsername,
 	FSourceControlResultInfo& OutResultInfo,
 	const FFlexVaultSourceControlCommand* InCancelCommand = nullptr
 );

@@ -348,42 +348,6 @@ bool ParseFlexVaultCurrentUser(
 bool EnsureFlexVaultLoggedIn(
 	const FString& InBinaryPath,
 	const FString& InWorkspacePath,
-	const FString& InConfiguredUsername,
-	bool bInHasCurrentUser,
-	const FString& InCurrentUser,
-	FSourceControlResultInfo& OutResultInfo,
-	const FFlexVaultSourceControlCommand* InCancelCommand
-)
-{
-	// Already logged in, and either no username preference is configured or it already matches the
-	// active login - nothing to do. Login state persists in the workspace config across CLI
-	// invocations, so re-issuing 'fxv login' here would just be a wasted subprocess spawn.
-	if (bInHasCurrentUser && (InConfiguredUsername.IsEmpty() || InCurrentUser == InConfiguredUsername))
-	{
-		return true;
-	}
-
-	if (InConfiguredUsername.IsEmpty())
-	{
-		OutResultInfo.ErrorMessages.Add(LOCTEXT("FlexVaultNoUsernameConfigured",
-			"FlexVault: No username configured. Set a Username in Editor Preferences > Plugins > FlexVault (User) before publishing."));
-		return false;
-	}
-
-	TArray<FString> LoginArgs = {
-		TEXT("login"),
-		InConfiguredUsername,
-		TEXT("--unattended"),
-		TEXT("--no-color")
-	};
-	TArray<FString> LoginOutputLines;
-	return RunFlexVaultCommand(InBinaryPath, InWorkspacePath, LoginArgs, LoginOutputLines, OutResultInfo, false, InCancelCommand);
-}
-
-bool EnsureFlexVaultLoggedInViaStatusQuery(
-	const FString& InBinaryPath,
-	const FString& InWorkspacePath,
-	const FString& InConfiguredUsername,
 	FSourceControlResultInfo& OutResultInfo,
 	const FFlexVaultSourceControlCommand* InCancelCommand
 )
@@ -415,9 +379,14 @@ bool EnsureFlexVaultLoggedInViaStatusQuery(
 	}
 
 	FString CurrentUser;
-	bool bHasCurrentUser = ParseFlexVaultCurrentUser(Envelope, CurrentUser);
+	if (!ParseFlexVaultCurrentUser(Envelope, CurrentUser))
+	{
+		OutResultInfo.ErrorMessages.Add(LOCTEXT("FlexVaultNotLoggedIn",
+			"FlexVault: No user is logged in for this workspace. Run 'fxv login <username>' from a terminal before publishing."));
+		return false;
+	}
 
-	return EnsureFlexVaultLoggedIn(InBinaryPath, InWorkspacePath, InConfiguredUsername, bHasCurrentUser, CurrentUser, OutResultInfo, InCancelCommand);
+	return true;
 }
 
 bool ParseFlexVaultHistory(
