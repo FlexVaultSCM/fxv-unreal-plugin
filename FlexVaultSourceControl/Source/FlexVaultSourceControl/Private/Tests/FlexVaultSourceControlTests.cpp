@@ -957,6 +957,9 @@ bool FFlexVaultEnsureLoggedInTest::RunTest(const FString& Parameters)
 	);
 	TestTrue(TEXT("Error reported for failed status query"), ResultInfo.ErrorMessages.Num() > 0);
 
+	return true;
+}
+
 // ── Test: CheckFlexVaultVersion compatibility and version string extraction ──
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultCheckVersionTest, "FlexVault.SourceControl.HelperCheckVersion", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
