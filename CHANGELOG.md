@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.0](https://github.com/FlexVaultSCM/fxv-unreal-plugin/compare/v0.2.0...v0.3.0) (2026-09-10)
+
+
+### Features
+
+* switch to source distribution and widen CLI compatibility window ([#14](https://github.com/FlexVaultSCM/fxv-unreal-plugin/issues/14)) ([069448d](https://github.com/FlexVaultSCM/fxv-unreal-plugin/commit/069448dc9c5b45e232c7bcc8cfaf4f3c14a55437))
+
+
+### Bug Fixes
+
+* **history:** parse timestamp_millis_since_epoch_utc for revision date ([#13](https://github.com/FlexVaultSCM/fxv-unreal-plugin/issues/13)) ([893a005](https://github.com/FlexVaultSCM/fxv-unreal-plugin/commit/893a005066cfe33fd359bd922edf74468309072b))
+
 ## [0.2.0](https://github.com/FlexVaultSCM/fxv-unreal-plugin/compare/v0.1.0...v0.2.0) (2026-09-10)
 
 
