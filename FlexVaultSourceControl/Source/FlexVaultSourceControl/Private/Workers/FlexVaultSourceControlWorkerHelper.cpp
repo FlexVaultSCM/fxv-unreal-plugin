@@ -398,9 +398,10 @@ namespace FlexVaultCliCompatibility
 	// only for a leading-separator path), and RunFlexVaultCommand always launches 'fxv' with the
 	// workspace root as its working directory, so FFlexVaultRevertWorker/FFlexVaultResolveWorker's
 	// existing GetRelativeWorkspacePath()-built paths resolve identically under old and new semantics.
-	// 0.7.0+ hasn't been reviewed yet.
+	// 0.7.0 (RPC/internal serialization changes), 0.8.0 (doctor/resume changes), and 0.9.0 do not
+	// break CLI commands or JSON envelope schema used by the plugin.
 	constexpr int32 MinMajor = 0, MinMinor = 1, MinPatch = 0; // >= 0.1.0
-	constexpr int32 MaxMajor = 0, MaxMinor = 7, MaxPatch = 0; // < 0.7.0
+	constexpr int32 MaxMajor = 0, MaxMinor = 10, MaxPatch = 0; // < 0.10.0
 }
 
 namespace

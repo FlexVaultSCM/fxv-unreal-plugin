@@ -1,4 +1,4 @@
-﻿name: Release Please
+name: Release Please
 
 on:
   push:
@@ -64,7 +64,6 @@ jobs:
     name: Build & publish release plugin package
     needs: release-please
     if: needs.release-please.outputs.release_created == 'true'
-    environment: release
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -113,36 +112,3 @@ jobs:
             "${{ env.asset_latest }}.sha256" \
             --clobber \
             --repo "${{ github.repository }}"
-
-      - name: Push assets to Cloudflare R2
-        if: env.HAS_R2_SECRETS == 'true'
-        shell: bash
-        env:
-          HAS_R2_SECRETS: ${{ secrets.R2_BINARY_RELEASE_BUCKET != '' }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.R2_BINARY_RELEASE_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_BINARY_RELEASE_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: auto
-          R2_ENDPOINT: https://${{ secrets.R2_BINARY_RELEASE_ACCOUNT_ID }}.r2.cloudflarestorage.com
-          R2_BUCKET: ${{ secrets.R2_BINARY_RELEASE_BUCKET }}
-        run: |
-          version="${{ needs.release-please.outputs.tag_name }}"
-          asset_sha256="$(cut -d' ' -f1 "${{ env.asset_versioned }}.sha256")"
-
-          # 1. Mirrored latest and versioned archive under fxv-unreal-plugin/
-          for key_prefix in "latest" "${version}"; do
-            aws s3 cp "${{ env.asset_latest }}" "s3://${R2_BUCKET}/fxv-unreal-plugin/${key_prefix}/${{ env.asset_latest }}" \
-              --metadata "sha256=${asset_sha256}" \
-              --endpoint-url "${R2_ENDPOINT}"
-          done
-          aws s3 cp "${{ env.asset_versioned }}" "s3://${R2_BUCKET}/fxv-unreal-plugin/${version}/${{ env.asset_versioned }}" \
-            --metadata "sha256=${asset_sha256}" \
-            --endpoint-url "${R2_ENDPOINT}"
-
-          # 2. Push version manifest matching fxv-core/fxv-desktop/fxv-bridge pattern
-          tag="${version}"
-          clean_ver="${tag#v}"
-          jq -n --arg version "$clean_ver" --arg tag "$tag" \
-            '{version: $version, tag: $tag, critical: false, message: null}' \
-            > version.json
-          aws s3 cp version.json "s3://${R2_BUCKET}/fxv-unreal-plugin/latest/version.json" \
-            --endpoint-url "${R2_ENDPOINT}"
