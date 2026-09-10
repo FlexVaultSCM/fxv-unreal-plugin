@@ -1,0 +1,148 @@
+﻿name: Release Please
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+    inputs:
+      release-as:
+        description: "Force this exact version (e.g. 1.0.0) instead of the auto-computed bump. Leave blank for normal behavior."
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+      pr_branch: ${{ steps.release.outputs.pr != '' && fromJSON(steps.release.outputs.pr).headBranchName || '' }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          config-file: .github/release-please-config.json
+          manifest-file: .github/release-please-manifest.json
+          release-as: ${{ github.event_name == 'workflow_dispatch' && inputs.release-as || '' }}
+          skip-github-pull-request: ${{ github.event_name == 'push' }}
+          skip-github-release: ${{ github.event_name == 'workflow_dispatch' }}
+
+  sync-release-pr-plugin-version:
+    name: Sync plugin version on release PR
+    needs: release-please
+    if: needs.release-please.outputs.pr_branch != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-please.outputs.pr_branch }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Sync .uplugin version from release manifest
+        run: |
+          manifest_version=$(node -e "const pkg = JSON.parse(require('fs').readFileSync('.github/release-please-manifest.json')); console.log(pkg['.']);")
+          node .github/scripts/set-version.js "$manifest_version"
+
+      - name: Commit and push if changed
+        run: |
+          if ! git diff --quiet -- FlexVaultSourceControl/FlexVaultSourceControl.uplugin; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add FlexVaultSourceControl/FlexVaultSourceControl.uplugin
+            git commit -m "chore: sync .uplugin version for release"
+            git push origin HEAD:${{ needs.release-please.outputs.pr_branch }}
+          fi
+
+  publish-plugin:
+    name: Build & publish release plugin package
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    environment: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Ensure plugin version matches GitHub release tag
+        run: node .github/scripts/set-version.js "${{ needs.release-please.outputs.tag_name }}"
+
+      - name: Validate version consistency
+        run: node .github/scripts/validate-versions.js --tag "${{ needs.release-please.outputs.tag_name }}"
+
+      - name: Package plugin archive and calculate checksums
+        shell: bash
+        run: |
+          version="${{ needs.release-please.outputs.tag_name }}"
+          clean_version="${version#v}"
+
+          asset_versioned="FlexVaultSourceControl-${clean_version}.zip"
+          asset_latest="FlexVaultSourceControl.zip"
+
+          # Package root directory of the plugin suitable for dropping directly into UE Projects/Plugins
+          git archive --format=zip --prefix="FlexVaultSourceControl/" HEAD:FlexVaultSourceControl -o "$asset_versioned"
+          cp "$asset_versioned" "$asset_latest"
+
+          sha256sum "$asset_versioned" > "${asset_versioned}.sha256"
+          sha256sum "$asset_latest" > "${asset_latest}.sha256"
+
+          echo "asset_versioned=$asset_versioned" >> "$GITHUB_ENV"
+          echo "asset_latest=$asset_latest" >> "$GITHUB_ENV"
+
+      - name: Upload assets to GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${{ needs.release-please.outputs.tag_name }}"
+          gh release upload "${version}" \
+            "${{ env.asset_versioned }}" \
+            "${{ env.asset_versioned }}.sha256" \
+            "${{ env.asset_latest }}" \
+            "${{ env.asset_latest }}.sha256" \
+            --clobber \
+            --repo "${{ github.repository }}"
+
+      - name: Push assets to Cloudflare R2
+        if: env.HAS_R2_SECRETS == 'true'
+        shell: bash
+        env:
+          HAS_R2_SECRETS: ${{ secrets.R2_BINARY_RELEASE_BUCKET != '' }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_BINARY_RELEASE_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_BINARY_RELEASE_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          R2_ENDPOINT: https://${{ secrets.R2_BINARY_RELEASE_ACCOUNT_ID }}.r2.cloudflarestorage.com
+          R2_BUCKET: ${{ secrets.R2_BINARY_RELEASE_BUCKET }}
+        run: |
+          version="${{ needs.release-please.outputs.tag_name }}"
+          asset_sha256="$(cut -d' ' -f1 "${{ env.asset_versioned }}.sha256")"
+
+          # 1. Mirrored latest and versioned archive under fxv-unreal-plugin/
+          for key_prefix in "latest" "${version}"; do
+            aws s3 cp "${{ env.asset_latest }}" "s3://${R2_BUCKET}/fxv-unreal-plugin/${key_prefix}/${{ env.asset_latest }}" \
+              --metadata "sha256=${asset_sha256}" \
+              --endpoint-url "${R2_ENDPOINT}"
+          done
+          aws s3 cp "${{ env.asset_versioned }}" "s3://${R2_BUCKET}/fxv-unreal-plugin/${version}/${{ env.asset_versioned }}" \
+            --metadata "sha256=${asset_sha256}" \
+            --endpoint-url "${R2_ENDPOINT}"
+
+          # 2. Push version manifest matching fxv-core/fxv-desktop/fxv-bridge pattern
+          tag="${version}"
+          clean_ver="${tag#v}"
+          jq -n --arg version "$clean_ver" --arg tag "$tag" \
+            '{version: $version, tag: $tag, critical: false, message: null}' \
+            > version.json
+          aws s3 cp version.json "s3://${R2_BUCKET}/fxv-unreal-plugin/latest/version.json" \
+            --endpoint-url "${R2_ENDPOINT}"
