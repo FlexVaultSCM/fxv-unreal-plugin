@@ -2,11 +2,17 @@
 
 #include "FlexVaultSourceControlModule.h"
 #include "Features/IModularFeatures.h"
+#include "Interfaces/IPluginManager.h"
 
 #define LOCTEXT_NAMESPACE "FlexVaultSourceControl"
 
 void FFlexVaultSourceControlModule::StartupModule()
 {
+	// Log plugin startup with version
+	TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("FlexVaultSourceControl"));
+	FString PluginVersion = Plugin.IsValid() ? Plugin->GetDescriptor().VersionName : TEXT("Unknown");
+	UE_LOG(LogFlexVault, Log, TEXT("FlexVault SCM: Initializing plugin v%s"), *PluginVersion);
+
 	// Bind our source control provider to the Unreal modular feature manager
 	IModularFeatures::Get().RegisterModularFeature("SourceControl", &FlexVaultSourceControlProvider);
 }
