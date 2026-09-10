@@ -1,10 +1,9 @@
 {
 	"FileVersion": 3,
 	"Version": 1,
-	"VersionName": "0.1.0",
+	"VersionName": "0.2.0",
 	"FriendlyName": "FlexVault",
 	"Description": "FlexVault source control management integration",
-	"EngineVersion": "5.8.0",
 	"Category": "Source Control",
 	"CreatedBy": "FlexVault Inc.",
 	"CreatedByURL": "https://fxv.dev",
