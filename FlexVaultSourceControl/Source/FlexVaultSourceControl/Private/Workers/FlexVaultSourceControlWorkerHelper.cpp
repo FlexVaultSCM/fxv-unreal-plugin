@@ -679,7 +679,7 @@ bool ParseFlexVaultHistory(
 					}
 
 					int64 TimestampMillis = 0;
-					EntryObj->TryGetNumberField(TEXT("timestamp_millis"), TimestampMillis);
+					EntryObj->TryGetNumberField(TEXT("timestamp_millis_since_epoch_utc"), TimestampMillis);
 					Meta.Date = FDateTime::FromUnixTimestamp(TimestampMillis / 1000);
 
 					OutCommits.Add(Meta);

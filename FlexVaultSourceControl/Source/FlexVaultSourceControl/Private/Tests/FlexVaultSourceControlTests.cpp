@@ -173,7 +173,7 @@ bool FFlexVaultHistoryParsingTest::RunTest(const FString& Parameters)
 		TEXT("          \"description\": \"Fixed character movement jump bug\","),
 		TEXT("          \"author_display_name\": \"Jane Doe\","),
 		TEXT("          \"author_id\": \"jane.doe\","),
-		TEXT("          \"timestamp_millis\": 1774328905000"),
+		TEXT("          \"timestamp_millis_since_epoch_utc\": 1774328905000"),
 		TEXT("        }"),
 		TEXT("      ]"),
 		TEXT("    }"),
