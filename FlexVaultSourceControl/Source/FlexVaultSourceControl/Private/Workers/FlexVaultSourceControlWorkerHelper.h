@@ -71,7 +71,8 @@ bool RunFlexVaultCatCommand(
  */
 bool CheckFlexVaultVersion(
 	const TSharedPtr<class FJsonObject>& InEnvelope,
-	FSourceControlResultInfo& OutResultInfo
+	FSourceControlResultInfo& OutResultInfo,
+	FString* OutCliVersion = nullptr
 );
 
 /**

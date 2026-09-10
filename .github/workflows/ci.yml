@@ -1,0 +1,80 @@
+﻿name: CI
+
+on:
+  pull_request:
+    paths-ignore:
+      - '**.md'
+  push:
+    branches: [master]
+    paths-ignore:
+      - '**.md'
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate-plugin:
+    name: Validate Plugin & Versions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Validate version consistency
+        run: node .github/scripts/validate-versions.js
+
+      - name: Validate .uplugin JSON descriptor
+        run: |
+          node -e "
+            const fs = require('fs');
+            const upluginPath = 'FlexVaultSourceControl/FlexVaultSourceControl.uplugin';
+            if (!fs.existsSync(upluginPath)) {
+              console.error('Missing uplugin descriptor at ' + upluginPath);
+              process.exit(1);
+            }
+            const data = JSON.parse(fs.readFileSync(upluginPath, 'utf8'));
+            const requiredFields = ['FileVersion', 'Version', 'VersionName', 'FriendlyName', 'Modules'];
+            for (const field of requiredFields) {
+              if (data[field] === undefined) {
+                console.error('Missing required uplugin field: ' + field);
+                process.exit(1);
+              }
+            }
+            if (!Array.isArray(data.Modules) || data.Modules.length === 0) {
+              console.error('uplugin Modules must be a non-empty array');
+              process.exit(1);
+            }
+            console.log('Valid .uplugin descriptor for ' + data.FriendlyName + ' v' + data.VersionName);
+          "
+
+      - name: Verify source file structure
+        run: |
+          node -e "
+            const fs = require('fs');
+            const path = require('path');
+            const requiredFiles = [
+              'FlexVaultSourceControl/FlexVaultSourceControl.uplugin',
+              'FlexVaultSourceControl/Source/FlexVaultSourceControl/FlexVaultSourceControl.Build.cs',
+              'FlexVaultSourceControl/Source/FlexVaultSourceControl/Private/FlexVaultSourceControlModule.cpp'
+            ];
+            for (const req of requiredFiles) {
+              if (!fs.existsSync(req)) {
+                console.error('Missing required plugin file: ' + req);
+                process.exit(1);
+              }
+            }
+            console.log('All required source files present.');
+          "
+
+      - name: Validate archive packaging (dry-run)
+        run: |
+          version=$(node -e "console.log(JSON.parse(require('fs').readFileSync('FlexVaultSourceControl/FlexVaultSourceControl.uplugin')).VersionName)")
+          archive_name="FlexVaultSourceControl-${version}.zip"
+          git archive --format=zip --prefix="FlexVaultSourceControl/" HEAD:FlexVaultSourceControl -o "$archive_name"
+          test -s "$archive_name"
+          sha256sum "$archive_name"
+          echo "Packaging dry-run successful: $archive_name"

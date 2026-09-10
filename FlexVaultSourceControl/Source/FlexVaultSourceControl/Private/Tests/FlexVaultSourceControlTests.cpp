@@ -960,4 +960,59 @@ bool FFlexVaultEnsureLoggedInTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+// ── Test: CheckFlexVaultVersion compatibility and version string extraction ──
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultCheckVersionTest, "FlexVault.SourceControl.HelperCheckVersion", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FFlexVaultCheckVersionTest::RunTest(const FString& Parameters)
+{
+	// Helper to build envelope JSON with a given program version
+	auto MakeEnvelope = [](const FString& InVersion) -> TSharedPtr<FJsonObject>
+	{
+		TSharedPtr<FJsonObject> ProgramObj = MakeShared<FJsonObject>();
+		ProgramObj->SetStringField(TEXT("name"), TEXT("fxv"));
+		ProgramObj->SetStringField(TEXT("version"), InVersion);
+		TSharedPtr<FJsonObject> Envelope = MakeShared<FJsonObject>();
+		Envelope->SetObjectField(TEXT("program"), ProgramObj);
+		return Envelope;
+	};
+
+	// 1. Valid compatible version (e.g. 0.1.0, 0.5.2, 0.6.1)
+	{
+		FSourceControlResultInfo ResultInfo;
+		FString ExtractedVersion;
+		TSharedPtr<FJsonObject> Env = MakeEnvelope(TEXT("0.5.2"));
+		TestTrue(TEXT("0.5.2 is compatible"), CheckFlexVaultVersion(Env, ResultInfo, &ExtractedVersion));
+		TestEqual(TEXT("Extracted version matches"), ExtractedVersion, TEXT("0.5.2"));
+		TestEqual(TEXT("No errors on success"), ResultInfo.ErrorMessages.Num(), 0);
+	}
+
+	// 2. Incompatible lower version (< 0.1.0)
+	{
+		FSourceControlResultInfo ResultInfo;
+		FString ExtractedVersion;
+		TSharedPtr<FJsonObject> Env = MakeEnvelope(TEXT("0.0.9"));
+		TestFalse(TEXT("0.0.9 is incompatible (too low)"), CheckFlexVaultVersion(Env, ResultInfo, &ExtractedVersion));
+		TestTrue(TEXT("Error reported for incompatible version"), ResultInfo.ErrorMessages.Num() > 0);
+	}
+
+	// 3. Incompatible higher version (>= 0.7.0)
+	{
+		FSourceControlResultInfo ResultInfo;
+		FString ExtractedVersion;
+		TSharedPtr<FJsonObject> Env = MakeEnvelope(TEXT("0.7.0"));
+		TestFalse(TEXT("0.7.0 is incompatible (too high)"), CheckFlexVaultVersion(Env, ResultInfo, &ExtractedVersion));
+		TestTrue(TEXT("Error reported for incompatible version"), ResultInfo.ErrorMessages.Num() > 0);
+	}
+
+	// 4. Malformed/missing program metadata
+	{
+		FSourceControlResultInfo ResultInfo;
+		TSharedPtr<FJsonObject> EmptyEnv = MakeShared<FJsonObject>();
+		TestFalse(TEXT("Empty envelope fails check"), CheckFlexVaultVersion(EmptyEnv, ResultInfo));
+		TestTrue(TEXT("Error reported for missing version field"), ResultInfo.ErrorMessages.Num() > 0);
+	}
+
+	return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS

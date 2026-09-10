@@ -4,6 +4,7 @@
 #include "FlexVaultSourceControlProvider.h"
 #include "FlexVaultSourceControlDeveloperSettings.h"
 #include "FlexVaultSourceControlWorkerHelper.h"
+#include "Interfaces/IPluginManager.h"
 #include "SourceControlOperations.h"
 #include "Misc/Paths.h"
 #include "Dom/JsonObject.h"
@@ -61,7 +62,8 @@ bool FFlexVaultConnectWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 		}
 
 		// Parse program metadata version and verify it falls within the plugin's pinned compatible range.
-		if (!CheckFlexVaultVersion(Envelope, InCommand.ResultInfo))
+		FString CliVersion;
+		if (!CheckFlexVaultVersion(Envelope, InCommand.ResultInfo, &CliVersion))
 		{
 			if (InCommand.ResultInfo.ErrorMessages.Num() > 0)
 			{
@@ -70,8 +72,16 @@ bool FFlexVaultConnectWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 			return false;
 		}
 
-		InCommand.ResultInfo.InfoMessages.Add(LOCTEXT("ConnectSuccess", "Successfully connected to FlexVault Workspace"));
-		UE_LOG(LogFlexVault, Display, TEXT("FlexVault SCM: Connected successfully to repository (Workspace: %s)"), *InCommand.WorkspacePath);
+		TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("FlexVaultSourceControl"));
+		FString PluginVersion = Plugin.IsValid() ? Plugin->GetDescriptor().VersionName : TEXT("Unknown");
+
+		InCommand.ResultInfo.InfoMessages.Add(FText::Format(
+			LOCTEXT("ConnectSuccessWithVersions", "Successfully connected to FlexVault Workspace (Plugin v{0}, CLI v{1})"),
+			FText::FromString(PluginVersion),
+			FText::FromString(CliVersion)
+		));
+		UE_LOG(LogFlexVault, Display, TEXT("FlexVault SCM: Connected successfully to repository (Workspace: %s, Plugin v%s, CLI v%s)"),
+			*InCommand.WorkspacePath, *PluginVersion, *CliVersion);
 	}
 	else if (InCommand.ResultInfo.ErrorMessages.Num() > 0)
 	{

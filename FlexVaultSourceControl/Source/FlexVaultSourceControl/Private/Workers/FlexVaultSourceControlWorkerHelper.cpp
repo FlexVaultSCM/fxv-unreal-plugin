@@ -468,7 +468,8 @@ namespace
 
 bool CheckFlexVaultVersion(
 	const TSharedPtr<FJsonObject>& InEnvelope,
-	FSourceControlResultInfo& OutResultInfo
+	FSourceControlResultInfo& OutResultInfo,
+	FString* OutCliVersion
 )
 {
 	if (!InEnvelope.IsValid())
@@ -518,6 +519,11 @@ bool CheckFlexVaultVersion(
 		OutResultInfo.ErrorMessages.Add(Error);
 		UE_LOG(LogFlexVault, Error, TEXT("FlexVault: %s"), *Error.ToString());
 		return false;
+	}
+
+	if (OutCliVersion != nullptr)
+	{
+		*OutCliVersion = CliVersionStr;
 	}
 
 	return true;
