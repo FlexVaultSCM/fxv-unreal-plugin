@@ -976,13 +976,13 @@ bool FFlexVaultCheckVersionTest::RunTest(const FString& Parameters)
 		return Envelope;
 	};
 
-	// 1. Valid compatible version (e.g. 0.1.0, 0.5.2, 0.6.1)
+	// 1. Valid compatible version (e.g. 0.1.0, 0.5.2, 0.6.1, 0.9.0)
 	{
 		FSourceControlResultInfo ResultInfo;
 		FString ExtractedVersion;
-		TSharedPtr<FJsonObject> Env = MakeEnvelope(TEXT("0.5.2"));
-		TestTrue(TEXT("0.5.2 is compatible"), CheckFlexVaultVersion(Env, ResultInfo, &ExtractedVersion));
-		TestEqual(TEXT("Extracted version matches"), ExtractedVersion, TEXT("0.5.2"));
+		TSharedPtr<FJsonObject> Env = MakeEnvelope(TEXT("0.9.0"));
+		TestTrue(TEXT("0.9.0 is compatible"), CheckFlexVaultVersion(Env, ResultInfo, &ExtractedVersion));
+		TestEqual(TEXT("Extracted version matches"), ExtractedVersion, TEXT("0.9.0"));
 		TestEqual(TEXT("No errors on success"), ResultInfo.ErrorMessages.Num(), 0);
 	}
 
@@ -995,12 +995,12 @@ bool FFlexVaultCheckVersionTest::RunTest(const FString& Parameters)
 		TestTrue(TEXT("Error reported for incompatible version"), ResultInfo.ErrorMessages.Num() > 0);
 	}
 
-	// 3. Incompatible higher version (>= 0.7.0)
+	// 3. Incompatible higher version (>= 0.10.0)
 	{
 		FSourceControlResultInfo ResultInfo;
 		FString ExtractedVersion;
-		TSharedPtr<FJsonObject> Env = MakeEnvelope(TEXT("0.7.0"));
-		TestFalse(TEXT("0.7.0 is incompatible (too high)"), CheckFlexVaultVersion(Env, ResultInfo, &ExtractedVersion));
+		TSharedPtr<FJsonObject> Env = MakeEnvelope(TEXT("0.10.0"));
+		TestFalse(TEXT("0.10.0 is incompatible (too high)"), CheckFlexVaultVersion(Env, ResultInfo, &ExtractedVersion));
 		TestTrue(TEXT("Error reported for incompatible version"), ResultInfo.ErrorMessages.Num() > 0);
 	}
 
