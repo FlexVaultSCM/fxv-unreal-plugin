@@ -67,6 +67,7 @@ bool FFlexVaultResolveWorker::UpdateStates() const
 	{
 		TSharedRef<FFlexVaultSourceControlState, ESPMode::ThreadSafe> State = Provider.GetStateInternal(File);
 		State->bConflicted = false;
+		State->ConflictReasonKind.Empty();
 		State->TimeStamp = FDateTime::Now();
 		UE_LOG(LogFlexVault, Log, TEXT("FlexVault Resolve: Updated state for resolved file: %s"), *File);
 	}

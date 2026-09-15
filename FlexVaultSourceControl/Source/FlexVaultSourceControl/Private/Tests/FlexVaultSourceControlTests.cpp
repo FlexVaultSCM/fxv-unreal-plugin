@@ -112,33 +112,33 @@ bool FFlexVaultVersionCheckTest::RunTest(const FString& Parameters)
 	AddExpectedErrorPlain(TEXT("Invalid JSON envelope passed to version check"), EAutomationExpectedErrorFlags::Contains, 1);
 	TestFalse(TEXT("Null JSON envelope fails"), CheckFlexVaultVersion(nullptr, ResultInfo));
 
-	// 2. Compatible version (0.1.0), lower bound of the pinned [0.1.0, 0.7.0) range
+	// 2. Compatible version (0.10.0), lower bound of the pinned [0.10.0, 0.11.0) range
 	TSharedPtr<FJsonObject> ValidEnv = MakeShared<FJsonObject>();
 	TSharedPtr<FJsonObject> ValidProg = MakeShared<FJsonObject>();
-	ValidProg->SetStringField(TEXT("version"), TEXT("0.1.0"));
+	ValidProg->SetStringField(TEXT("version"), TEXT("0.10.0"));
 	ValidEnv->SetObjectField(TEXT("program"), ValidProg);
 
 	ResultInfo.ErrorMessages.Empty();
-	TestTrue(TEXT("CLI version 0.1.0 is compatible"), CheckFlexVaultVersion(ValidEnv, ResultInfo));
+	TestTrue(TEXT("CLI version 0.10.0 is compatible"), CheckFlexVaultVersion(ValidEnv, ResultInfo));
 
-	// 3. Compatible version (0.6.0), within the widened range but above the old exact-match (0.1.x) check
+	// 3. Compatible version (0.10.1), within the pinned range
 	TSharedPtr<FJsonObject> WidenedEnv = MakeShared<FJsonObject>();
 	TSharedPtr<FJsonObject> WidenedProg = MakeShared<FJsonObject>();
-	WidenedProg->SetStringField(TEXT("version"), TEXT("0.6.0"));
+	WidenedProg->SetStringField(TEXT("version"), TEXT("0.10.1"));
 	WidenedEnv->SetObjectField(TEXT("program"), WidenedProg);
 
 	ResultInfo.ErrorMessages.Empty();
-	TestTrue(TEXT("CLI version 0.6.0 is compatible"), CheckFlexVaultVersion(WidenedEnv, ResultInfo));
+	TestTrue(TEXT("CLI version 0.10.1 is compatible"), CheckFlexVaultVersion(WidenedEnv, ResultInfo));
 
-	// 4. Incompatible version (0.7.0), the exclusive upper bound of the pinned range
+	// 4. Incompatible version (0.11.0), the exclusive upper bound of the pinned range
 	TSharedPtr<FJsonObject> InvalidEnv = MakeShared<FJsonObject>();
 	TSharedPtr<FJsonObject> InvalidProg = MakeShared<FJsonObject>();
-	InvalidProg->SetStringField(TEXT("version"), TEXT("0.7.0"));
+	InvalidProg->SetStringField(TEXT("version"), TEXT("0.11.0"));
 	InvalidEnv->SetObjectField(TEXT("program"), InvalidProg);
 
 	ResultInfo.ErrorMessages.Empty();
-	AddExpectedErrorPlain(TEXT("Incompatible FlexVault CLI version '0.7.0'"), EAutomationExpectedErrorFlags::Contains, 1);
-	TestFalse(TEXT("CLI version 0.7.0 is incompatible"), CheckFlexVaultVersion(InvalidEnv, ResultInfo));
+	AddExpectedErrorPlain(TEXT("Incompatible FlexVault CLI version '0.11.0'"), EAutomationExpectedErrorFlags::Contains, 1);
+	TestFalse(TEXT("CLI version 0.11.0 is incompatible"), CheckFlexVaultVersion(InvalidEnv, ResultInfo));
 	TestTrue(TEXT("Error reported for version mismatch"), ResultInfo.ErrorMessages.Num() > 0);
 
 	// 5. Malformed non-numeric version string (x.4.2)
@@ -409,6 +409,7 @@ bool FFlexVaultWorkerUpdateStatusTest::RunTest(const FString& Parameters)
 	Worker.bHasChangesToSync = true;
 	Worker.ModifiedFiles.Add(ModFileRelative, EFlexVaultState::CheckedOut);
 	Worker.ModifiedFiles.Add(AddFileRelative, EFlexVaultState::OpenForAdd);
+	Worker.ConflictedFiles.Add(ModFileRelative, TEXT("content"));
 
 	// Verify UpdateStates correctly applies injected mock SCM findings
 	TestTrue(TEXT("Status UpdateStates succeeds"), Worker.UpdateStates());
@@ -419,6 +420,8 @@ bool FFlexVaultWorkerUpdateStatusTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Modified file SCM state set to CheckedOut"), ModCached->GetState(), EFlexVaultState::CheckedOut);
 	TestEqual(TEXT("Modified file LocalRevision matches"), ModCached->LocalRevNumber, 14);
 	TestEqual(TEXT("Modified file DepotRevision matches"), ModCached->DepotRevNumber, 15);
+	TestTrue(TEXT("Modified file marked conflicted"), ModCached->IsConflicted());
+	TestEqual(TEXT("Modified file conflict reason kind matches"), ModCached->ConflictReasonKind, TEXT("content"));
 
 	TestEqual(TEXT("Added file SCM state set to OpenForAdd"), AddCached->GetState(), EFlexVaultState::OpenForAdd);
 
@@ -723,6 +726,40 @@ bool FFlexVaultCanCheckInTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+// ── Test: Conflict reason tooltip text per conflict_state.kind ──────────────
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultConflictReasonTooltipTest, "FlexVault.SourceControl.ConflictReasonTooltip", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FFlexVaultConflictReasonTooltipTest::RunTest(const FString& Parameters)
+{
+	auto MakeConflictedState = [](const FString& InConflictReasonKind) -> FFlexVaultSourceControlState
+	{
+		FFlexVaultSourceControlState State(TEXT("Content/Conflicted.uasset"), EFlexVaultState::CheckedOut);
+		State.DepotRevNumber = 5;
+		State.LocalRevNumber = 5;
+		State.bConflicted = true;
+		State.ConflictReasonKind = InConflictReasonKind;
+		return State;
+	};
+
+	TestTrue(TEXT("'content' kind tooltip explains a content clash"),
+		MakeConflictedState(TEXT("content")).GetDisplayTooltip().ToString().Contains(TEXT("content")));
+	TestTrue(TEXT("'deleted' kind tooltip explains a delete/edit clash"),
+		MakeConflictedState(TEXT("deleted")).GetDisplayTooltip().ToString().Contains(TEXT("deleted")));
+	TestTrue(TEXT("'type_change' kind tooltip explains a file/directory clash"),
+		MakeConflictedState(TEXT("type_change")).GetDisplayTooltip().ToString().Contains(TEXT("directory")));
+	TestEqual(TEXT("Unrecognized/missing kind falls back to a generic conflict tooltip"),
+		MakeConflictedState(FString()).GetDisplayTooltip().ToString(), TEXT("The file(s) are in conflict"));
+
+	// A non-conflicted file must still get its ordinary state tooltip, not a conflict tooltip.
+	FFlexVaultSourceControlState UnchangedState(TEXT("Content/Clean.uasset"), EFlexVaultState::Unchanged);
+	UnchangedState.DepotRevNumber = 5;
+	UnchangedState.LocalRevNumber = 5;
+	TestEqual(TEXT("Non-conflicted file keeps its state-based tooltip"),
+		UnchangedState.GetDisplayTooltip().ToString(), TEXT("The file(s) are tracked and unmodified"));
+
+	return true;
+}
+
 // ── Test 17: Conflict → Revert State Transitions ─────────────────────────────
 // Verifies the full state machine for a conflicted file that is reverted:
 //   Conflicted (CheckedOut + bConflicted) → Revert → Unchanged, clean, CanCheckIn=false
@@ -951,6 +988,7 @@ bool FFlexVaultEnsureLoggedInTest::RunTest(const FString& Parameters)
 
 	// Against a CLI binary that doesn't exist, the underlying 'fxv status' query fails to launch, so
 	// EnsureFlexVaultLoggedIn must fail cleanly (not crash) and report an error rather than swallow it.
+	AddExpectedErrorPlain(TEXT("Failed to launch SCM executable"), EAutomationExpectedErrorFlags::Contains, 1);
 	TestFalse(
 		TEXT("Status-query launch failure is reported, not swallowed"),
 		EnsureFlexVaultLoggedIn(TEXT("nonexistent_fxv_binary_stub"), TEXT("C:/nonexistent"), ResultInfo)
@@ -976,31 +1014,33 @@ bool FFlexVaultCheckVersionTest::RunTest(const FString& Parameters)
 		return Envelope;
 	};
 
-	// 1. Valid compatible version (e.g. 0.1.0, 0.5.2, 0.6.1, 0.9.0)
+	// 1. Valid compatible version (e.g. 0.10.0, 0.10.1)
+	{
+		FSourceControlResultInfo ResultInfo;
+		FString ExtractedVersion;
+		TSharedPtr<FJsonObject> Env = MakeEnvelope(TEXT("0.10.1"));
+		TestTrue(TEXT("0.10.1 is compatible"), CheckFlexVaultVersion(Env, ResultInfo, &ExtractedVersion));
+		TestEqual(TEXT("Extracted version matches"), ExtractedVersion, TEXT("0.10.1"));
+		TestEqual(TEXT("No errors on success"), ResultInfo.ErrorMessages.Num(), 0);
+	}
+
+	// 2. Incompatible lower version (< 0.10.0)
 	{
 		FSourceControlResultInfo ResultInfo;
 		FString ExtractedVersion;
 		TSharedPtr<FJsonObject> Env = MakeEnvelope(TEXT("0.9.0"));
-		TestTrue(TEXT("0.9.0 is compatible"), CheckFlexVaultVersion(Env, ResultInfo, &ExtractedVersion));
-		TestEqual(TEXT("Extracted version matches"), ExtractedVersion, TEXT("0.9.0"));
-		TestEqual(TEXT("No errors on success"), ResultInfo.ErrorMessages.Num(), 0);
-	}
-
-	// 2. Incompatible lower version (< 0.1.0)
-	{
-		FSourceControlResultInfo ResultInfo;
-		FString ExtractedVersion;
-		TSharedPtr<FJsonObject> Env = MakeEnvelope(TEXT("0.0.9"));
-		TestFalse(TEXT("0.0.9 is incompatible (too low)"), CheckFlexVaultVersion(Env, ResultInfo, &ExtractedVersion));
+		AddExpectedErrorPlain(TEXT("Incompatible FlexVault CLI version '0.9.0'"), EAutomationExpectedErrorFlags::Contains, 1);
+		TestFalse(TEXT("0.9.0 is incompatible (too low)"), CheckFlexVaultVersion(Env, ResultInfo, &ExtractedVersion));
 		TestTrue(TEXT("Error reported for incompatible version"), ResultInfo.ErrorMessages.Num() > 0);
 	}
 
-	// 3. Incompatible higher version (>= 0.10.0)
+	// 3. Incompatible higher version (>= 0.11.0)
 	{
 		FSourceControlResultInfo ResultInfo;
 		FString ExtractedVersion;
-		TSharedPtr<FJsonObject> Env = MakeEnvelope(TEXT("0.10.0"));
-		TestFalse(TEXT("0.10.0 is incompatible (too high)"), CheckFlexVaultVersion(Env, ResultInfo, &ExtractedVersion));
+		TSharedPtr<FJsonObject> Env = MakeEnvelope(TEXT("0.11.0"));
+		AddExpectedErrorPlain(TEXT("Incompatible FlexVault CLI version '0.11.0'"), EAutomationExpectedErrorFlags::Contains, 1);
+		TestFalse(TEXT("0.11.0 is incompatible (too high)"), CheckFlexVaultVersion(Env, ResultInfo, &ExtractedVersion));
 		TestTrue(TEXT("Error reported for incompatible version"), ResultInfo.ErrorMessages.Num() > 0);
 	}
 
@@ -1008,6 +1048,7 @@ bool FFlexVaultCheckVersionTest::RunTest(const FString& Parameters)
 	{
 		FSourceControlResultInfo ResultInfo;
 		TSharedPtr<FJsonObject> EmptyEnv = MakeShared<FJsonObject>();
+		AddExpectedErrorPlain(TEXT("Unable to determine CLI version from status output"), EAutomationExpectedErrorFlags::Contains, 1);
 		TestFalse(TEXT("Empty envelope fails check"), CheckFlexVaultVersion(EmptyEnv, ResultInfo));
 		TestTrue(TEXT("Error reported for missing version field"), ResultInfo.ErrorMessages.Num() > 0);
 	}

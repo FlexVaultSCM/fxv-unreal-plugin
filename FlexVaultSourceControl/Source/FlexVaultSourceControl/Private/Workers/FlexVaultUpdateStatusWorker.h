@@ -27,7 +27,9 @@ private:
 
 	// Repository-wide status results cached during Execute() to update all states on the main thread
 	mutable TMap<FString, EFlexVaultState::Type> ModifiedFiles;
-	mutable TSet<FString> ConflictedFiles;
+	// Maps a conflicted file's relative path to its conflict_state.kind ("content", "deleted",
+	// "type_change"), or an empty string if the entry has no kind (older CLI / malformed payload).
+	mutable TMap<FString, FString> ConflictedFiles;
 	mutable int32 DepotRevision = 0;
 	mutable int32 LocalRevision = 0;
 	mutable FString WorkspacePath;

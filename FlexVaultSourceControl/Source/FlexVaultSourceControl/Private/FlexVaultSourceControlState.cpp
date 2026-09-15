@@ -111,11 +111,33 @@ FText FFlexVaultSourceControlState::GetDisplayName() const
 	}
 }
 
+static FText GetFlexVaultConflictReasonTooltip(const FString& InConflictReasonKind)
+{
+	if (InConflictReasonKind == TEXT("content"))
+	{
+		return LOCTEXT("ConflictKind_Content", "Conflicted: both sides changed this file's content");
+	}
+	if (InConflictReasonKind == TEXT("deleted"))
+	{
+		return LOCTEXT("ConflictKind_Deleted", "Conflicted: one side deleted this path while the other changed it");
+	}
+	if (InConflictReasonKind == TEXT("type_change"))
+	{
+		return LOCTEXT("ConflictKind_TypeChange", "Conflicted: one side replaced this path with a directory");
+	}
+	return LOCTEXT("ConflictKind_Unknown", "The file(s) are in conflict");
+}
+
 FText FFlexVaultSourceControlState::GetDisplayTooltip() const
 {
 	if (!IsCurrent())
 	{
 		return LOCTEXT("NotCurrent_Tooltip", "The file(s) are not at the latest revision");
+	}
+
+	if (bConflicted)
+	{
+		return GetFlexVaultConflictReasonTooltip(ConflictReasonKind);
 	}
 
 	switch (State)
@@ -281,6 +303,7 @@ void FFlexVaultSourceControlState::Update(const FFlexVaultSourceControlState& In
 	bBinary = InOther.bBinary;
 	bExclusiveCheckout = InOther.bExclusiveCheckout;
 	bConflicted = InOther.bConflicted;
+	ConflictReasonKind = InOther.ConflictReasonKind;
 
 	if (InTimeStamp)
 	{

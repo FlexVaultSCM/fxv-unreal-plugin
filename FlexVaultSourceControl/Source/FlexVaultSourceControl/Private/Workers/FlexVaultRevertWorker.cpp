@@ -63,6 +63,7 @@ bool FFlexVaultRevertWorker::UpdateStates() const
 		State->SetState(EFlexVaultState::Unchanged);
 		State->bModified = false;
 		State->bConflicted = false;
+		State->ConflictReasonKind.Empty();
 		State->TimeStamp = FDateTime::Now();
 		UE_LOG(LogFlexVault, Log, TEXT("FlexVault Revert: Updated state for reverted file: %s"), *File);
 

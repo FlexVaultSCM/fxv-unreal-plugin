@@ -208,9 +208,12 @@ bool FFlexVaultUpdateStatusWorker::Execute(FFlexVaultSourceControlCommand& InCom
 			FilePath.ReplaceInline(TEXT("\\"), TEXT("/"));
 			ModifiedFiles.Add(FilePath, MappedState);
 
-			if ((*FileObj)->HasField(TEXT("conflict_state")))
+			const TSharedPtr<FJsonObject>* ConflictStateObj = nullptr;
+			if ((*FileObj)->TryGetObjectField(TEXT("conflict_state"), ConflictStateObj))
 			{
-				ConflictedFiles.Add(FilePath);
+				FString ConflictKind;
+				(*ConflictStateObj)->TryGetStringField(TEXT("kind"), ConflictKind);
+				ConflictedFiles.Add(FilePath, ConflictKind);
 			}
 
 			UE_LOG(LogFlexVault, VeryVerbose, TEXT("FlexVault: Parsed modified file: %s (MappedState: %d, SourceStateStr: %s)"), *FilePath, (int32)MappedState, *StateStr);
@@ -283,9 +286,10 @@ bool FFlexVaultUpdateStatusWorker::UpdateStates() const
 			NewState.DepotRevNumber = DepotRevision;
 			NewState.LocalRevNumber = LocalRevision;
 
-			if (ConflictedFiles.Contains(RelativePath))
+			if (const FString* FoundConflictKind = ConflictedFiles.Find(RelativePath))
 			{
 				NewState.bConflicted = true;
+				NewState.ConflictReasonKind = *FoundConflictKind;
 			}
 
 			if (const EFlexVaultState::Type* FoundState = ModifiedFiles.Find(RelativePath))
@@ -321,6 +325,7 @@ bool FFlexVaultUpdateStatusWorker::UpdateStates() const
 		if (CachedState->State != NewState.State ||
 			CachedState->bModified != NewState.bModified ||
 			CachedState->bConflicted != NewState.bConflicted ||
+			CachedState->ConflictReasonKind != NewState.ConflictReasonKind ||
 			CachedState->DepotRevNumber != NewState.DepotRevNumber ||
 			CachedState->LocalRevNumber != NewState.LocalRevNumber ||
 			CachedState->History.Num() != NewState.History.Num())
