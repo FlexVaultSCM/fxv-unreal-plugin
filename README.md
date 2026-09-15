@@ -6,7 +6,7 @@ Unreal Engine source control plugin for [FlexVault](https://fxv.dev). Integrates
 
 - Unreal Engine 5 (tested with UE 5.8)
 - C++ build environment (Visual Studio on Windows, Xcode on macOS, or Clang on Linux), unless your team already distributes precompiled plugin binaries with the project
-- `fxv` CLI version `0.1.0` to `< 0.10.0` installed on your system (configured in **Project Settings > FlexVault Source Control** or detected on `PATH`)
+- `fxv` CLI version `0.10.0` to `< 0.11.0` installed on your system (configured in **Project Settings > FlexVault Source Control** or detected on `PATH`)
 
 ## Installation
 

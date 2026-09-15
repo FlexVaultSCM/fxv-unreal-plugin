@@ -391,17 +391,9 @@ namespace FlexVaultCliCompatibility
 	// the two apart. Until fxv-core reaches 1.0, treat every MINOR as a potential break and only widen Max
 	// after checking fxv-core/CHANGELOG.md for a "Breaking Changes" entry between the old and new Max.
 	//
-	// Current range: 0.5.0 has no "Breaking Changes" entry in fxv-core/CHANGELOG.md. 0.6.0 does
-	// ("fxv revert and fxv resolve now ... use the standard 'workspace path' pattern rather than the
-	// workspace root relative paths used before"), but it doesn't affect this plugin: 0.6.0 resolves a
-	// revert/resolve path as relative to the CLI's working directory (falling back to workspace-root
-	// only for a leading-separator path), and RunFlexVaultCommand always launches 'fxv' with the
-	// workspace root as its working directory, so FFlexVaultRevertWorker/FFlexVaultResolveWorker's
-	// existing GetRelativeWorkspacePath()-built paths resolve identically under old and new semantics.
-	// 0.7.0 (RPC/internal serialization changes), 0.8.0 (doctor/resume changes), and 0.9.0 do not
-	// break CLI commands or JSON envelope schema used by the plugin.
-	constexpr int32 MinMajor = 0, MinMinor = 1, MinPatch = 0; // >= 0.1.0
-	constexpr int32 MaxMajor = 0, MaxMinor = 10, MaxPatch = 0; // < 0.10.0
+	// See fxv-core/CHANGELOG.md for the "Breaking Changes" entries that justify this range.
+	constexpr int32 MinMajor = 0, MinMinor = 10, MinPatch = 0; // >= 0.10.0
+	constexpr int32 MaxMajor = 0, MaxMinor = 11, MaxPatch = 0; // < 0.11.0
 }
 
 namespace
