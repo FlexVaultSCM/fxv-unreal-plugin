@@ -134,6 +134,9 @@ public:
 	/** Conflicted flag */
 	bool bConflicted;
 
+	/** Raw conflict_state.kind from 'fxv status' ("content", "deleted", "type_change"), empty if unknown or not conflicted */
+	FString ConflictReasonKind;
+
 	/** Timestamp of last SCM update */
 	FDateTime TimeStamp;
 };

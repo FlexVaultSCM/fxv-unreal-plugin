@@ -409,6 +409,7 @@ bool FFlexVaultWorkerUpdateStatusTest::RunTest(const FString& Parameters)
 	Worker.bHasChangesToSync = true;
 	Worker.ModifiedFiles.Add(ModFileRelative, EFlexVaultState::CheckedOut);
 	Worker.ModifiedFiles.Add(AddFileRelative, EFlexVaultState::OpenForAdd);
+	Worker.ConflictedFiles.Add(ModFileRelative, TEXT("content"));
 
 	// Verify UpdateStates correctly applies injected mock SCM findings
 	TestTrue(TEXT("Status UpdateStates succeeds"), Worker.UpdateStates());
@@ -419,6 +420,8 @@ bool FFlexVaultWorkerUpdateStatusTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Modified file SCM state set to CheckedOut"), ModCached->GetState(), EFlexVaultState::CheckedOut);
 	TestEqual(TEXT("Modified file LocalRevision matches"), ModCached->LocalRevNumber, 14);
 	TestEqual(TEXT("Modified file DepotRevision matches"), ModCached->DepotRevNumber, 15);
+	TestTrue(TEXT("Modified file marked conflicted"), ModCached->IsConflicted());
+	TestEqual(TEXT("Modified file conflict reason kind matches"), ModCached->ConflictReasonKind, TEXT("content"));
 
 	TestEqual(TEXT("Added file SCM state set to OpenForAdd"), AddCached->GetState(), EFlexVaultState::OpenForAdd);
 
@@ -719,6 +722,40 @@ bool FFlexVaultCanCheckInTest::RunTest(const FString& Parameters)
 	ConflictedOnlyState.LocalRevNumber = 5;
 	ConflictedOnlyState.bConflicted = true;
 	TestFalse(TEXT("Conflict-only (unmodified) file cannot be checked in"), ConflictedOnlyState.CanCheckIn());
+
+	return true;
+}
+
+// ── Test: Conflict reason tooltip text per conflict_state.kind ──────────────
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultConflictReasonTooltipTest, "FlexVault.SourceControl.ConflictReasonTooltip", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FFlexVaultConflictReasonTooltipTest::RunTest(const FString& Parameters)
+{
+	auto MakeConflictedState = [](const FString& InConflictReasonKind) -> FFlexVaultSourceControlState
+	{
+		FFlexVaultSourceControlState State(TEXT("Content/Conflicted.uasset"), EFlexVaultState::CheckedOut);
+		State.DepotRevNumber = 5;
+		State.LocalRevNumber = 5;
+		State.bConflicted = true;
+		State.ConflictReasonKind = InConflictReasonKind;
+		return State;
+	};
+
+	TestTrue(TEXT("'content' kind tooltip explains a content clash"),
+		MakeConflictedState(TEXT("content")).GetDisplayTooltip().ToString().Contains(TEXT("content")));
+	TestTrue(TEXT("'deleted' kind tooltip explains a delete/edit clash"),
+		MakeConflictedState(TEXT("deleted")).GetDisplayTooltip().ToString().Contains(TEXT("deleted")));
+	TestTrue(TEXT("'type_change' kind tooltip explains a file/directory clash"),
+		MakeConflictedState(TEXT("type_change")).GetDisplayTooltip().ToString().Contains(TEXT("directory")));
+	TestEqual(TEXT("Unrecognized/missing kind falls back to a generic conflict tooltip"),
+		MakeConflictedState(FString()).GetDisplayTooltip().ToString(), TEXT("The file(s) are in conflict"));
+
+	// A non-conflicted file must still get its ordinary state tooltip, not a conflict tooltip.
+	FFlexVaultSourceControlState UnchangedState(TEXT("Content/Clean.uasset"), EFlexVaultState::Unchanged);
+	UnchangedState.DepotRevNumber = 5;
+	UnchangedState.LocalRevNumber = 5;
+	TestEqual(TEXT("Non-conflicted file keeps its state-based tooltip"),
+		UnchangedState.GetDisplayTooltip().ToString(), TEXT("The file(s) are tracked and unmodified"));
 
 	return true;
 }
