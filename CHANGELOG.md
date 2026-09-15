@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/FlexVaultSCM/fxv-unreal-plugin/compare/v0.3.0...v0.4.0) (2026-09-15)
+
+
+### Features
+
+* Upgrade plugin for fxv CLI 0.10.1+ (status schema v2) ([#17](https://github.com/FlexVaultSCM/fxv-unreal-plugin/issues/17)) ([65af46d](https://github.com/FlexVaultSCM/fxv-unreal-plugin/commit/65af46d88f18276a197f4d91ea12c3b2d751e687))
+
 ## [0.3.0](https://github.com/FlexVaultSCM/fxv-unreal-plugin/compare/v0.2.0...v0.3.0) (2026-09-10)
 
 
