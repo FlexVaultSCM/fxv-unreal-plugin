@@ -53,4 +53,8 @@ public:
 	/** Grace period allotted for a timed-out CLI process to exit after being terminated */
 	UPROPERTY(Config, EditAnywhere, Category="FlexVault", meta=(DisplayName="Command Cancel Grace Period (Seconds)", ClampMin="0.1", ClampMax="10.0", ToolTip="Maximum time in seconds to wait for the FlexVault CLI process to exit after it is terminated due to a command timeout."))
 	double CommandCancelGracePeriodSeconds;
+
+	/** How long the workspace can sit with pending changes and no snapshot before an automatic one is taken. 0 disables. */
+	UPROPERTY(Config, EditAnywhere, Category="FlexVault", meta=(DisplayName="Periodic Snapshot Interval (Seconds)", ClampMin="0", ToolTip="A snapshot is taken automatically if pending changes have gone this long without one. Set to 0 to disable."))
+	int32 PeriodicSnapshotIntervalSeconds;
 };

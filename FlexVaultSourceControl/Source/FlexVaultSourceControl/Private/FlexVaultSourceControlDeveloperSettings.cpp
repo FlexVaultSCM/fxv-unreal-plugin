@@ -8,6 +8,7 @@ UFlexVaultSourceControlDeveloperSettings::UFlexVaultSourceControlDeveloperSettin
 	, ResolvePreference(TEXT("theirs"))
 	, CommandTimeoutSeconds(60.0)
 	, CommandCancelGracePeriodSeconds(2.0)
+	, PeriodicSnapshotIntervalSeconds(300)
 {
 }
 
