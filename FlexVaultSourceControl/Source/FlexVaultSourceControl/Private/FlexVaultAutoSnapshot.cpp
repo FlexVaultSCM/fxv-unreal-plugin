@@ -7,16 +7,19 @@
 #include "EditorReimportHandler.h"
 #include "Engine/World.h"
 #include "UObject/ObjectSaveContext.h"
+#include "Misc/CoreDelegates.h"
 #include "Misc/Paths.h"
 #include "Async/Async.h"
 #include "HAL/PlatformTime.h"
 
 FFlexVaultSourceControlProvider* FFlexVaultAutoSnapshot::Provider = nullptr;
+FDelegateHandle FFlexVaultAutoSnapshot::PostEngineInitHandle;
 FDelegateHandle FFlexVaultAutoSnapshot::AssetsPreDeleteHandle;
 FDelegateHandle FFlexVaultAutoSnapshot::PreSaveWorldHandle;
 FDelegateHandle FFlexVaultAutoSnapshot::ReimportHandle;
 FTSTicker::FDelegateHandle FFlexVaultAutoSnapshot::TickerHandle;
 
+bool FFlexVaultAutoSnapshot::bEditorHooksRegistered = false;
 TMap<TWeakObjectPtr<UWorld>, int32> FFlexVaultAutoSnapshot::ActorCountByWorld;
 double FFlexVaultAutoSnapshot::LastSnapshotTime = -1.0;
 
@@ -46,10 +49,21 @@ static constexpr double ReimportBatchSettleSeconds = 2.0;
 void FFlexVaultAutoSnapshot::Register(FFlexVaultSourceControlProvider& InProvider)
 {
 	Provider = &InProvider;
+
+	// This module loads at EarliestPossible, before the object system's default objects are
+	// ready. FReimportManager::Instance() constructs UFactory CDOs on first use, which crashes
+	// ("Object is not packaged") this early - defer all delegate registration until the engine has
+	// finished starting up.
+	PostEngineInitHandle = FCoreDelegates::GetOnPostEngineInit().AddStatic(&FFlexVaultAutoSnapshot::OnPostEngineInit);
+}
+
+void FFlexVaultAutoSnapshot::OnPostEngineInit()
+{
 	AssetsPreDeleteHandle = FEditorDelegates::OnAssetsPreDelete.AddStatic(&FFlexVaultAutoSnapshot::OnAssetsPreDelete);
 	PreSaveWorldHandle = FEditorDelegates::PreSaveWorldWithContext.AddStatic(&FFlexVaultAutoSnapshot::OnPreSaveWorld);
 	ReimportHandle = FReimportManager::Instance()->OnPostReimport().AddStatic(&FFlexVaultAutoSnapshot::OnPostReimport);
 	TickerHandle = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateStatic(&FFlexVaultAutoSnapshot::Tick), TickIntervalSeconds);
+	bEditorHooksRegistered = true;
 
 	// Count the periodic interval from registration time, not from "never" - a fresh session with
 	// old pending changes shouldn't fire a snapshot on the very first tick.
@@ -58,6 +72,19 @@ void FFlexVaultAutoSnapshot::Register(FFlexVaultSourceControlProvider& InProvide
 
 void FFlexVaultAutoSnapshot::Unregister()
 {
+	FCoreDelegates::GetOnPostEngineInit().Remove(PostEngineInitHandle);
+	PostEngineInitHandle.Reset();
+
+	if (!bEditorHooksRegistered)
+	{
+		// OnPostEngineInit never fired (e.g. shutdown before engine startup finished) - the hooks
+		// below, including FReimportManager::Instance(), were never touched, so don't touch them
+		// now either.
+		Provider = nullptr;
+		return;
+	}
+	bEditorHooksRegistered = false;
+
 	FEditorDelegates::OnAssetsPreDelete.Remove(AssetsPreDeleteHandle);
 	FEditorDelegates::PreSaveWorldWithContext.Remove(PreSaveWorldHandle);
 	FReimportManager::Instance()->OnPostReimport().Remove(ReimportHandle);

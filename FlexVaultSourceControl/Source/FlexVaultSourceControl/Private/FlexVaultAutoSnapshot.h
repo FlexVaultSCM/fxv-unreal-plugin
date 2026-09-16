@@ -31,6 +31,7 @@ public:
 	static void Unregister();
 
 private:
+	static void OnPostEngineInit();
 	static void OnAssetsPreDelete(const TArray<UObject*>& AssetsToDelete);
 	static void OnPreSaveWorld(UWorld* World, FObjectPreSaveContext SaveContext);
 	static void OnPostReimport(UObject* Object, bool bSuccess);
@@ -46,11 +47,13 @@ private:
 	static void RunSnapshotAsync(const FString& Description);
 
 	static FFlexVaultSourceControlProvider* Provider;
+	static FDelegateHandle PostEngineInitHandle;
 	static FDelegateHandle AssetsPreDeleteHandle;
 	static FDelegateHandle PreSaveWorldHandle;
 	static FDelegateHandle ReimportHandle;
 	static FTSTicker::FDelegateHandle TickerHandle;
 
+	static bool bEditorHooksRegistered;
 	static TMap<TWeakObjectPtr<UWorld>, int32> ActorCountByWorld;
 	static double LastSnapshotTime;
 
