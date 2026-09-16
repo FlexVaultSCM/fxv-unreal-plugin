@@ -3,6 +3,7 @@
 #include "FlexVaultSourceControlProvider.h"
 #include "FlexVaultSourceControlDeveloperSettings.h"
 #include "FlexVaultSourceControlCommand.h"
+#include "FlexVaultIgnoreChecker.h"
 #include "Workers/FlexVaultConnectWorker.h"
 #include "Workers/FlexVaultUpdateStatusWorker.h"
 #include "Workers/FlexVaultCheckOutWorker.h"
@@ -84,6 +85,15 @@ ISourceControlProvider::FInitResult FFlexVaultSourceControlProvider::Init(EInitF
 			
 			ECommandResult::Type CmdResult = IssueCommand(MoveTemp(Command), true);
 			bServerAvailable = (CmdResult == ECommandResult::Succeeded);
+
+			// Only ever prompt once per editor session, on the startup connection attempt -- not on every
+			// manual reconnect from Source Control settings.
+			static bool bHasCheckedIgnoresThisSession = false;
+			if (bServerAvailable && !bHasCheckedIgnoresThisSession)
+			{
+				bHasCheckedIgnoresThisSession = true;
+				FFlexVaultIgnoreChecker::CheckAndPromptOnStartup(FPaths::ConvertRelativePathToFull(FPaths::ProjectDir()));
+			}
 		}
 	}
 
