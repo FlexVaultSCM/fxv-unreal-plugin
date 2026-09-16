@@ -76,7 +76,7 @@ void FFlexVaultIgnoreChecker::CheckAndPromptOnStartup(const FString& WorkspaceRo
 		SNotificationItem::CS_None));
 
 	// Buttons above are set to VisibleInState=CS_None, which matches the notification's default
-	// completion state -- do not change it here, or the buttons never render.
+	// completion state. Do not change it here, or the buttons never render.
 	*NotificationHandle = FSlateNotificationManager::Get().AddNotification(Info);
 #endif
 }
