@@ -54,10 +54,10 @@ void FFlexVaultIgnoreChecker::CheckAndPromptOnStartup(const FString& WorkspaceRo
 		FText(),
 		FSimpleDelegate::CreateLambda([WorkspaceRootCopy, MissingCopy, NotificationHandle]()
 		{
-			AppendEntries(WorkspaceRootCopy, MissingCopy);
+			bool bAdded = AppendEntries(WorkspaceRootCopy, MissingCopy);
 			if (NotificationHandle->IsValid())
 			{
-				(*NotificationHandle)->SetCompletionState(SNotificationItem::CS_Success);
+				(*NotificationHandle)->SetCompletionState(bAdded ? SNotificationItem::CS_Success : SNotificationItem::CS_Fail);
 				(*NotificationHandle)->ExpireAndFadeout();
 			}
 		}),
@@ -94,14 +94,14 @@ TArray<FString> FFlexVaultIgnoreChecker::GetMissingEntries(const FString& Worksp
 		Line.TrimStartAndEndInline();
 		if (!Line.IsEmpty() && !Line.StartsWith(TEXT("#")))
 		{
-			Existing.Add(Line);
+			Existing.Add(NormalizeEntry(Line));
 		}
 	}
 
 	TArray<FString> Missing;
 	for (const FString& Pattern : GetDefaultIgnores())
 	{
-		if (!Existing.Contains(Pattern))
+		if (!Existing.Contains(NormalizeEntry(Pattern)))
 		{
 			Missing.Add(Pattern);
 		}
@@ -109,7 +109,15 @@ TArray<FString> FFlexVaultIgnoreChecker::GetMissingEntries(const FString& Worksp
 	return Missing;
 }
 
-void FFlexVaultIgnoreChecker::AppendEntries(const FString& WorkspaceRoot, const TArray<FString>& Entries)
+FString FFlexVaultIgnoreChecker::NormalizeEntry(const FString& Entry)
+{
+	FString Normalized = Entry;
+	Normalized.RemoveFromEnd(TEXT("/*"));
+	Normalized.RemoveFromEnd(TEXT("/"));
+	return Normalized;
+}
+
+bool FFlexVaultIgnoreChecker::AppendEntries(const FString& WorkspaceRoot, const TArray<FString>& Entries)
 {
 	const FString FxvIgnorePath = FPaths::Combine(WorkspaceRoot, TEXT(".fxvignore"));
 
@@ -126,8 +134,14 @@ void FFlexVaultIgnoreChecker::AppendEntries(const FString& WorkspaceRoot, const 
 		Addition += Entry + LINE_TERMINATOR;
 	}
 
-	FFileHelper::SaveStringToFile(ExistingContent + Addition, *FxvIgnorePath);
+	if (!FFileHelper::SaveStringToFile(ExistingContent + Addition, *FxvIgnorePath))
+	{
+		UE_LOG(LogFlexVault, Error, TEXT("FlexVault: failed to write %d default ignore(s) to .fxvignore"), Entries.Num());
+		return false;
+	}
+
 	UE_LOG(LogFlexVault, Log, TEXT("FlexVault: added %d default ignore(s) to .fxvignore"), Entries.Num());
+	return true;
 }
 
 void FFlexVaultIgnoreChecker::MarkDismissed(const TArray<FString>& Entries)

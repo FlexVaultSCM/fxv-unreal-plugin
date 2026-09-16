@@ -15,7 +15,8 @@ public:
 
 private:
 	static TArray<FString> GetMissingEntries(const FString& WorkspaceRoot);
-	static void AppendEntries(const FString& WorkspaceRoot, const TArray<FString>& Entries);
+	static bool AppendEntries(const FString& WorkspaceRoot, const TArray<FString>& Entries);
+	static FString NormalizeEntry(const FString& Entry);
 	static void MarkDismissed(const TArray<FString>& Entries);
 	static TArray<FString> GetDismissed();
 };
