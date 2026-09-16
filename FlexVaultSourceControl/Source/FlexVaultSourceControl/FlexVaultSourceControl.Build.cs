@@ -12,6 +12,7 @@ public class FlexVaultSourceControl : ModuleRules
 			new string[] {
 				"Core",
 				"CoreUObject",
+				"Engine",
 				"SourceControl",
 				"Json",
 				"Projects",

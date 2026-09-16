@@ -6,6 +6,7 @@
 #include "Editor.h"
 #include "EditorReimportHandler.h"
 #include "Engine/World.h"
+#include "UObject/ObjectSaveContext.h"
 #include "Misc/Paths.h"
 #include "Async/Async.h"
 #include "HAL/PlatformTime.h"
