@@ -2,7 +2,7 @@
 #include "FlexVaultAutoSnapshot.h"
 #include "FlexVaultSourceControlProvider.h"
 #include "FlexVaultSourceControlDeveloperSettings.h"
-#include "FlexVaultSourceControlWorkerHelper.h"
+#include "Workers/FlexVaultSourceControlWorkerHelper.h"
 #include "Editor.h"
 #include "EditorReimportHandler.h"
 #include "Engine/World.h"
@@ -66,6 +66,8 @@ void FFlexVaultAutoSnapshot::Unregister()
 	PreSaveWorldHandle.Reset();
 	ReimportHandle.Reset();
 	ActorCountByWorld.Reset();
+	PendingReimportCount = 0;
+	LastReimportEventTime = -1.0;
 	Provider = nullptr;
 }
 
@@ -76,7 +78,11 @@ void FFlexVaultAutoSnapshot::OnAssetsPreDelete(const TArray<UObject*>& AssetsToD
 		return;
 	}
 
-	TriggerSnapshotIfWarranted(FString::Printf(TEXT("Auto-snapshot before deleting %d asset(s)"), AssetsToDelete.Num()));
+	// Deletion is always risky and always worth a checkpoint - bypass the shared debounce (it
+	// exists to stop the *heuristic* triggers below from bursting) so a delete right after
+	// another trigger, or right after another delete, is never silently swallowed.
+	LastSnapshotTime = FPlatformTime::Seconds();
+	RunSnapshotAsync(FString::Printf(TEXT("Auto-snapshot before deleting %d asset(s)"), AssetsToDelete.Num()));
 }
 
 void FFlexVaultAutoSnapshot::OnPreSaveWorld(UWorld* World, FObjectPreSaveContext SaveContext)
@@ -253,6 +259,7 @@ bool FFlexVaultAutoSnapshot::TriggerSnapshotIfWarranted(const FString& Descripti
 	const double Now = FPlatformTime::Seconds();
 	if (LastSnapshotTime >= 0.0 && Now - LastSnapshotTime < DebounceSeconds)
 	{
+		UE_LOG(LogFlexVault, Verbose, TEXT("FlexVaultAutoSnapshot: suppressed by debounce (%s)"), *Description);
 		return false;
 	}
 	LastSnapshotTime = Now;
