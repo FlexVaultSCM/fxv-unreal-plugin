@@ -17,8 +17,8 @@ void FFlexVaultSourceControlModule::StartupModule()
 	// Bind our source control provider to the Unreal modular feature manager
 	IModularFeatures::Get().RegisterModularFeature("SourceControl", &FlexVaultSourceControlProvider);
 
-	// Best-effort auto-snapshot on pre-save, for high-entropy editor ops that don't already go
-	// through a FlexVault source control worker (see FlexVaultAutoSnapshot.h).
+	// Auto-snapshot before high-entropy editor ops (bulk delete, big level edits) - see
+	// FlexVaultAutoSnapshot.h.
 	FFlexVaultAutoSnapshot::Register(FlexVaultSourceControlProvider);
 }
 

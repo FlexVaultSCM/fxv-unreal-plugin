@@ -5,20 +5,15 @@
 
 class FFlexVaultSourceControlProvider;
 class FObjectPreSaveContext;
+class UWorld;
 
 /**
- * Fires a best-effort local `fxv snapshot` before high-entropy editor operations that don't
- * already go through the FlexVault source control provider's own workers (e.g. FlexVaultDeleteWorker
- * already snapshots before deletion). Right now that's UObject/level saves, which cover the disk-write
- * step of most destructive asset operations (prefab-equivalent Blueprint saves, level saves after
- * bulk actor edits, redirector fixups that resave affected packages, etc.) since Unreal funnels all of
- * them through UPackage::SavePackage -> FCoreUObjectDelegates::OnObjectPreSave.
- *
- * These snapshots are a safety net, not a transactional guarantee: they run on a background thread so
- * they don't stall the editor's save, so a snapshot can in rare cases race with the save it's meant to
- * precede. That's an acceptable tradeoff here since FlexVaultDeleteWorker already provides the
- * synchronous, ordering-guaranteed snapshot for the one operation (delete) where losing that race would
- * be unrecoverable.
+ * Best-effort local `fxv snapshot` before specific high-entropy editor operations - not on every
+ * save. Two triggers:
+ *  - Asset deletion (always risky, always worth a checkpoint).
+ *  - Level saves where the actor count changed by a lot since the last save (a proxy for "someone
+ *    just did a big World Partition / bulk-actor edit", as opposed to tweaking one actor's
+ *    transform and hitting Ctrl+S).
  */
 class FFlexVaultAutoSnapshot
 {
@@ -27,10 +22,12 @@ public:
 	static void Unregister();
 
 private:
-	static void OnObjectPreSave(UObject* Object, FObjectPreSaveContext SaveContext);
+	static void OnAssetsPreDelete(const TArray<UObject*>& AssetsToDelete);
+	static void OnPreSaveWorld(UWorld* World, FObjectPreSaveContext SaveContext);
 	static void RunSnapshotAsync(const FString& Description);
 
 	static FFlexVaultSourceControlProvider* Provider;
-	static FDelegateHandle ObjectPreSaveHandle;
-	static double LastSnapshotTimeSeconds;
+	static FDelegateHandle AssetsPreDeleteHandle;
+	static FDelegateHandle PreSaveWorldHandle;
+	static int32 LastKnownActorCount;
 };

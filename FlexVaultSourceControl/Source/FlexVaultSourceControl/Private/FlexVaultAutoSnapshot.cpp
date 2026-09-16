@@ -3,56 +3,71 @@
 #include "FlexVaultSourceControlProvider.h"
 #include "FlexVaultSourceControlDeveloperSettings.h"
 #include "FlexVaultSourceControlWorkerHelper.h"
-#include "UObject/ObjectSaveContext.h"
-#include "UObject/Package.h"
+#include "Editor.h"
 #include "Engine/World.h"
 #include "Misc/Paths.h"
 #include "Async/Async.h"
-#include "HAL/PlatformTime.h"
 
 FFlexVaultSourceControlProvider* FFlexVaultAutoSnapshot::Provider = nullptr;
-FDelegateHandle FFlexVaultAutoSnapshot::ObjectPreSaveHandle;
-double FFlexVaultAutoSnapshot::LastSnapshotTimeSeconds = -1.0;
+FDelegateHandle FFlexVaultAutoSnapshot::AssetsPreDeleteHandle;
+FDelegateHandle FFlexVaultAutoSnapshot::PreSaveWorldHandle;
+int32 FFlexVaultAutoSnapshot::LastKnownActorCount = -1;
 
-// A single editor "save" gesture (Ctrl+S on a level, "Save All", a Blueprint compile-on-save) can
-// pre-save many UObjects across one or more packages, each independently firing OnObjectPreSave.
-// Debounce so one save gesture produces one `fxv snapshot` subprocess instead of a flood of them.
-static constexpr double AutoSnapshotDebounceSeconds = 2.0;
+// A level save that only touches a handful of actors doesn't need a checkpoint; a save after a
+// big World Partition edit or bulk actor change does.
+static constexpr int32 ActorCountDeltaThreshold = 10;
 
 void FFlexVaultAutoSnapshot::Register(FFlexVaultSourceControlProvider& InProvider)
 {
 	Provider = &InProvider;
-	ObjectPreSaveHandle = FCoreUObjectDelegates::OnObjectPreSave.AddStatic(&FFlexVaultAutoSnapshot::OnObjectPreSave);
+	AssetsPreDeleteHandle = FEditorDelegates::OnAssetsPreDelete.AddStatic(&FFlexVaultAutoSnapshot::OnAssetsPreDelete);
+	PreSaveWorldHandle = FEditorDelegates::PreSaveWorldWithContext.AddStatic(&FFlexVaultAutoSnapshot::OnPreSaveWorld);
 }
 
 void FFlexVaultAutoSnapshot::Unregister()
 {
-	FCoreUObjectDelegates::OnObjectPreSave.Remove(ObjectPreSaveHandle);
-	ObjectPreSaveHandle.Reset();
+	FEditorDelegates::OnAssetsPreDelete.Remove(AssetsPreDeleteHandle);
+	FEditorDelegates::PreSaveWorldWithContext.Remove(PreSaveWorldHandle);
+	AssetsPreDeleteHandle.Reset();
+	PreSaveWorldHandle.Reset();
 	Provider = nullptr;
 }
 
-void FFlexVaultAutoSnapshot::OnObjectPreSave(UObject* Object, FObjectPreSaveContext SaveContext)
+void FFlexVaultAutoSnapshot::OnAssetsPreDelete(const TArray<UObject*>& AssetsToDelete)
 {
-	if (!Object || !Provider || !Provider->IsAvailable())
+	if (AssetsToDelete.Num() == 0 || !Provider || !Provider->IsAvailable())
 	{
 		return;
 	}
 
-	const double Now = FPlatformTime::Seconds();
-	if (LastSnapshotTimeSeconds >= 0.0 && (Now - LastSnapshotTimeSeconds) < AutoSnapshotDebounceSeconds)
+	RunSnapshotAsync(FString::Printf(TEXT("Auto-snapshot before deleting %d asset(s)"), AssetsToDelete.Num()));
+}
+
+void FFlexVaultAutoSnapshot::OnPreSaveWorld(UWorld* World, FObjectPreSaveContext SaveContext)
+{
+	if (!World || !Provider || !Provider->IsAvailable())
 	{
 		return;
 	}
-	LastSnapshotTimeSeconds = Now;
 
-	const UPackage* Outermost = Object->GetOutermost();
-	const bool bIsLevelSave = Object->IsA<UWorld>() || (Outermost && Outermost->ContainsMap());
-	const FString Description = bIsLevelSave
-		? FString::Printf(TEXT("Auto-snapshot before level save (%s)"), *Object->GetName())
-		: FString::Printf(TEXT("Auto-snapshot before asset save (%s)"), *Object->GetName());
+	const int32 CurrentActorCount = World->GetActorCount();
 
-	RunSnapshotAsync(Description);
+	// First save we've seen this session - just record a baseline, nothing to compare against yet.
+	if (LastKnownActorCount < 0)
+	{
+		LastKnownActorCount = CurrentActorCount;
+		return;
+	}
+
+	const int32 Delta = FMath::Abs(CurrentActorCount - LastKnownActorCount);
+	LastKnownActorCount = CurrentActorCount;
+
+	if (Delta < ActorCountDeltaThreshold)
+	{
+		return;
+	}
+
+	RunSnapshotAsync(FString::Printf(TEXT("Auto-snapshot before level save (%s, %d actors changed)"), *World->GetName(), Delta));
 }
 
 void FFlexVaultAutoSnapshot::RunSnapshotAsync(const FString& Description)
@@ -70,8 +85,8 @@ void FFlexVaultAutoSnapshot::RunSnapshotAsync(const FString& Description)
 
 	const FString WorkspacePath = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
 
-	// Off the game thread that just triggered PreSave, so the editor's save isn't blocked on the
-	// snapshot subprocess (see the "best-effort" note on the class comment above).
+	// Runs off the game thread so we don't stall the delete/save that triggered it. Best-effort -
+	// it can in rare cases race with the operation it's meant to precede.
 	Async(EAsyncExecution::ThreadPool, [WorkspacePath, BinaryPath, Description]()
 	{
 		TArray<FString> OutputLines;
