@@ -127,6 +127,23 @@ static bool LaunchProcessWithPipe(
 	return true;
 }
 
+TArray<FString> BuildFlexVaultSnapshotArgs(const FString& InDescription)
+{
+	return {
+		TEXT("snapshot"),
+		TEXT("-d"),
+		InDescription,
+		TEXT("--unattended"),
+		TEXT("--no-color")
+	};
+}
+
+FCriticalSection& GetFlexVaultSnapshotLock()
+{
+	static FCriticalSection SnapshotLock;
+	return SnapshotLock;
+}
+
 bool RunFlexVaultCommand(
 	const FString& InBinaryPath,
 	const FString& InWorkspacePath,

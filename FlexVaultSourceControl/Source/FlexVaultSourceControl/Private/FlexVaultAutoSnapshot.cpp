@@ -376,7 +376,7 @@ void FFlexVaultAutoSnapshot::LaunchSnapshotProcess(const FString& Description)
 	const FString BinaryPath = Settings ? Settings->GetEffectiveBinaryPath() : FString();
 	if (BinaryPath.IsEmpty())
 	{
-		OnSnapshotProcessComplete();
+		OnSnapshotProcessComplete(/*bSucceeded=*/false);
 		return;
 	}
 
@@ -389,27 +389,35 @@ void FFlexVaultAutoSnapshot::LaunchSnapshotProcess(const FString& Description)
 	{
 		TArray<FString> OutputLines;
 		FSourceControlResultInfo ResultInfo;
-		const TArray<FString> Args = {
-			TEXT("snapshot"),
-			TEXT("-d"),
-			Description,
-			TEXT("--unattended"),
-			TEXT("--no-color")
-		};
-		// This call is ad-hoc - it doesn't go through the provider's command queue, so there's no
-		// FFlexVaultSourceControlCommand to watch for InCancelCommand. Pass the timeout directly
-		// instead, so a hung `fxv snapshot` process can't block this thread pool worker forever.
-		RunFlexVaultCommand(BinaryPath, WorkspacePath, Args, OutputLines, ResultInfo, /*bIgnoreError=*/true, nullptr, TimeoutSeconds);
-
-		AsyncTask(ENamedThreads::GameThread, []()
+		const TArray<FString> Args = BuildFlexVaultSnapshotArgs(Description);
+		bool bSucceeded;
 		{
-			FFlexVaultAutoSnapshot::OnSnapshotProcessComplete();
+			// Serialize against FFlexVaultCheckInWorker's inline snapshot phase - see GetFlexVaultSnapshotLock().
+			FScopeLock SnapshotLock(&GetFlexVaultSnapshotLock());
+			// This call is ad-hoc - it doesn't go through the provider's command queue, so there's no
+			// FFlexVaultSourceControlCommand to watch for InCancelCommand. Pass the timeout directly
+			// instead, so a hung `fxv snapshot` process can't block this thread pool worker forever.
+			bSucceeded = RunFlexVaultCommand(BinaryPath, WorkspacePath, Args, OutputLines, ResultInfo, /*bIgnoreError=*/true, nullptr, TimeoutSeconds);
+		}
+
+		AsyncTask(ENamedThreads::GameThread, [bSucceeded]()
+		{
+			FFlexVaultAutoSnapshot::OnSnapshotProcessComplete(bSucceeded);
 		});
 	});
 }
 
-void FFlexVaultAutoSnapshot::OnSnapshotProcessComplete()
+void FFlexVaultAutoSnapshot::OnSnapshotProcessComplete(bool bSucceeded)
 {
+	if (bSucceeded && Provider && Provider->IsAvailable() && !Provider->HasOperationInFlight(FlexVaultSourceControlConstants::UpdateStatus))
+	{
+		// The Content Browser/SCC UI would otherwise only notice this snapshot's effect on the next
+		// periodic poll - kick an immediate rescan instead. FFlexVaultUpdateStatusWorker::UpdateStates()
+		// refreshes the cache and broadcasts OnSourceControlStateChanged once it completes, same as any
+		// other UpdateStatus call, so no completion delegate is needed here.
+		Provider->Execute(ISourceControlOperation::Create<FUpdateStatus>(), nullptr, TArray<FString>(), EConcurrency::Asynchronous);
+	}
+
 	FString NextDescription;
 	bool bHasNext = false;
 	{

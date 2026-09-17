@@ -56,7 +56,11 @@ private:
 	 *  never have their request silently dropped by a race with another trigger's CLI call. */
 	static void RunSnapshotAsync(const FString& Description);
 	static void LaunchSnapshotProcess(const FString& Description);
-	static void OnSnapshotProcessComplete();
+	/** Runs the next queued snapshot, if any. On a successful snapshot, kicks a status rescan so the
+	 *  SCC UI doesn't have to wait for the next periodic poll to notice the new state - see
+	 *  FFlexVaultUpdateStatusWorker::UpdateStates(), which refreshes the cache and broadcasts the
+	 *  state-changed event once the rescan completes. */
+	static void OnSnapshotProcessComplete(bool bSucceeded);
 
 	static FFlexVaultSourceControlProvider* Provider;
 	static FDelegateHandle PostEngineInitHandle;
