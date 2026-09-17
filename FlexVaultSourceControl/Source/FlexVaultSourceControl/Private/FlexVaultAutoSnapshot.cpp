@@ -11,6 +11,7 @@
 #include "Misc/Paths.h"
 #include "Async/Async.h"
 #include "HAL/PlatformTime.h"
+#include "Misc/ScopeLock.h"
 #include "SourceControlOperations.h"
 
 FFlexVaultSourceControlProvider* FFlexVaultAutoSnapshot::Provider = nullptr;
@@ -27,6 +28,10 @@ bool FFlexVaultAutoSnapshot::bPeriodicStatusScanInFlight = false;
 
 int32 FFlexVaultAutoSnapshot::PendingReimportCount = 0;
 double FFlexVaultAutoSnapshot::LastReimportEventTime = -1.0;
+
+FCriticalSection FFlexVaultAutoSnapshot::SnapshotQueueCS;
+bool FFlexVaultAutoSnapshot::bSnapshotInFlight = false;
+TArray<FString> FFlexVaultAutoSnapshot::PendingSnapshotDescriptions;
 
 // The actor-delta and bulk-reimport thresholds are project-specific (a big open-world level's
 // "normal" actor churn dwarfs a small project's) so they're exposed as settings - see
@@ -98,6 +103,10 @@ void FFlexVaultAutoSnapshot::Unregister()
 	LastReimportEventTime = -1.0;
 	bPeriodicStatusScanInFlight = false;
 	Provider = nullptr;
+
+	FScopeLock Lock(&SnapshotQueueCS);
+	bSnapshotInFlight = false;
+	PendingSnapshotDescriptions.Reset();
 }
 
 void FFlexVaultAutoSnapshot::OnAssetsPreDelete(const TArray<UObject*>& AssetsToDelete)
@@ -235,6 +244,14 @@ void FFlexVaultAutoSnapshot::CheckPeriodicSnapshot()
 		return;
 	}
 
+	if (Provider->HasOperationInFlight(FlexVaultSourceControlConstants::UpdateStatus))
+	{
+		// Someone else (e.g. a Content Browser refresh) already has an UpdateStatus queued - piling
+		// on our own concurrent `fxv status` call wouldn't see anything sooner. The next periodic
+		// tick will pick this back up once that one clears.
+		return;
+	}
+
 	// The provider's state cache is populated lazily, only for files something has already queried
 	// (e.g. the Content Browser's status column) - a change nothing else happened to look at would
 	// otherwise sit there indefinitely without ever being noticed. Force a full workspace rescan so
@@ -336,22 +353,39 @@ bool FFlexVaultAutoSnapshot::TriggerSnapshotIfWarranted(const FString& Descripti
 
 void FFlexVaultAutoSnapshot::RunSnapshotAsync(const FString& Description)
 {
-	FString BinaryPath;
-	if (const UFlexVaultSourceControlDeveloperSettings* Settings = GetDefault<UFlexVaultSourceControlDeveloperSettings>())
 	{
-		BinaryPath = Settings->GetEffectiveBinaryPath();
+		FScopeLock Lock(&SnapshotQueueCS);
+		if (bSnapshotInFlight)
+		{
+			// Another `fxv snapshot` is already running against this workspace - queue this one
+			// instead of racing a second process against it. OnAssetsPreDelete's "always fire"
+			// contract means we can't just drop it the way the shared debounce does for the other,
+			// purely heuristic triggers.
+			PendingSnapshotDescriptions.Add(Description);
+			return;
+		}
+		bSnapshotInFlight = true;
 	}
 
+	LaunchSnapshotProcess(Description);
+}
+
+void FFlexVaultAutoSnapshot::LaunchSnapshotProcess(const FString& Description)
+{
+	const UFlexVaultSourceControlDeveloperSettings* Settings = GetDefault<UFlexVaultSourceControlDeveloperSettings>();
+	const FString BinaryPath = Settings ? Settings->GetEffectiveBinaryPath() : FString();
 	if (BinaryPath.IsEmpty())
 	{
+		OnSnapshotProcessComplete();
 		return;
 	}
 
 	const FString WorkspacePath = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
+	const double TimeoutSeconds = (Settings && Settings->CommandTimeoutSeconds > 0.0) ? Settings->CommandTimeoutSeconds : 60.0;
 
 	// Runs off the game thread so we don't stall the delete/save that triggered it. Best-effort -
 	// it can in rare cases race with the operation it's meant to precede.
-	Async(EAsyncExecution::ThreadPool, [WorkspacePath, BinaryPath, Description]()
+	Async(EAsyncExecution::ThreadPool, [WorkspacePath, BinaryPath, Description, TimeoutSeconds]()
 	{
 		TArray<FString> OutputLines;
 		FSourceControlResultInfo ResultInfo;
@@ -362,6 +396,38 @@ void FFlexVaultAutoSnapshot::RunSnapshotAsync(const FString& Description)
 			TEXT("--unattended"),
 			TEXT("--no-color")
 		};
-		RunFlexVaultCommand(BinaryPath, WorkspacePath, Args, OutputLines, ResultInfo, /*bIgnoreError=*/true, nullptr);
+		// This call is ad-hoc - it doesn't go through the provider's command queue, so there's no
+		// FFlexVaultSourceControlCommand to watch for InCancelCommand. Pass the timeout directly
+		// instead, so a hung `fxv snapshot` process can't block this thread pool worker forever.
+		RunFlexVaultCommand(BinaryPath, WorkspacePath, Args, OutputLines, ResultInfo, /*bIgnoreError=*/true, nullptr, TimeoutSeconds);
+
+		AsyncTask(ENamedThreads::GameThread, []()
+		{
+			FFlexVaultAutoSnapshot::OnSnapshotProcessComplete();
+		});
 	});
+}
+
+void FFlexVaultAutoSnapshot::OnSnapshotProcessComplete()
+{
+	FString NextDescription;
+	bool bHasNext = false;
+	{
+		FScopeLock Lock(&SnapshotQueueCS);
+		if (PendingSnapshotDescriptions.Num() > 0)
+		{
+			NextDescription = PendingSnapshotDescriptions[0];
+			PendingSnapshotDescriptions.RemoveAt(0);
+			bHasNext = true;
+		}
+		else
+		{
+			bSnapshotInFlight = false;
+		}
+	}
+
+	if (bHasNext)
+	{
+		LaunchSnapshotProcess(NextDescription);
+	}
 }

@@ -38,6 +38,10 @@ struct FFlexVaultRevisionDetail
  * If InCancelCommand is provided and InCancelCommand->IsCanceled() becomes true while the
  * process is running (e.g. a synchronous wait timed out), the child process is terminated
  * and the call returns promptly with a failure result, rather than blocking indefinitely.
+ * Independently, if InTimeoutSeconds is > 0, the process is terminated after that many seconds
+ * even with no InCancelCommand - for ad-hoc callers that aren't part of the provider's command
+ * queue (and so have no FFlexVaultSourceControlCommand to watch) but still need a bound on how
+ * long a hung CLI process can block the calling thread.
  */
 bool RunFlexVaultCommand(
 	const FString& InBinaryPath,
@@ -46,7 +50,8 @@ bool RunFlexVaultCommand(
 	TArray<FString>& OutOutputLines,
 	FSourceControlResultInfo& OutResultInfo,
 	bool bIgnoreError = false,
-	const FFlexVaultSourceControlCommand* InCancelCommand = nullptr
+	const FFlexVaultSourceControlCommand* InCancelCommand = nullptr,
+	double InTimeoutSeconds = 0.0
 );
 
 /**

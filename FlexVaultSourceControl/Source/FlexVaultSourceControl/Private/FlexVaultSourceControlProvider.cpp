@@ -243,6 +243,18 @@ bool FFlexVaultSourceControlProvider::CanExecuteOperation(const FSourceControlOp
 		   OpName == FlexVaultSourceControlConstants::GetSourceControlRevisionInfo;
 }
 
+bool FFlexVaultSourceControlProvider::HasOperationInFlight(const FName& InOperationName) const
+{
+	for (const FFlexVaultSourceControlCommand* Command : CommandQueue)
+	{
+		if (Command->Operation->GetName() == InOperationName)
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
 void FFlexVaultSourceControlProvider::Tick()
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(FFlexVaultSourceControlProvider::Tick);

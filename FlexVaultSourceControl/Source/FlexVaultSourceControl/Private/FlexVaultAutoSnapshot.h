@@ -6,6 +6,7 @@
 #include "Containers/Ticker.h"
 #include "ISourceControlState.h"
 #include "ISourceControlProvider.h"
+#include "HAL/CriticalSection.h"
 
 class FFlexVaultSourceControlProvider;
 class FObjectPreSaveContext;
@@ -49,7 +50,13 @@ private:
 
 	/** Fires a snapshot for Description unless another trigger already fired one within the debounce window. Returns whether it fired. */
 	static bool TriggerSnapshotIfWarranted(const FString& Description);
+
+	/** Runs Description's snapshot now if none is in flight, otherwise queues it to run right after
+	 *  the in-flight one finishes - callers (including OnAssetsPreDelete, which must always fire)
+	 *  never have their request silently dropped by a race with another trigger's CLI call. */
 	static void RunSnapshotAsync(const FString& Description);
+	static void LaunchSnapshotProcess(const FString& Description);
+	static void OnSnapshotProcessComplete();
 
 	static FFlexVaultSourceControlProvider* Provider;
 	static FDelegateHandle PostEngineInitHandle;
@@ -65,4 +72,9 @@ private:
 
 	static int32 PendingReimportCount;
 	static double LastReimportEventTime;
+
+	/** Serializes `fxv snapshot` CLI invocations - see RunSnapshotAsync. */
+	static FCriticalSection SnapshotQueueCS;
+	static bool bSnapshotInFlight;
+	static TArray<FString> PendingSnapshotDescriptions;
 };
