@@ -26,10 +26,6 @@ public:
 	UPROPERTY(Config, EditAnywhere, Category="FlexVault", meta=(DisplayName="Binary Path"))
 	FString BinaryPath;
 
-	/** Suppress SCM prompts automatically */
-	UPROPERTY(Config, EditAnywhere, Category="FlexVault", meta=(DisplayName="Use Unattended Mode"))
-	bool bUseUnattendedMode;
-
 	/** Default conflict resolution preference */
 	UPROPERTY(Config, EditAnywhere, Category="FlexVault", meta=(DisplayName="Conflict Resolution Preference", ToolTip="Conflict resolution strategy: 'mine' (keep local draft version) or 'theirs' (accept published remote version)."))
 	FString ResolvePreference;
