@@ -6,27 +6,22 @@
 #include "Containers/Ticker.h"
 #include "ISourceControlState.h"
 #include "ISourceControlProvider.h"
-#include "HAL/CriticalSection.h"
 
 class FFlexVaultSourceControlProvider;
 class FObjectPreSaveContext;
 class UWorld;
 
 /**
- * Best-effort local `fxv snapshot` around specific high-entropy editor operations - not on every
+ * Best-effort local `fxv snapshot` around specific high-entropy editor operations, not on every
  * save. Triggers:
- *  - Asset deletion (always risky, always worth a checkpoint).
- *  - Level saves where a world's actor count changed by a lot since its last save (a proxy for
- *    "someone just did a big World Partition / bulk-actor edit"), tracked per-world so switching
- *    maps can't compare against a different level's baseline. Cook/autosave/PIE saves are ignored.
- *  - Bulk asset reimport (a proxy for an external VCS sync or asset-store import landing a lot of
- *    files at once).
- *  - A periodic fallback snapshot when pending changes have sat for longer than a configurable
- *    interval without any snapshot firing, so slow/small edits that never cross the above
- *    thresholds still get checkpointed eventually. Forces a full workspace status rescan rather
- *    than trusting the provider's cache, since that cache is only populated lazily for files
- *    something has already queried (e.g. the Content Browser's status column) and would otherwise
- *    never notice an idle pending change nothing else happened to look at.
+ *  - Asset deletion.
+ *  - Level saves where a world's actor count changed by a lot since its last save, tracked
+ *    per-world so switching maps doesn't compare against a different level's baseline.
+ *    Cook/autosave/PIE saves are ignored.
+ *  - Bulk asset reimport.
+ *  - A periodic fallback snapshot when pending changes have sat longer than a configurable
+ *    interval. Forces a full workspace status rescan, since the provider's cache is only
+ *    populated lazily for files something has already queried.
  * All triggers share one debounce window so a single gesture can't fire more than one snapshot.
  */
 class FFlexVaultAutoSnapshot
@@ -48,18 +43,25 @@ private:
 	static void CompactStaleWorldEntries();
 	static FString BuildPeriodicDescription(const TArray<FSourceControlStateRef>& PendingStates);
 
-	/** Fires a snapshot for Description unless another trigger already fired one within the debounce window. Returns whether it fired. */
+	/** Fires a snapshot for Description unless the debounce window suppresses it. Returns whether it fired. */
 	static bool TriggerSnapshotIfWarranted(const FString& Description);
 
-	/** Runs Description's snapshot now if none is in flight, otherwise queues it to run right after
-	 *  the in-flight one finishes - callers (including OnAssetsPreDelete, which must always fire)
-	 *  never have their request silently dropped by a race with another trigger's CLI call. */
+	/** Runs Description's snapshot now if none is in flight, otherwise queues it. Fine for the
+	 *  heuristic triggers, which only need to eventually run - see RunSnapshotSyncForDelete for
+	 *  the trigger that can't tolerate being queued. */
 	static void RunSnapshotAsync(const FString& Description);
+	/** Like RunSnapshotAsync, but blocks the calling (game) thread, pumping a progress
+	 *  notification, until the snapshot attempt has actually happened. OnAssetsPreDelete uses
+	 *  this because Unreal deletes the asset files as soon as it returns, so queuing behind
+	 *  another in-flight snapshot would let the deletion happen first. Bypasses
+	 *  bSnapshotInFlight/PendingSnapshotDescriptions - see the definition - relying only on
+	 *  GetFlexVaultSnapshotLock() for mutual exclusion. */
+	static void RunSnapshotSyncForDelete(const FString& Description);
 	static void LaunchSnapshotProcess(const FString& Description);
-	/** Runs the next queued snapshot, if any. On a successful snapshot, kicks a status rescan so the
-	 *  SCC UI doesn't have to wait for the next periodic poll to notice the new state - see
-	 *  FFlexVaultUpdateStatusWorker::UpdateStates(), which refreshes the cache and broadcasts the
-	 *  state-changed event once the rescan completes. */
+	/** On success, kicks a status rescan so the SCC UI doesn't wait for the next periodic poll -
+	 *  see FFlexVaultUpdateStatusWorker::UpdateStates(). */
+	static void RefreshStatusAfterSnapshot(bool bSucceeded);
+	/** Runs the next queued snapshot, if any. */
 	static void OnSnapshotProcessComplete(bool bSucceeded);
 
 	static FFlexVaultSourceControlProvider* Provider;
@@ -77,8 +79,9 @@ private:
 	static int32 PendingReimportCount;
 	static double LastReimportEventTime;
 
-	/** Serializes `fxv snapshot` CLI invocations - see RunSnapshotAsync. */
-	static FCriticalSection SnapshotQueueCS;
+	// Tracks the in-flight `fxv snapshot` invocation fired via RunSnapshotAsync, and anything
+	// queued behind it. Game Thread only, so no lock is needed. RunSnapshotSyncForDelete does not
+	// participate in this bookkeeping - see its comment.
 	static bool bSnapshotInFlight;
 	static TArray<FString> PendingSnapshotDescriptions;
 };

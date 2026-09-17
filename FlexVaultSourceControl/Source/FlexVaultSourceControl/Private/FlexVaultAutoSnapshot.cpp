@@ -13,6 +13,8 @@
 #include "HAL/PlatformTime.h"
 #include "Misc/ScopeLock.h"
 #include "SourceControlOperations.h"
+#include "ScopedSourceControlProgress.h"
+#include "Templates/Atomic.h"
 
 FFlexVaultSourceControlProvider* FFlexVaultAutoSnapshot::Provider = nullptr;
 FDelegateHandle FFlexVaultAutoSnapshot::PostEngineInitHandle;
@@ -29,36 +31,29 @@ bool FFlexVaultAutoSnapshot::bPeriodicStatusScanInFlight = false;
 int32 FFlexVaultAutoSnapshot::PendingReimportCount = 0;
 double FFlexVaultAutoSnapshot::LastReimportEventTime = -1.0;
 
-FCriticalSection FFlexVaultAutoSnapshot::SnapshotQueueCS;
 bool FFlexVaultAutoSnapshot::bSnapshotInFlight = false;
 TArray<FString> FFlexVaultAutoSnapshot::PendingSnapshotDescriptions;
 
-// The actor-delta and bulk-reimport thresholds are project-specific (a big open-world level's
-// "normal" actor churn dwarfs a small project's) so they're exposed as settings - see
-// UFlexVaultSourceControlDeveloperSettings::AutoSnapshotActorCountDeltaThreshold and
-// AutoSnapshotBulkReimportThreshold. The values below are just internal pacing, not tunable per
-// project.
+// The actor-delta and bulk-reimport thresholds are project-specific, so they're exposed as
+// settings - see UFlexVaultSourceControlDeveloperSettings::AutoSnapshotActorCountDeltaThreshold
+// and AutoSnapshotBulkReimportThreshold. The values below are internal pacing, not per-project.
 
-// One trigger firing shouldn't spawn a burst of snapshots for what's really one gesture (e.g. a
-// bulk delete that also dirties the level, or a reimport landing right after a save).
+// Stops one gesture (e.g. a bulk delete that also dirties the level) from firing multiple snapshots.
 static constexpr double DebounceSeconds = 2.0;
 
-// How often the background maintenance tick runs. Coarse on purpose - it copies the pending
-// change list on every periodic check, so there's no need to do that every frame.
+// How often the background maintenance tick runs.
 static constexpr float TickIntervalSeconds = 5.0f;
 
-// How long to wait after the last reimport event before treating the batch as finished and
-// evaluating it against the threshold.
+// How long to wait after the last reimport event before flushing the batch.
 static constexpr double ReimportBatchSettleSeconds = 2.0;
 
 void FFlexVaultAutoSnapshot::Register(FFlexVaultSourceControlProvider& InProvider)
 {
 	Provider = &InProvider;
 
-	// This module loads at EarliestPossible, before the object system's default objects are
-	// ready. FReimportManager::Instance() constructs UFactory CDOs on first use, which crashes
-	// ("Object is not packaged") this early - defer all delegate registration until the engine has
-	// finished starting up.
+	// This module loads at EarliestPossible, before the object system's default objects are ready.
+	// FReimportManager::Instance() constructs UFactory CDOs on first use, which crashes here.
+	// Defer delegate registration until the engine finishes starting up.
 	PostEngineInitHandle = FCoreDelegates::GetOnPostEngineInit().AddStatic(&FFlexVaultAutoSnapshot::OnPostEngineInit);
 }
 
@@ -70,8 +65,8 @@ void FFlexVaultAutoSnapshot::OnPostEngineInit()
 	TickerHandle = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateStatic(&FFlexVaultAutoSnapshot::Tick), TickIntervalSeconds);
 	bEditorHooksRegistered = true;
 
-	// Count the periodic interval from registration time, not from "never" - a fresh session with
-	// old pending changes shouldn't fire a snapshot on the very first tick.
+	// Counts the periodic interval from registration time so a fresh session with old pending
+	// changes doesn't fire a snapshot on the first tick.
 	LastSnapshotTime = FPlatformTime::Seconds();
 }
 
@@ -82,9 +77,7 @@ void FFlexVaultAutoSnapshot::Unregister()
 
 	if (!bEditorHooksRegistered)
 	{
-		// OnPostEngineInit never fired (e.g. shutdown before engine startup finished) - the hooks
-		// below, including FReimportManager::Instance(), were never touched, so don't touch them
-		// now either.
+		// OnPostEngineInit never fired, so the hooks below were never touched. Leave them alone.
 		Provider = nullptr;
 		return;
 	}
@@ -104,7 +97,6 @@ void FFlexVaultAutoSnapshot::Unregister()
 	bPeriodicStatusScanInFlight = false;
 	Provider = nullptr;
 
-	FScopeLock Lock(&SnapshotQueueCS);
 	bSnapshotInFlight = false;
 	PendingSnapshotDescriptions.Reset();
 }
@@ -116,11 +108,14 @@ void FFlexVaultAutoSnapshot::OnAssetsPreDelete(const TArray<UObject*>& AssetsToD
 		return;
 	}
 
-	// Deletion is always risky and always worth a checkpoint - bypass the shared debounce (it
-	// exists to stop the *heuristic* triggers below from bursting) so a delete right after
-	// another trigger, or right after another delete, is never silently swallowed.
+	// Bypasses the shared debounce (which only exists to stop the heuristic triggers below from
+	// bursting) so a delete right after another trigger is never skipped.
+	//
+	// Must run synchronously: Unreal deletes the asset files as soon as this delegate returns.
+	// Firing fire-and-forget (RunSnapshotAsync) could queue it behind another in-flight snapshot
+	// and run it after the files are already gone, turning the checkpoint into a no-op.
 	LastSnapshotTime = FPlatformTime::Seconds();
-	RunSnapshotAsync(FString::Printf(TEXT("Auto-snapshot before deleting %d asset(s)"), AssetsToDelete.Num()));
+	RunSnapshotSyncForDelete(FString::Printf(TEXT("Auto-snapshot before deleting %d asset(s)"), AssetsToDelete.Num()));
 }
 
 void FFlexVaultAutoSnapshot::OnPreSaveWorld(UWorld* World, FObjectPreSaveContext SaveContext)
@@ -130,11 +125,9 @@ void FFlexVaultAutoSnapshot::OnPreSaveWorld(UWorld* World, FObjectPreSaveContext
 		return;
 	}
 
-	// Cook, autosave, and other non-interactive saves aren't a developer's deliberate checkpoint
-	// moment - comparing against them would corrupt the per-world baseline and a cook build could
-	// otherwise fire this repeatedly across every level in the project. IsProceduralSave() and
-	// IsFromAutoSave() are independent flags (see UEditorEngine::OnPreSaveWorld, which checks
-	// IsFromAutoSave() specifically to detect autosave) - both must be checked.
+	// Cook, autosave, and other non-interactive saves would corrupt the per-world baseline and
+	// could fire this repeatedly across every level in a cook build. IsProceduralSave() and
+	// IsFromAutoSave() are independent flags, so both must be checked.
 	if (SaveContext.IsProceduralSave() || SaveContext.IsFromAutoSave() || World->IsPlayInEditor())
 	{
 		return;
@@ -154,9 +147,8 @@ void FFlexVaultAutoSnapshot::OnPreSaveWorld(UWorld* World, FObjectPreSaveContext
 
 	if (!PreviousCount)
 	{
-		// First interactive save we've seen for this world - just record a baseline, nothing to
-		// compare against yet. Keyed per-world (rather than one global counter) so opening a
-		// different map can't be compared against the previous level's actor count.
+		// First interactive save for this world - record a baseline. Keyed per-world so opening a
+		// different map isn't compared against the previous level's actor count.
 		ActorCountByWorld.Add(WorldPtr, CurrentActorCount);
 		CompactStaleWorldEntries();
 		return;
@@ -180,8 +172,8 @@ void FFlexVaultAutoSnapshot::OnPostReimport(UObject* Object, bool bSuccess)
 		return;
 	}
 
-	// Don't fire per-object - accumulate and let the maintenance tick flush the batch once
-	// reimport events settle down (see FlushReimportBatchIfSettled).
+	// Accumulate rather than fire per-object. The maintenance tick flushes the batch once
+	// reimport events settle (see FlushReimportBatchIfSettled).
 	++PendingReimportCount;
 	LastReimportEventTime = FPlatformTime::Seconds();
 }
@@ -240,22 +232,19 @@ void FFlexVaultAutoSnapshot::CheckPeriodicSnapshot()
 
 	if (bPeriodicStatusScanInFlight)
 	{
-		// Previous rescan hasn't completed yet - don't pile up redundant `fxv status` calls.
+		// Previous rescan hasn't completed yet. Don't pile up redundant `fxv status` calls.
 		return;
 	}
 
 	if (Provider->HasOperationInFlight(FlexVaultSourceControlConstants::UpdateStatus))
 	{
-		// Someone else (e.g. a Content Browser refresh) already has an UpdateStatus queued - piling
-		// on our own concurrent `fxv status` call wouldn't see anything sooner. The next periodic
-		// tick will pick this back up once that one clears.
+		// Another UpdateStatus (e.g. a Content Browser refresh) is already queued. The next
+		// periodic tick picks this back up once that one clears.
 		return;
 	}
 
-	// The provider's state cache is populated lazily, only for files something has already queried
-	// (e.g. the Content Browser's status column) - a change nothing else happened to look at would
-	// otherwise sit there indefinitely without ever being noticed. Force a full workspace rescan so
-	// the periodic check can actually see it.
+	// The provider's state cache is populated lazily, only for files something has already
+	// queried. Force a full workspace rescan so a change nothing else looked at is still noticed.
 	bPeriodicStatusScanInFlight = true;
 	const TSharedRef<FUpdateStatus, ESPMode::ThreadSafe> UpdateStatusOp = ISourceControlOperation::Create<FUpdateStatus>();
 	Provider->Execute(UpdateStatusOp, EConcurrency::Asynchronous,
@@ -279,7 +268,7 @@ void FFlexVaultAutoSnapshot::OnPeriodicStatusUpdated(const FSourceControlOperati
 
 	if (PendingStates.Num() == 0)
 	{
-		// Nothing to snapshot - don't burn a checkpoint on a clean workspace.
+		// Nothing to snapshot.
 		return;
 	}
 
@@ -331,8 +320,7 @@ FString FFlexVaultAutoSnapshot::BuildPeriodicDescription(const TArray<FSourceCon
 	if (Deleted > 0) { Parts.Add(FString::Printf(TEXT("%d deleted"), Deleted)); }
 	if (Conflicted > 0) { Parts.Add(FString::Printf(TEXT("%d conflicted"), Conflicted)); }
 
-	// A bare "Periodic auto-snapshot" tells a developer nothing when scanning history later -
-	// summarize what actually changed so periodic checkpoints stay as useful as the targeted ones.
+	// Summarize what changed so periodic checkpoints are as useful as the targeted ones.
 	const FString Summary = Parts.Num() > 0 ? FString::Join(Parts, TEXT(", ")) : FString::Printf(TEXT("%d file(s) changed"), PendingStates.Num());
 	return FString::Printf(TEXT("Periodic auto-snapshot (%s)"), *Summary);
 }
@@ -353,21 +341,68 @@ bool FFlexVaultAutoSnapshot::TriggerSnapshotIfWarranted(const FString& Descripti
 
 void FFlexVaultAutoSnapshot::RunSnapshotAsync(const FString& Description)
 {
+	if (bSnapshotInFlight)
 	{
-		FScopeLock Lock(&SnapshotQueueCS);
-		if (bSnapshotInFlight)
-		{
-			// Another `fxv snapshot` is already running against this workspace - queue this one
-			// instead of racing a second process against it. OnAssetsPreDelete's "always fire"
-			// contract means we can't just drop it the way the shared debounce does for the other,
-			// purely heuristic triggers.
-			PendingSnapshotDescriptions.Add(Description);
-			return;
-		}
-		bSnapshotInFlight = true;
+		// Another `fxv snapshot` is already running. Queue this one instead of racing a second
+		// process. Fine for these heuristic triggers, which only need to eventually run, unlike
+		// OnAssetsPreDelete, which uses RunSnapshotSyncForDelete because it must run before the
+		// caller returns.
+		PendingSnapshotDescriptions.Add(Description);
+		return;
 	}
+	bSnapshotInFlight = true;
 
 	LaunchSnapshotProcess(Description);
+}
+
+void FFlexVaultAutoSnapshot::RunSnapshotSyncForDelete(const FString& Description)
+{
+	FScopedSourceControlProgress Progress(FText::FromString(TEXT("FlexVault: Snapshotting before deletion...")));
+
+	const UFlexVaultSourceControlDeveloperSettings* Settings = GetDefault<UFlexVaultSourceControlDeveloperSettings>();
+	const double TimeoutSeconds = (Settings && Settings->CommandTimeoutSeconds > 0.0) ? Settings->CommandTimeoutSeconds : 60.0;
+	const FString BinaryPath = Settings ? Settings->GetEffectiveBinaryPath() : FString();
+	if (BinaryPath.IsEmpty())
+	{
+		return;
+	}
+	const FString WorkspacePath = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
+
+	// Deliberately skips bSnapshotInFlight/PendingSnapshotDescriptions (see RunSnapshotAsync):
+	// that flag only clears via an AsyncTask callback on the Game Thread, which can't run while
+	// this function blocks the Game Thread waiting on it. GetFlexVaultSnapshotLock() is a plain
+	// mutex released entirely by background threads, so waiting on it here is safe.
+	TSharedRef<TAtomic<bool>> bDone = MakeShared<TAtomic<bool>>(false);
+	TSharedRef<TAtomic<bool>> bSucceededResult = MakeShared<TAtomic<bool>>(false);
+
+	Async(EAsyncExecution::ThreadPool, [WorkspacePath, BinaryPath, Description, TimeoutSeconds, bDone, bSucceededResult]()
+	{
+		TArray<FString> OutputLines;
+		FSourceControlResultInfo ResultInfo;
+		const TArray<FString> Args = BuildFlexVaultSnapshotArgs(Description);
+		FScopeLock SnapshotLock(&GetFlexVaultSnapshotLock());
+		*bSucceededResult = RunFlexVaultCommand(BinaryPath, WorkspacePath, Args, OutputLines, ResultInfo, /*bIgnoreError=*/true, nullptr, TimeoutSeconds);
+		*bDone = true;
+	});
+
+	// Blocks the Game Thread, pumping the progress UI, until the snapshot finishes: our caller
+	// (OnAssetsPreDelete) returning is what lets Unreal proceed with deleting the files.
+	const double StartWaitTime = FPlatformTime::Seconds();
+	while (!*bDone)
+	{
+		Progress.Tick();
+		FPlatformProcess::Sleep(0.01f);
+
+		// Also bounds how long we wait for another in-flight `fxv snapshot` to release the lock,
+		// so a stuck background task can't freeze the editor's delete indefinitely.
+		if (FPlatformTime::Seconds() - StartWaitTime > TimeoutSeconds * 2.0)
+		{
+			UE_LOG(LogFlexVault, Error, TEXT("FlexVaultAutoSnapshot: Timed out waiting to snapshot before deletion; proceeding without a checkpoint (%s)"), *Description);
+			return;
+		}
+	}
+
+	RefreshStatusAfterSnapshot(*bSucceededResult);
 }
 
 void FFlexVaultAutoSnapshot::LaunchSnapshotProcess(const FString& Description)
@@ -383,7 +418,7 @@ void FFlexVaultAutoSnapshot::LaunchSnapshotProcess(const FString& Description)
 	const FString WorkspacePath = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
 	const double TimeoutSeconds = (Settings && Settings->CommandTimeoutSeconds > 0.0) ? Settings->CommandTimeoutSeconds : 60.0;
 
-	// Runs off the game thread so we don't stall the delete/save that triggered it. Best-effort -
+	// Runs off the Game Thread so we don't stall the delete/save that triggered it. Best-effort:
 	// it can in rare cases race with the operation it's meant to precede.
 	Async(EAsyncExecution::ThreadPool, [WorkspacePath, BinaryPath, Description, TimeoutSeconds]()
 	{
@@ -394,9 +429,8 @@ void FFlexVaultAutoSnapshot::LaunchSnapshotProcess(const FString& Description)
 		{
 			// Serialize against FFlexVaultCheckInWorker's inline snapshot phase - see GetFlexVaultSnapshotLock().
 			FScopeLock SnapshotLock(&GetFlexVaultSnapshotLock());
-			// This call is ad-hoc - it doesn't go through the provider's command queue, so there's no
-			// FFlexVaultSourceControlCommand to watch for InCancelCommand. Pass the timeout directly
-			// instead, so a hung `fxv snapshot` process can't block this thread pool worker forever.
+			// This call is ad-hoc and has no FFlexVaultSourceControlCommand to watch for
+			// InCancelCommand, so pass the timeout directly instead.
 			bSucceeded = RunFlexVaultCommand(BinaryPath, WorkspacePath, Args, OutputLines, ResultInfo, /*bIgnoreError=*/true, nullptr, TimeoutSeconds);
 		}
 
@@ -407,31 +441,32 @@ void FFlexVaultAutoSnapshot::LaunchSnapshotProcess(const FString& Description)
 	});
 }
 
-void FFlexVaultAutoSnapshot::OnSnapshotProcessComplete(bool bSucceeded)
+void FFlexVaultAutoSnapshot::RefreshStatusAfterSnapshot(bool bSucceeded)
 {
 	if (bSucceeded && Provider && Provider->IsAvailable() && !Provider->HasOperationInFlight(FlexVaultSourceControlConstants::UpdateStatus))
 	{
-		// The Content Browser/SCC UI would otherwise only notice this snapshot's effect on the next
-		// periodic poll - kick an immediate rescan instead. FFlexVaultUpdateStatusWorker::UpdateStates()
-		// refreshes the cache and broadcasts OnSourceControlStateChanged once it completes, same as any
-		// other UpdateStatus call, so no completion delegate is needed here.
+		// Kicks an immediate rescan so the Content Browser/SCC UI doesn't wait for the next
+		// periodic poll. FFlexVaultUpdateStatusWorker::UpdateStates() refreshes the cache and
+		// broadcasts OnSourceControlStateChanged once it completes.
 		Provider->Execute(ISourceControlOperation::Create<FUpdateStatus>(), nullptr, TArray<FString>(), EConcurrency::Asynchronous);
 	}
+}
+
+void FFlexVaultAutoSnapshot::OnSnapshotProcessComplete(bool bSucceeded)
+{
+	RefreshStatusAfterSnapshot(bSucceeded);
 
 	FString NextDescription;
 	bool bHasNext = false;
+	if (PendingSnapshotDescriptions.Num() > 0)
 	{
-		FScopeLock Lock(&SnapshotQueueCS);
-		if (PendingSnapshotDescriptions.Num() > 0)
-		{
-			NextDescription = PendingSnapshotDescriptions[0];
-			PendingSnapshotDescriptions.RemoveAt(0);
-			bHasNext = true;
-		}
-		else
-		{
-			bSnapshotInFlight = false;
-		}
+		NextDescription = PendingSnapshotDescriptions[0];
+		PendingSnapshotDescriptions.RemoveAt(0);
+		bHasNext = true;
+	}
+	else
+	{
+		bSnapshotInFlight = false;
 	}
 
 	if (bHasNext)

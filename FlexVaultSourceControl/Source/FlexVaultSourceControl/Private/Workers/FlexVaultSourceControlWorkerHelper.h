@@ -34,19 +34,18 @@ struct FFlexVaultRevisionDetail
 };
 
 /**
- * Builds the CLI args for `fxv snapshot -d <InDescription> --unattended --no-color`, shared by every
- * caller that fires a local snapshot (FFlexVaultCheckInWorker's snapshot phase and
- * FFlexVaultAutoSnapshot's background triggers) so the two argument lists can't drift apart.
+ * Builds the CLI args for `fxv snapshot -d <InDescription> --unattended --no-color`, shared by
+ * FFlexVaultCheckInWorker's snapshot phase and FFlexVaultAutoSnapshot's background triggers so the
+ * two argument lists can't drift apart.
  */
 TArray<FString> BuildFlexVaultSnapshotArgs(const FString& InDescription);
 
 /**
  * Global lock serializing every `fxv snapshot` CLI invocation against every other one. Check-in's
- * inline snapshot phase (on the provider's command queue thread pool) and FFlexVaultAutoSnapshot's
- * background triggers (on a separate ad-hoc thread pool task) have no other coordination between
- * them, and two concurrent `fxv snapshot` processes against the same workspace is not a supported
- * CLI usage. Hold this for the duration of the `fxv snapshot` RunFlexVaultCommand call only - not
- * for surrounding work (e.g. check-in's subsequent 'fxv publish' is not covered by this lock).
+ * inline snapshot phase and FFlexVaultAutoSnapshot's background triggers have no other
+ * coordination between them, and two concurrent `fxv snapshot` processes against the same
+ * workspace isn't supported CLI usage. Hold this for the `fxv snapshot` RunFlexVaultCommand call
+ * only, not for surrounding work (e.g. check-in's subsequent `fxv publish` isn't covered).
  */
 FCriticalSection& GetFlexVaultSnapshotLock();
 
