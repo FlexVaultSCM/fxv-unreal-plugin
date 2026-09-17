@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.5.0](https://github.com/FlexVaultSCM/fxv-unreal-plugin/compare/v0.4.0...v0.5.0) (2026-09-17)
+
+
+### Features
+
+* Add auto-snapshot hook for high-entropy editor operations ([#20](https://github.com/FlexVaultSCM/fxv-unreal-plugin/issues/20)) ([4a75c95](https://github.com/FlexVaultSCM/fxv-unreal-plugin/commit/4a75c953b5ab2aade2eded663cc409b5d8748e56))
+* prompt to exclude generated folders from .fxvignore on startup ([#19](https://github.com/FlexVaultSCM/fxv-unreal-plugin/issues/19)) ([93284eb](https://github.com/FlexVaultSCM/fxv-unreal-plugin/commit/93284eb14aa3dc38894be4343491d35c2c3a8489))
+
 ## [0.4.0](https://github.com/FlexVaultSCM/fxv-unreal-plugin/compare/v0.3.0...v0.4.0) (2026-09-15)
 
 
