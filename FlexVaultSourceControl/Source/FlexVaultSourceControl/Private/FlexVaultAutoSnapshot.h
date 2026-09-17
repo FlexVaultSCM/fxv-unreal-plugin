@@ -5,6 +5,7 @@
 #include "UObject/WeakObjectPtr.h"
 #include "Containers/Ticker.h"
 #include "ISourceControlState.h"
+#include "ISourceControlProvider.h"
 
 class FFlexVaultSourceControlProvider;
 class FObjectPreSaveContext;
@@ -21,7 +22,10 @@ class UWorld;
  *    files at once).
  *  - A periodic fallback snapshot when pending changes have sat for longer than a configurable
  *    interval without any snapshot firing, so slow/small edits that never cross the above
- *    thresholds still get checkpointed eventually.
+ *    thresholds still get checkpointed eventually. Forces a full workspace status rescan rather
+ *    than trusting the provider's cache, since that cache is only populated lazily for files
+ *    something has already queried (e.g. the Content Browser's status column) and would otherwise
+ *    never notice an idle pending change nothing else happened to look at.
  * All triggers share one debounce window so a single gesture can't fire more than one snapshot.
  */
 class FFlexVaultAutoSnapshot
@@ -39,6 +43,7 @@ private:
 
 	static void FlushReimportBatchIfSettled();
 	static void CheckPeriodicSnapshot();
+	static void OnPeriodicStatusUpdated(const FSourceControlOperationRef& Operation, ECommandResult::Type Result);
 	static void CompactStaleWorldEntries();
 	static FString BuildPeriodicDescription(const TArray<FSourceControlStateRef>& PendingStates);
 
@@ -56,6 +61,7 @@ private:
 	static bool bEditorHooksRegistered;
 	static TMap<TWeakObjectPtr<UWorld>, int32> ActorCountByWorld;
 	static double LastSnapshotTime;
+	static bool bPeriodicStatusScanInFlight;
 
 	static int32 PendingReimportCount;
 	static double LastReimportEventTime;

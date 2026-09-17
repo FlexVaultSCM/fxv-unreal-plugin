@@ -11,6 +11,7 @@
 #include "Misc/Paths.h"
 #include "Async/Async.h"
 #include "HAL/PlatformTime.h"
+#include "SourceControlOperations.h"
 
 FFlexVaultSourceControlProvider* FFlexVaultAutoSnapshot::Provider = nullptr;
 FDelegateHandle FFlexVaultAutoSnapshot::PostEngineInitHandle;
@@ -22,13 +23,16 @@ FTSTicker::FDelegateHandle FFlexVaultAutoSnapshot::TickerHandle;
 bool FFlexVaultAutoSnapshot::bEditorHooksRegistered = false;
 TMap<TWeakObjectPtr<UWorld>, int32> FFlexVaultAutoSnapshot::ActorCountByWorld;
 double FFlexVaultAutoSnapshot::LastSnapshotTime = -1.0;
+bool FFlexVaultAutoSnapshot::bPeriodicStatusScanInFlight = false;
 
 int32 FFlexVaultAutoSnapshot::PendingReimportCount = 0;
 double FFlexVaultAutoSnapshot::LastReimportEventTime = -1.0;
 
-// A level save that only touches a handful of actors doesn't need a checkpoint; a save after a
-// big World Partition edit or bulk actor change does.
-static constexpr int32 ActorCountDeltaThreshold = 10;
+// The actor-delta and bulk-reimport thresholds are project-specific (a big open-world level's
+// "normal" actor churn dwarfs a small project's) so they're exposed as settings - see
+// UFlexVaultSourceControlDeveloperSettings::AutoSnapshotActorCountDeltaThreshold and
+// AutoSnapshotBulkReimportThreshold. The values below are just internal pacing, not tunable per
+// project.
 
 // One trigger firing shouldn't spawn a burst of snapshots for what's really one gesture (e.g. a
 // bulk delete that also dirties the level, or a reimport landing right after a save).
@@ -37,10 +41,6 @@ static constexpr double DebounceSeconds = 2.0;
 // How often the background maintenance tick runs. Coarse on purpose - it copies the pending
 // change list on every periodic check, so there's no need to do that every frame.
 static constexpr float TickIntervalSeconds = 5.0f;
-
-// A handful of reimported assets after a normal edit isn't worth a checkpoint; a big batch (VCS
-// sync, platform switch, asset store import) is.
-static constexpr int32 BulkReimportThreshold = 20;
 
 // How long to wait after the last reimport event before treating the batch as finished and
 // evaluating it against the threshold.
@@ -96,6 +96,7 @@ void FFlexVaultAutoSnapshot::Unregister()
 	ActorCountByWorld.Reset();
 	PendingReimportCount = 0;
 	LastReimportEventTime = -1.0;
+	bPeriodicStatusScanInFlight = false;
 	Provider = nullptr;
 }
 
@@ -127,6 +128,14 @@ void FFlexVaultAutoSnapshot::OnPreSaveWorld(UWorld* World, FObjectPreSaveContext
 	// IsFromAutoSave() specifically to detect autosave) - both must be checked.
 	if (SaveContext.IsProceduralSave() || SaveContext.IsFromAutoSave() || World->IsPlayInEditor())
 	{
+		return;
+	}
+
+	const UFlexVaultSourceControlDeveloperSettings* Settings = GetDefault<UFlexVaultSourceControlDeveloperSettings>();
+	const int32 ActorCountDeltaThreshold = Settings ? Settings->AutoSnapshotActorCountDeltaThreshold : 0;
+	if (ActorCountDeltaThreshold <= 0)
+	{
+		// Level-save trigger disabled.
 		return;
 	}
 
@@ -194,7 +203,9 @@ void FFlexVaultAutoSnapshot::FlushReimportBatchIfSettled()
 		return;
 	}
 
-	if (PendingReimportCount >= BulkReimportThreshold)
+	const UFlexVaultSourceControlDeveloperSettings* Settings = GetDefault<UFlexVaultSourceControlDeveloperSettings>();
+	const int32 BulkReimportThreshold = Settings ? Settings->AutoSnapshotBulkReimportThreshold : 0;
+	if (BulkReimportThreshold > 0 && PendingReimportCount >= BulkReimportThreshold)
 	{
 		TriggerSnapshotIfWarranted(FString::Printf(TEXT("Auto-snapshot after bulk reimport (%d asset(s))"), PendingReimportCount));
 	}
@@ -214,6 +225,31 @@ void FFlexVaultAutoSnapshot::CheckPeriodicSnapshot()
 
 	const double Now = FPlatformTime::Seconds();
 	if (LastSnapshotTime >= 0.0 && Now - LastSnapshotTime < IntervalSeconds)
+	{
+		return;
+	}
+
+	if (bPeriodicStatusScanInFlight)
+	{
+		// Previous rescan hasn't completed yet - don't pile up redundant `fxv status` calls.
+		return;
+	}
+
+	// The provider's state cache is populated lazily, only for files something has already queried
+	// (e.g. the Content Browser's status column) - a change nothing else happened to look at would
+	// otherwise sit there indefinitely without ever being noticed. Force a full workspace rescan so
+	// the periodic check can actually see it.
+	bPeriodicStatusScanInFlight = true;
+	const TSharedRef<FUpdateStatus, ESPMode::ThreadSafe> UpdateStatusOp = ISourceControlOperation::Create<FUpdateStatus>();
+	Provider->Execute(UpdateStatusOp, EConcurrency::Asynchronous,
+		FSourceControlOperationComplete::CreateStatic(&FFlexVaultAutoSnapshot::OnPeriodicStatusUpdated));
+}
+
+void FFlexVaultAutoSnapshot::OnPeriodicStatusUpdated(const FSourceControlOperationRef& Operation, ECommandResult::Type Result)
+{
+	bPeriodicStatusScanInFlight = false;
+
+	if (Result != ECommandResult::Succeeded || !Provider || !Provider->IsAvailable())
 	{
 		return;
 	}
