@@ -122,8 +122,10 @@ void FFlexVaultAutoSnapshot::OnPreSaveWorld(UWorld* World, FObjectPreSaveContext
 
 	// Cook, autosave, and other non-interactive saves aren't a developer's deliberate checkpoint
 	// moment - comparing against them would corrupt the per-world baseline and a cook build could
-	// otherwise fire this repeatedly across every level in the project.
-	if (SaveContext.IsProceduralSave() || World->IsPlayInEditor())
+	// otherwise fire this repeatedly across every level in the project. IsProceduralSave() and
+	// IsFromAutoSave() are independent flags (see UEditorEngine::OnPreSaveWorld, which checks
+	// IsFromAutoSave() specifically to detect autosave) - both must be checked.
+	if (SaveContext.IsProceduralSave() || SaveContext.IsFromAutoSave() || World->IsPlayInEditor())
 	{
 		return;
 	}
