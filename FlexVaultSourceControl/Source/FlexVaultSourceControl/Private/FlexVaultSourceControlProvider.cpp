@@ -113,17 +113,14 @@ void FFlexVaultSourceControlProvider::Close()
 FText FFlexVaultSourceControlProvider::GetStatusText() const
 {
 	return FText::Format(
-		LOCTEXT("StatusText", "FlexVault Source Control: {0}\nWorkspace: {1}"),
-		bServerAvailable ? LOCTEXT("Connected", "Connected") : LOCTEXT("Disconnected", "Disconnected"),
-		FText::FromString(GetDefault<UFlexVaultSourceControlDeveloperSettings>()->RepoUri)
+		LOCTEXT("StatusText", "FlexVault Source Control: {0}"),
+		bServerAvailable ? LOCTEXT("Connected", "Connected") : LOCTEXT("Disconnected", "Disconnected")
 	);
 }
 
 TMap<ISourceControlProvider::EStatus, FString> FFlexVaultSourceControlProvider::GetStatus() const
 {
-	TMap<EStatus, FString> Status;
-	Status.Add(EStatus::Repository, GetDefault<UFlexVaultSourceControlDeveloperSettings>()->RepoUri);
-	return Status;
+	return TMap<EStatus, FString>();
 }
 
 bool FFlexVaultSourceControlProvider::IsEnabled() const

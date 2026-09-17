@@ -26,18 +26,6 @@ public:
 	UPROPERTY(Config, EditAnywhere, Category="FlexVault", meta=(DisplayName="Binary Path"))
 	FString BinaryPath;
 
-	/** Remote S3 repository URI */
-	UPROPERTY(Config, EditAnywhere, Category="FlexVault", meta=(DisplayName="Remote Repository URI"))
-	FString RepoUri;
-
-	/** S3 Region override */
-	UPROPERTY(Config, EditAnywhere, Category="FlexVault", meta=(DisplayName="S3 Region"))
-	FString S3Region;
-
-	/** S3 HTTP Endpoint override */
-	UPROPERTY(Config, EditAnywhere, Category="FlexVault", meta=(DisplayName="S3 HTTP Endpoint"))
-	FString S3HttpEndpoint;
-
 	/** Suppress SCM prompts automatically */
 	UPROPERTY(Config, EditAnywhere, Category="FlexVault", meta=(DisplayName="Use Unattended Mode"))
 	bool bUseUnattendedMode;
