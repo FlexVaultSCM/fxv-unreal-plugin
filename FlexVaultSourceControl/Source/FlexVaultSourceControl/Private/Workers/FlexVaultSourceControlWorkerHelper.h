@@ -34,10 +34,30 @@ struct FFlexVaultRevisionDetail
 };
 
 /**
+ * Builds the CLI args for `fxv snapshot -d <InDescription> --unattended --no-color`, shared by
+ * FFlexVaultCheckInWorker's snapshot phase and FFlexVaultAutoSnapshot's background triggers so the
+ * two argument lists can't drift apart.
+ */
+TArray<FString> BuildFlexVaultSnapshotArgs(const FString& InDescription);
+
+/**
+ * Global lock serializing every `fxv snapshot` CLI invocation against every other one. Check-in's
+ * inline snapshot phase and FFlexVaultAutoSnapshot's background triggers have no other
+ * coordination between them, and two concurrent `fxv snapshot` processes against the same
+ * workspace isn't supported CLI usage. Hold this for the `fxv snapshot` RunFlexVaultCommand call
+ * only, not for surrounding work (e.g. check-in's subsequent `fxv publish` isn't covered).
+ */
+FCriticalSection& GetFlexVaultSnapshotLock();
+
+/**
  * Runs the FlexVault CLI as a child process and blocks the calling thread until it exits.
  * If InCancelCommand is provided and InCancelCommand->IsCanceled() becomes true while the
  * process is running (e.g. a synchronous wait timed out), the child process is terminated
  * and the call returns promptly with a failure result, rather than blocking indefinitely.
+ * Independently, if InTimeoutSeconds is > 0, the process is terminated after that many seconds
+ * even with no InCancelCommand - for ad-hoc callers that aren't part of the provider's command
+ * queue (and so have no FFlexVaultSourceControlCommand to watch) but still need a bound on how
+ * long a hung CLI process can block the calling thread.
  */
 bool RunFlexVaultCommand(
 	const FString& InBinaryPath,
@@ -46,7 +66,8 @@ bool RunFlexVaultCommand(
 	TArray<FString>& OutOutputLines,
 	FSourceControlResultInfo& OutResultInfo,
 	bool bIgnoreError = false,
-	const FFlexVaultSourceControlCommand* InCancelCommand = nullptr
+	const FFlexVaultSourceControlCommand* InCancelCommand = nullptr,
+	double InTimeoutSeconds = 0.0
 );
 
 /**

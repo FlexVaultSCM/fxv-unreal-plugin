@@ -8,6 +8,7 @@
 #include "HAL/PlatformFileManager.h"
 #include "GenericPlatform/GenericPlatformFile.h"
 #include "Misc/Paths.h"
+#include "Misc/ScopeLock.h"
 
 #define LOCTEXT_NAMESPACE "FlexVaultSourceControl"
 
@@ -45,14 +46,13 @@ bool FFlexVaultCheckInWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 
 	TArray<FString> SnapshotOutputLines;
 	// 1. Snapshot changes locally
-	TArray<FString> SnapshotArgs = {
-		TEXT("snapshot"),
-		TEXT("-d"),
-		Description,
-		TEXT("--unattended"),
-		TEXT("--no-color")
-	};
-	bool bSnapshotOk = RunFlexVaultCommand(InCommand.BinaryPath, InCommand.WorkspacePath, SnapshotArgs, SnapshotOutputLines, InCommand.ResultInfo, false, &InCommand);
+	TArray<FString> SnapshotArgs = BuildFlexVaultSnapshotArgs(Description);
+	bool bSnapshotOk;
+	{
+		// Serialize against FFlexVaultAutoSnapshot's background snapshot triggers - see GetFlexVaultSnapshotLock().
+		FScopeLock SnapshotLock(&GetFlexVaultSnapshotLock());
+		bSnapshotOk = RunFlexVaultCommand(InCommand.BinaryPath, InCommand.WorkspacePath, SnapshotArgs, SnapshotOutputLines, InCommand.ResultInfo, false, &InCommand);
+	}
 	if (!bSnapshotOk)
 	{
 		UE_LOG(LogFlexVault, Error, TEXT("FlexVault SCM: Snapshot phase failed during check-in."));

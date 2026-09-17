@@ -105,6 +105,12 @@ public:
 	 *  trigger a fresh UpdateStatus query for any requested file. */
 	void InvalidateStateCache();
 
+	/** Returns true if a command for the given operation name is currently queued or running.
+	 *  For ad-hoc callers outside the normal Execute() path (e.g. FFlexVaultAutoSnapshot's
+	 *  periodic check) that want to avoid spawning a redundant concurrent CLI call for an
+	 *  operation someone else already has in flight. Game-thread only, like CommandQueue itself. */
+	bool HasOperationInFlight(const FName& InOperationName) const;
+
 private:
 	virtual TUniquePtr<ISourceControlProvider> Create(const FStringView& OwnerName, const FSourceControlInitSettings& InInitialSettings) const override;
 

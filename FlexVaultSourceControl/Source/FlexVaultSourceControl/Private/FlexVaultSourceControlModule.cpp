@@ -1,6 +1,7 @@
 // Copyright (c) 2025-2026 FlexVault Inc. All Rights Reserved.
 
 #include "FlexVaultSourceControlModule.h"
+#include "FlexVaultAutoSnapshot.h"
 #include "Features/IModularFeatures.h"
 #include "Interfaces/IPluginManager.h"
 
@@ -15,10 +16,16 @@ void FFlexVaultSourceControlModule::StartupModule()
 
 	// Bind our source control provider to the Unreal modular feature manager
 	IModularFeatures::Get().RegisterModularFeature("SourceControl", &FlexVaultSourceControlProvider);
+
+	// Auto-snapshot before/after high-entropy editor ops (bulk delete, big level edits, bulk
+	// reimport) plus a periodic fallback - see FlexVaultAutoSnapshot.h.
+	FFlexVaultAutoSnapshot::Register(FlexVaultSourceControlProvider);
 }
 
 void FFlexVaultSourceControlModule::ShutdownModule()
 {
+	FFlexVaultAutoSnapshot::Unregister();
+
 	// Close down connection and state caches before module teardown
 	FlexVaultSourceControlProvider.Close();
 

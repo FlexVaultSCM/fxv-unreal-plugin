@@ -127,6 +127,23 @@ static bool LaunchProcessWithPipe(
 	return true;
 }
 
+TArray<FString> BuildFlexVaultSnapshotArgs(const FString& InDescription)
+{
+	return {
+		TEXT("snapshot"),
+		TEXT("-d"),
+		InDescription,
+		TEXT("--unattended"),
+		TEXT("--no-color")
+	};
+}
+
+FCriticalSection& GetFlexVaultSnapshotLock()
+{
+	static FCriticalSection SnapshotLock;
+	return SnapshotLock;
+}
+
 bool RunFlexVaultCommand(
 	const FString& InBinaryPath,
 	const FString& InWorkspacePath,
@@ -134,7 +151,8 @@ bool RunFlexVaultCommand(
 	TArray<FString>& OutOutputLines,
 	FSourceControlResultInfo& OutResultInfo,
 	bool bIgnoreError,
-	const FFlexVaultSourceControlCommand* InCancelCommand
+	const FFlexVaultSourceControlCommand* InCancelCommand,
+	double InTimeoutSeconds
 )
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(RunFlexVaultCommand);
@@ -160,6 +178,15 @@ bool RunFlexVaultCommand(
 			// Terminate the child process so the calling thread's wait for this command
 			// (e.g. ExecuteSynchronousCommand's timeout) is honored promptly and the underlying
 			// process is not left running/orphaned in the background.
+			bWasCanceled = true;
+			FPlatformProcess::TerminateProc(Process, true);
+			break;
+		}
+
+		if (InTimeoutSeconds > 0.0 && (FPlatformTime::Seconds() - StartTime) > InTimeoutSeconds)
+		{
+			// No InCancelCommand to watch (an ad-hoc call outside the command queue) - apply our
+			// own bound so a hung CLI process can't block this thread indefinitely.
 			bWasCanceled = true;
 			FPlatformProcess::TerminateProc(Process, true);
 			break;
