@@ -53,6 +53,7 @@ static FName ProviderName("FlexVault");
 
 FFlexVaultSourceControlProvider::FFlexVaultSourceControlProvider()
 	: OwnerName(TEXT("Default"))
+	, bIsEnabled(false)
 	, bServerAvailable(false)
 	, bStatusUpdateDelayed(false)
 {
@@ -60,12 +61,14 @@ FFlexVaultSourceControlProvider::FFlexVaultSourceControlProvider()
 
 void FFlexVaultSourceControlProvider::Init(bool bForceConnection)
 {
+	bIsEnabled = true;
 	const EInitFlags Flags = bForceConnection ? EInitFlags::AttemptConnection : EInitFlags::None;
 	Init(Flags);
 }
 
 ISourceControlProvider::FInitResult FFlexVaultSourceControlProvider::Init(EInitFlags Flags)
 {
+	bIsEnabled = true;
 	FInitResult Result;
 
 	if ((Flags & EInitFlags::AttemptConnection) != EInitFlags::None)
@@ -84,15 +87,11 @@ ISourceControlProvider::FInitResult FFlexVaultSourceControlProvider::Init(EInitF
 			Command->Concurrency = EConcurrency::Synchronous;
 			
 			ECommandResult::Type CmdResult = IssueCommand(MoveTemp(Command), true);
-			bServerAvailable = (CmdResult == ECommandResult::Succeeded);
 
-			// Only ever prompt once per editor session, on the startup connection attempt -- not on every
-			// manual reconnect from Source Control settings.
-			static bool bHasCheckedIgnoresThisSession = false;
-			if (bServerAvailable && !bHasCheckedIgnoresThisSession)
+			if (!bServerAvailable)
 			{
-				bHasCheckedIgnoresThisSession = true;
-				FFlexVaultIgnoreChecker::CheckAndPromptOnStartup(FPaths::ConvertRelativePathToFull(FPaths::ProjectDir()));
+				Result.Errors.ErrorMessage = ConnectOp->GetErrorText();
+				Result.Errors.AdditionalErrors = ConnectOp->GetResultInfo().ErrorMessages;
 			}
 		}
 	}
@@ -105,6 +104,7 @@ void FFlexVaultSourceControlProvider::Close()
 {
 	FWriteScopeLock WriteLock(StateCacheLock);
 	StateCache.Empty();
+	bIsEnabled = false;
 	bServerAvailable = false;
 	PendingStatusUpdates.Empty();
 	bStatusUpdateDelayed = false;
@@ -120,12 +120,15 @@ FText FFlexVaultSourceControlProvider::GetStatusText() const
 
 TMap<ISourceControlProvider::EStatus, FString> FFlexVaultSourceControlProvider::GetStatus() const
 {
-	return TMap<EStatus, FString>();
+	TMap<EStatus, FString> Result;
+	Result.Add(EStatus::Enabled, IsEnabled() ? TEXT("Yes") : TEXT("No"));
+	Result.Add(EStatus::Connected, (IsEnabled() && IsAvailable()) ? TEXT("Yes") : TEXT("No"));
+	return Result;
 }
 
 bool FFlexVaultSourceControlProvider::IsEnabled() const
 {
-	return bServerAvailable;
+	return bIsEnabled;
 }
 
 bool FFlexVaultSourceControlProvider::IsAvailable() const
@@ -202,12 +205,14 @@ ECommandResult::Type FFlexVaultSourceControlProvider::Execute(
 
 	if (!IsEnabled() && InOperation->GetName() != FlexVaultSourceControlConstants::Connect)
 	{
+		InOperationCompleteDelegate.ExecuteIfBound(InOperation, ECommandResult::Failed);
 		return ECommandResult::Failed;
 	}
 
 	TSharedPtr<IFlexVaultSourceControlWorker, ESPMode::ThreadSafe> Worker = CreateWorker(InOperation->GetName());
 	if (!Worker.IsValid())
 	{
+		InOperationCompleteDelegate.ExecuteIfBound(InOperation, ECommandResult::Failed);
 		return ECommandResult::Failed;
 	}
 
@@ -316,6 +321,13 @@ void FFlexVaultSourceControlProvider::Tick()
 				FSlateNotificationManager::Get().AddNotification(Info);
 			}
 #endif
+
+			// If Connect operation, update provider connection state before returning results
+			const bool bIsConnect = (Command->Operation->GetName() == FlexVaultSourceControlConstants::Connect);
+			if (bIsConnect)
+			{
+				OnConnectOperationComplete(Command->bCommandSuccessful && !Command->IsCanceled());
+			}
 
 			// Execute ReturnResults inline to match Git and Perforce design
 			Command->ReturnResults();
@@ -435,9 +447,37 @@ TSharedPtr<IFlexVaultSourceControlWorker, ESPMode::ThreadSafe> FFlexVaultSourceC
 	return nullptr;
 }
 
+void FFlexVaultSourceControlProvider::OnConnectOperationComplete(bool bSuccess)
+{
+	const bool bPreviousServerAvailable = bServerAvailable;
+	bServerAvailable = bSuccess;
+
+	if (bServerAvailable)
+	{
+		static bool bHasCheckedIgnoresThisSession = false;
+		if (!bHasCheckedIgnoresThisSession)
+		{
+			bHasCheckedIgnoresThisSession = true;
+			FFlexVaultIgnoreChecker::CheckAndPromptOnStartup(FPaths::ConvertRelativePathToFull(FPaths::ProjectDir()));
+		}
+	}
+
+	if (bServerAvailable != bPreviousServerAvailable)
+	{
+		OutputStateChangedEvent();
+	}
+}
+
 ECommandResult::Type FFlexVaultSourceControlProvider::ExecuteSynchronousCommand(TUniquePtr<FFlexVaultSourceControlCommand> InCommand, const FText& Task)
 {
 	UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault SCM: ExecuteSynchronousCommand starting for operation: %s"), *InCommand->Operation->GetName().ToString());
+	if (GThreadPool == nullptr)
+	{
+		UE_LOG(LogFlexVault, Error, TEXT("FlexVault SCM: ExecuteSynchronousCommand failed, GThreadPool is null."));
+		InCommand->OperationCompleteDelegate.ExecuteIfBound(InCommand->Operation, ECommandResult::Failed);
+		return ECommandResult::Failed;
+	}
+
 	FScopedSourceControlProgress Progress(Task);
 
 	FFlexVaultSourceControlCommand* CommandPtr = InCommand.Get();
@@ -452,7 +492,7 @@ ECommandResult::Type FFlexVaultSourceControlProvider::ExecuteSynchronousCommand(
 	// Bypassing Tick() for synchronous calls prevents main thread deadlocks/hangs during launch while
 	// preserving Tick()'s async-loading safety guard for asynchronous operations.
 	const double StartWaitTime = FPlatformTime::Seconds();
-	const UFlexVaultSourceControlDeveloperSettings* Settings = GetDefault<UFlexVaultSourceControlDeveloperSettings>();
+	const UFlexVaultSourceControlDeveloperSettings* Settings = UObjectInitialized() ? GetDefault<UFlexVaultSourceControlDeveloperSettings>() : nullptr;
 	const double TimeoutSeconds = (Settings && Settings->CommandTimeoutSeconds > 0.0) ? Settings->CommandTimeoutSeconds : 30.0;
 	while (!CommandPtr->bExecuteProcessed.Load())
 	{
@@ -493,6 +533,12 @@ ECommandResult::Type FFlexVaultSourceControlProvider::ExecuteSynchronousCommand(
 	}
 #endif
 
+	const bool bIsConnect = (CommandPtr->Operation->GetName() == FlexVaultSourceControlConstants::Connect);
+	if (bIsConnect)
+	{
+		OnConnectOperationComplete(CommandPtr->bCommandSuccessful && !CommandPtr->IsCanceled());
+	}
+
 	const ECommandResult::Type Result = CommandPtr->ReturnResults();
 
 	UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault SCM: ExecuteSynchronousCommand finished for operation: %s, Result=%d"), *CommandPtr->Operation->GetName().ToString(), (int32)Result);
@@ -504,11 +550,15 @@ ECommandResult::Type FFlexVaultSourceControlProvider::ExecuteSynchronousCommand(
 ECommandResult::Type FFlexVaultSourceControlProvider::IssueCommand(TUniquePtr<FFlexVaultSourceControlCommand> InCommand, const bool bSynchronous)
 {
 	UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault SCM: IssueCommand: %s, bSynchronous=%d"), *InCommand->Operation->GetName().ToString(), bSynchronous ? 1 : 0);
+	InCommand->BinaryPath = TEXT("fxv");
 	InCommand->WorkspacePath = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
-	if (const UFlexVaultSourceControlDeveloperSettings* Settings = GetDefault<UFlexVaultSourceControlDeveloperSettings>())
+	if (UObjectInitialized())
 	{
-		InCommand->BinaryPath = Settings->GetEffectiveBinaryPath();
-		InCommand->CommandCancelGracePeriodSeconds = Settings->CommandCancelGracePeriodSeconds;
+		if (const UFlexVaultSourceControlDeveloperSettings* Settings = GetDefault<UFlexVaultSourceControlDeveloperSettings>())
+		{
+			InCommand->BinaryPath = Settings->GetEffectiveBinaryPath();
+			InCommand->CommandCancelGracePeriodSeconds = Settings->CommandCancelGracePeriodSeconds;
+		}
 	}
 	if (bSynchronous)
 	{
@@ -517,6 +567,12 @@ ECommandResult::Type FFlexVaultSourceControlProvider::IssueCommand(TUniquePtr<FF
 	}
 	else
 	{
+		if (GThreadPool == nullptr)
+		{
+			UE_LOG(LogFlexVault, Error, TEXT("FlexVault SCM: IssueCommand failed, GThreadPool is null."));
+			InCommand->OperationCompleteDelegate.ExecuteIfBound(InCommand->Operation, ECommandResult::Failed);
+			return ECommandResult::Failed;
+		}
 		FFlexVaultSourceControlCommand* CommandPtr = InCommand.Release();
 		CommandQueue.Add(CommandPtr);
 		// Queue background work on Unreal Engine thread pool
