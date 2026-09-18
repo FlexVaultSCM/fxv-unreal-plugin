@@ -117,6 +117,7 @@ private:
 	TSharedPtr<IFlexVaultSourceControlWorker, ESPMode::ThreadSafe> CreateWorker(const FName& InOperationName);
 	ECommandResult::Type ExecuteSynchronousCommand(TUniquePtr<FFlexVaultSourceControlCommand> InCommand, const FText& Task);
 	ECommandResult::Type IssueCommand(TUniquePtr<FFlexVaultSourceControlCommand> InCommand, const bool bSynchronous);
+	void OnConnectOperationComplete(bool bSuccess);
 
 private:
 	FString OwnerName;

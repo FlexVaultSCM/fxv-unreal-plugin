@@ -18,6 +18,7 @@
 #include "Workers/FlexVaultRevertWorker.h"
 #include "Workers/FlexVaultResolveWorker.h"
 #include "Workers/FlexVaultSyncWorker.h"
+#include "SourceControlOperations.h"
 
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
@@ -51,6 +52,38 @@ bool FFlexVaultProviderBasicTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("FlexVault uses Git-like snapshots"), Provider.UsesSnapshots());
 	TestTrue(TEXT("FlexVault allows diffing against depot"), Provider.AllowsDiffAgainstDepot());
 	TestFalse(TEXT("FlexVault does not require soft reverts on deletion"), Provider.UsesSoftRevertOnDelete());
+
+	// Test Init without forcing connection (startup behavior)
+	Provider.Init(false);
+	TestTrue(TEXT("SCM should be enabled after Init"), Provider.IsEnabled());
+	TestFalse(TEXT("SCM should remain unavailable until connected"), Provider.IsAvailable());
+
+	TMap<ISourceControlProvider::EStatus, FString> Status = Provider.GetStatus();
+	TestEqual(TEXT("Status should report Enabled: Yes"), Status.FindRef(ISourceControlProvider::EStatus::Enabled), TEXT("Yes"));
+	TestEqual(TEXT("Status should report Connected: No"), Status.FindRef(ISourceControlProvider::EStatus::Connected), TEXT("No"));
+
+	// Test Close resets state
+	Provider.Close();
+	TestFalse(TEXT("SCM should not be enabled after Close"), Provider.IsEnabled());
+	TestFalse(TEXT("SCM should not be available after Close"), Provider.IsAvailable());
+
+	Status = Provider.GetStatus();
+	TestEqual(TEXT("Status should report Enabled: No"), Status.FindRef(ISourceControlProvider::EStatus::Enabled), TEXT("No"));
+	TestEqual(TEXT("Status should report Connected: No"), Status.FindRef(ISourceControlProvider::EStatus::Connected), TEXT("No"));
+
+	// Test early failure invokes completion delegate when disabled
+	bool bDelegateInvoked = false;
+	ECommandResult::Type DelegateResult = ECommandResult::Succeeded;
+	TSharedRef<FCheckIn, ESPMode::ThreadSafe> CheckInOp = ISourceControlOperation::Create<FCheckIn>();
+	Provider.Execute(CheckInOp, nullptr, TArray<FString>(), EConcurrency::Synchronous,
+		FSourceControlOperationComplete::CreateLambda([&bDelegateInvoked, &DelegateResult](const FSourceControlOperationRef&, ECommandResult::Type InResult)
+		{
+			bDelegateInvoked = true;
+			DelegateResult = InResult;
+		})
+	);
+	TestTrue(TEXT("Completion delegate should be invoked on early failure"), bDelegateInvoked);
+	TestEqual(TEXT("Completion delegate result should be Failed"), DelegateResult, ECommandResult::Failed);
 
 	return true;
 }
