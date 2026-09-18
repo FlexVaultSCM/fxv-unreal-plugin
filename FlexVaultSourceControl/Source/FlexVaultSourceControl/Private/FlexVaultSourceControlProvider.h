@@ -124,6 +124,9 @@ private:
 	/** Flag indicating connection status */
 	bool bServerAvailable;
 
+	/** Flag indicating whether an initial connection attempt has been performed */
+	bool bConnectionAttempted;
+
 	/** Cached files state map */
 	TMap<FString, TSharedRef<FFlexVaultSourceControlState, ESPMode::ThreadSafe>> StateCache;
 	mutable FRWLock StateCacheLock;
