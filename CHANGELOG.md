@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/FlexVaultSCM/fxv-unreal-plugin/compare/v0.5.0...v0.5.1) (2026-09-18)
+
+
+### Bug Fixes
+
+* **tests:** include FlexVaultResolveWorker.h in SCM test file ([#23](https://github.com/FlexVaultSCM/fxv-unreal-plugin/issues/23)) ([52052f9](https://github.com/FlexVaultSCM/fxv-unreal-plugin/commit/52052f9563c5d08e06e8e6e31f381453de26de04))
+
 ## [0.5.0](https://github.com/FlexVaultSCM/fxv-unreal-plugin/compare/v0.4.0...v0.5.0) (2026-09-17)
 
 
