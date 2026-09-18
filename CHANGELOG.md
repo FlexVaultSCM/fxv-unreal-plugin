@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.2](https://github.com/FlexVaultSCM/fxv-unreal-plugin/compare/v0.5.1...v0.5.2) (2026-09-18)
+
+
+### Bug Fixes
+
+* align revision control connection state with editor lifecycle ([#25](https://github.com/FlexVaultSCM/fxv-unreal-plugin/issues/25)) ([2620773](https://github.com/FlexVaultSCM/fxv-unreal-plugin/commit/26207732222a4e4f48c5c6a6be4cc748ef08032f))
+
 ## [0.5.1](https://github.com/FlexVaultSCM/fxv-unreal-plugin/compare/v0.5.0...v0.5.1) (2026-09-18)
 
 
