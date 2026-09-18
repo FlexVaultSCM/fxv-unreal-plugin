@@ -16,6 +16,7 @@
 #include "Workers/FlexVaultDeleteWorker.h"
 #include "Workers/FlexVaultCopyWorker.h"
 #include "Workers/FlexVaultRevertWorker.h"
+#include "Workers/FlexVaultResolveWorker.h"
 #include "Workers/FlexVaultSyncWorker.h"
 
 #include "Dom/JsonObject.h"
