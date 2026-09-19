@@ -17,18 +17,12 @@ For new installations from source:
 1. Download `FlexVaultSourceControl.zip` (or a tagged release archive) from [GitHub Releases](https://github.com/FlexVaultSCM/fxv-unreal-plugin/releases).
 2. Unzip into your project's `Plugins/` folder as `Plugins/FlexVaultSourceControl/`.
 3. Launch the project in Unreal Editor. If prompted that modules are missing or need to be rebuilt, click **Yes**.
-4. In **Edit > Plugins**, verify **FlexVault** is enabled.
+4. In **Edit > Plugins**, verify **FlexVault (fxv)** is enabled.
 5. Open **Tools > Connect to Revision Control** (or click the revision control icon on the status bar), choose **FlexVault**, and accept the settings.
 
 ## Configuration
 
-Settings are located in **Edit > Project Settings > Plugins > FlexVault Source Control**:
-
-- **Binary Path**: Custom location of the `fxv` executable (detected on `PATH` if empty).
-- **Remote Repository URI**: Remote repository S3 URI override.
-- **Use Unattended Mode**: Suppresses interactive CLI prompts during editor operations.
-- **Conflict Resolution Preference**: Default conflict preference (`mine` or `theirs`).
-- **Command Timeout (Seconds)**: Maximum execution time for synchronous CLI operations.
+Optional settings can be configured in **Edit > Project Settings > Plugins > FlexVault Source Control** to customize the `fxv` binary location, conflict resolution preferences, command timeouts, and automatic snapshot behavior.
 
 ## Features
 
@@ -38,6 +32,7 @@ Settings are located in **Edit > Project Settings > Plugins > FlexVault Source C
 - **Diff Against Depot**: Visually compare modified assets against the base depot revision in Unreal's diff viewer.
 - **History**: Inspect past revisions, authors, timestamps, and commit descriptions.
 - **Conflict Handling**: Resolves concurrent edits using your configured conflict preference.
+- **Auto-Snapshots**: Automatically captures safety draft snapshots periodically or during high-entropy actions (level saves with significant actor changes, bulk asset reimports).
 
 ## Running Plugin Tests
 
@@ -49,7 +44,3 @@ Engine/Binaries/Win64/UnrealEditor-Cmd.exe "Path/To/YourProject/YourProject.upro
 
 Questions, bug reports, and suggestions can be shared in the [FlexVault Discord](https://discord.gg/KCMHRQBDf).
 For the full guide and walkthrough, see the [FlexVault Unreal Plugin Documentation](https://docs.fxv.dev/how-to/unreal-plugin/).
-
-## Open items
-
-See [`FlexVaultSourceControl/TODO.md`](FlexVaultSourceControl/TODO.md) for planned work (lock server integration, Slate settings widget, auto-discovery of `fxv`).
