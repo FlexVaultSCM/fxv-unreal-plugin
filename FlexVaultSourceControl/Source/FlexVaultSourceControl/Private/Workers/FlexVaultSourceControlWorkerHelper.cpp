@@ -13,7 +13,43 @@
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonReader.h"
 
+#include "HAL/PlatformMisc.h"
+#include "Interfaces/IPluginManager.h"
+
 #define LOCTEXT_NAMESPACE "FlexVaultSourceControl"
+
+namespace FlexVaultCliCompatibility
+{
+	// fxv-core's VERSIONING.md "Downstream pinning policy": pin a compatible RANGE of fxv-core versions
+	// ([Min, Max), Max exclusive), not a single version, and re-pin deliberately once a newer release has
+	// been reviewed/verified compatible. fxv-core is pre-1.0, where a MINOR bump (not just MAJOR) can carry
+	// a breaking change - a plain feature release also bumps MINOR, so the version number alone can't tell
+	// the two apart. Until fxv-core reaches 1.0, treat every MINOR as a potential break and only widen Max
+	// after checking fxv-core/CHANGELOG.md for a "Breaking Changes" entry between the old and new Max.
+	//
+	// See fxv-core/CHANGELOG.md for the "Breaking Changes" entries that justify this range.
+	constexpr int32 MinMajor = 0, MinMinor = 10, MinPatch = 0; // >= 0.10.0
+	constexpr int32 MaxMajor = 0, MaxMinor = 11, MaxPatch = 0; // < 0.11.0
+}
+
+static void SetFxvClientEnvironmentVariable()
+{
+	FString PluginVersion = TEXT("0.5.2");
+	TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("FlexVaultSourceControl"));
+	if (Plugin.IsValid())
+	{
+		PluginVersion = Plugin->GetDescriptor().VersionName;
+	}
+
+	const FString ClientValue = FString::Printf(
+		TEXT("name=unreal;version=%s;max=%d.%d.%d;min=%d.%d.%d"),
+		*PluginVersion,
+		FlexVaultCliCompatibility::MaxMajor, FlexVaultCliCompatibility::MaxMinor, FlexVaultCliCompatibility::MaxPatch,
+		FlexVaultCliCompatibility::MinMajor, FlexVaultCliCompatibility::MinMinor, FlexVaultCliCompatibility::MinPatch
+	);
+
+	FPlatformMisc::SetEnvironmentVar(TEXT("FXV_CLIENT"), *ClientValue);
+}
 
 static FString EscapeCommandLineArg(const FString& InArg)
 {
@@ -28,55 +64,57 @@ static FString EscapeCommandLineArg(const FString& InArg)
 	}
 
 	// 2. Construct the quoted and escaped argument string.
-	//    Windows command line escaping has unique rules for backslashes:
-	//    - Backslashes are interpreted literally UNLESS they are followed by a double quote.
-	//    - If backslashes are followed by a double quote, they must be doubled to escape themselves,
-	//      so the quote can then be escaped as \" (yielding 2N + 1 backslashes overall).
-	//    - Trailing backslashes before the closing quote must also be doubled so they don't escape the closing quote.
-	//    To implement this cleanly, we do a single-pass scan keeping track of consecutive backslashes.
-	FString Result = TEXT("\""); // Open the enclosing quote
+	//    - Backslashes preceding a double quote must be doubled.
+	//    - Trailing backslashes before the closing quote must also be doubled so the closing quote is not escaped.
+	//    - Double quotes must be escaped as \".
+	FString Result = TEXT("\"");
 	int32 BackslashCount = 0;
 
-	for (int32 i = 0; i < InArg.Len(); ++i)
+	for (int32 Index = 0; Index < InArg.Len(); ++Index)
 	{
-		TCHAR Char = InArg[i];
-		if (Char == '\\')
+		TCHAR Char = InArg[Index];
+		if (Char == TEXT('\\'))
 		{
-			// Accumulate backslashes until we hit a character that determines their meaning
-			BackslashCount++;
+			++BackslashCount;
 		}
-		else if (Char == '\"')
+		else if (Char == TEXT('\"'))
 		{
-			// Double the accumulated backslashes because they precede a quote,
-			// then write the escaped quote \" itself
-			Result.Append(FString::ChrN(BackslashCount * 2, '\\'));
-			Result.Append(TEXT("\\\""));
+			// Double the preceding backslashes plus one for the quote itself
+			Result.Append(FString::ChrN(BackslashCount * 2 + 1, TEXT('\\')));
+			Result.AppendChar(TEXT('\"'));
 			BackslashCount = 0;
 		}
 		else
 		{
-			// Write accumulated backslashes literally because they do not precede a quote
-			Result.Append(FString::ChrN(BackslashCount, '\\'));
+			// Output accumulated normal backslashes as-is
+			if (BackslashCount > 0)
+			{
+				Result.Append(FString::ChrN(BackslashCount, TEXT('\\')));
+				BackslashCount = 0;
+			}
 			Result.AppendChar(Char);
-			BackslashCount = 0;
 		}
 	}
 
-	// Double any trailing backslashes so they do not escape the closing quote
-	Result.Append(FString::ChrN(BackslashCount * 2, '\\'));
-	Result.Append(TEXT("\"")); // Close the enclosing quote
+	// Output trailing backslashes, doubled because they precede the closing quote
+	if (BackslashCount > 0)
+	{
+		Result.Append(FString::ChrN(BackslashCount * 2, TEXT('\\')));
+	}
+	Result.AppendChar(TEXT('\"'));
 
 	return Result;
 }
 
-static FString JoinCommandLineArgs(const TArray<FString>& InArgs)
+static FString BuildFlatCommandLine(const TArray<FString>& InArgs)
 {
-	// Process each argument individually and escape it if necessary.
 	TArray<FString> EscapedArgs;
+	EscapedArgs.Reserve(InArgs.Num());
 	for (const FString& Arg : InArgs)
 	{
 		EscapedArgs.Add(EscapeCommandLineArg(Arg));
 	}
+
 	// Join all escaped arguments with spaces to form a single flat command line string.
 	return FString::Join(EscapedArgs, TEXT(" "));
 }
@@ -99,6 +137,8 @@ static bool LaunchProcessWithPipe(
 		UE_LOG(LogFlexVault, Error, TEXT("FlexVault: Failed to create internal pipe for command execution: %s %s"), *InBinaryPath, *InEscapedArgs);
 		return false;
 	}
+
+	SetFxvClientEnvironmentVariable();
 
 	uint32 ProcessID = 0;
 	OutProcess = FPlatformProcess::CreateProc(
@@ -407,20 +447,6 @@ bool RunFlexVaultCatCommand(
 	UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault SCM Command Succeeded (cat): %s %s (Working Dir: %s, %.4fs, %lld bytes written to %s)"),
 		*InBinaryPath, *EscapedArgs, *InWorkspacePath, ElapsedTime, TotalBytesWritten, *InDestinationPath);
 	return true;
-}
-
-namespace FlexVaultCliCompatibility
-{
-	// fxv-core's VERSIONING.md "Downstream pinning policy": pin a compatible RANGE of fxv-core versions
-	// ([Min, Max), Max exclusive), not a single version, and re-pin deliberately once a newer release has
-	// been reviewed/verified compatible. fxv-core is pre-1.0, where a MINOR bump (not just MAJOR) can carry
-	// a breaking change - a plain feature release also bumps MINOR, so the version number alone can't tell
-	// the two apart. Until fxv-core reaches 1.0, treat every MINOR as a potential break and only widen Max
-	// after checking fxv-core/CHANGELOG.md for a "Breaking Changes" entry between the old and new Max.
-	//
-	// See fxv-core/CHANGELOG.md for the "Breaking Changes" entries that justify this range.
-	constexpr int32 MinMajor = 0, MinMinor = 10, MinPatch = 0; // >= 0.10.0
-	constexpr int32 MaxMajor = 0, MaxMinor = 11, MaxPatch = 0; // < 0.11.0
 }
 
 namespace
