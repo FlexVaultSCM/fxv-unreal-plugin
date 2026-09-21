@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.6.0](https://github.com/FlexVaultSCM/fxv-unreal-plugin/compare/v0.5.2...v0.6.0) (2026-09-21)
+
+
+### Features
+
+* auto-add default ignores to .fxvignore instead of prompting ([#29](https://github.com/FlexVaultSCM/fxv-unreal-plugin/issues/29)) ([ae75641](https://github.com/FlexVaultSCM/fxv-unreal-plugin/commit/ae75641a8429580c3edc271c16b36cd12244a51a))
+
+
+### Bug Fixes
+
+* add plugin icon and improve search discoverability ([#27](https://github.com/FlexVaultSCM/fxv-unreal-plugin/issues/27)) ([d21ecb8](https://github.com/FlexVaultSCM/fxv-unreal-plugin/commit/d21ecb874fdd73542e27a09aacd6e0a32bd7e267))
+
 ## [0.5.2](https://github.com/FlexVaultSCM/fxv-unreal-plugin/compare/v0.5.1...v0.5.2) (2026-09-18)
 
 
