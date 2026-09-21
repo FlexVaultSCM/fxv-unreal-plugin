@@ -458,7 +458,7 @@ void FFlexVaultSourceControlProvider::OnConnectOperationComplete(bool bSuccess)
 		if (!bHasCheckedIgnoresThisSession)
 		{
 			bHasCheckedIgnoresThisSession = true;
-			FFlexVaultIgnoreChecker::CheckAndPromptOnStartup(FPaths::ConvertRelativePathToFull(FPaths::ProjectDir()));
+			FFlexVaultIgnoreChecker::EnsureDefaultIgnores(FPaths::ConvertRelativePathToFull(FPaths::ProjectDir()));
 		}
 	}
 

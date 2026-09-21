@@ -5,18 +5,19 @@
 #include "CoreMinimal.h"
 
 /**
- * Prompts once per editor session to exclude Unreal's generated folders from FlexVault tracking.
+ * Unconditionally excludes Unreal's generated folders from FlexVault tracking. Must run before
+ * anything in the plugin can trigger an auto-snapshot, since once a path is captured into a
+ * snapshot, adding it to .fxvignore afterward no longer removes it from tracking - .fxvignore
+ * only keeps out paths that aren't tracked yet.
  */
 class FFlexVaultIgnoreChecker
 {
 public:
-	/** Checks WorkspaceRoot/.fxvignore for Unreal's default junk folders and prompts to add any missing. */
-	static void CheckAndPromptOnStartup(const FString& WorkspaceRoot);
+	/** Adds Unreal's default junk folders to WorkspaceRoot/.fxvignore, creating the file if needed. */
+	static void EnsureDefaultIgnores(const FString& WorkspaceRoot);
 
 private:
 	static TArray<FString> GetMissingEntries(const FString& WorkspaceRoot);
 	static bool AppendEntries(const FString& WorkspaceRoot, const TArray<FString>& Entries);
 	static FString NormalizeEntry(const FString& Entry);
-	static void MarkDismissed(const TArray<FString>& Entries);
-	static TArray<FString> GetDismissed();
 };
