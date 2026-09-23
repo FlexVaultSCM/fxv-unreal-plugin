@@ -130,6 +130,7 @@ private:
 	ECommandResult::Type IssueCommand(TUniquePtr<FFlexVaultSourceControlCommand> InCommand, const bool bSynchronous);
 	void OnConnectOperationComplete(bool bSuccess);
 	void HandleCommandNotifications(const FFlexVaultSourceControlCommand& InCommand);
+	bool EnsureUserLoggedInBeforeCheckIn();
 
 private:
 	FString OwnerName;

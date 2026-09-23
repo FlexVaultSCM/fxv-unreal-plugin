@@ -178,7 +178,20 @@ bool EnsureFlexVaultLoggedIn(
 	const FString& InBinaryPath,
 	const FString& InWorkspacePath,
 	FSourceControlResultInfo& OutResultInfo,
-	const FFlexVaultSourceControlCommand* InCancelCommand = nullptr
+	const FFlexVaultSourceControlCommand* InCancelCommand = nullptr,
+	FString* OutCurrentUser = nullptr
+);
+
+/**
+ * Logs in to the workspace as the given username via 'fxv login <InUsername> --format json'.
+ * Returns true if login succeeded. If it failed, OutErrorMessage will contain the error details.
+ */
+bool RunFlexVaultLoginCommand(
+	const FString& InBinaryPath,
+	const FString& InWorkspacePath,
+	const FString& InUsername,
+	FSourceControlResultInfo& OutResultInfo,
+	FString* OutErrorMessage = nullptr
 );
 
 /**

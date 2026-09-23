@@ -778,7 +778,8 @@ bool EnsureFlexVaultLoggedIn(
 	const FString& InBinaryPath,
 	const FString& InWorkspacePath,
 	FSourceControlResultInfo& OutResultInfo,
-	const FFlexVaultSourceControlCommand* InCancelCommand
+	const FFlexVaultSourceControlCommand* InCancelCommand,
+	FString* OutCurrentUser
 )
 {
 	TArray<FString> StatusOutputLines;
@@ -812,6 +813,50 @@ bool EnsureFlexVaultLoggedIn(
 	{
 		OutResultInfo.ErrorMessages.Add(LOCTEXT("FlexVaultNotLoggedIn",
 			"FlexVault: No user is logged in for this workspace. Run 'fxv login <username>' from a terminal before publishing."));
+		return false;
+	}
+
+	if (OutCurrentUser)
+	{
+		*OutCurrentUser = CurrentUser;
+	}
+
+	return true;
+}
+
+bool RunFlexVaultLoginCommand(
+	const FString& InBinaryPath,
+	const FString& InWorkspacePath,
+	const FString& InUsername,
+	FSourceControlResultInfo& OutResultInfo,
+	FString* OutErrorMessage
+)
+{
+	TArray<FString> Args = {
+		TEXT("login"),
+		InUsername,
+		TEXT("--format"),
+		TEXT("json"),
+		TEXT("--unattended"),
+		TEXT("--no-color")
+	};
+
+	TArray<FString> OutputLines;
+	bool bOk = RunFlexVaultCommand(InBinaryPath, InWorkspacePath, Args, OutputLines, OutResultInfo, false, nullptr, 15.0);
+	if (!bOk)
+	{
+		FString ParsedError;
+		if (ParseFlexVaultErrorMessage(OutputLines, ParsedError))
+		{
+			if (OutErrorMessage)
+			{
+				*OutErrorMessage = ParsedError;
+			}
+		}
+		else if (OutResultInfo.ErrorMessages.Num() > 0 && OutErrorMessage)
+		{
+			*OutErrorMessage = OutResultInfo.ErrorMessages.Last().ToString();
+		}
 		return false;
 	}
 
