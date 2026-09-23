@@ -34,6 +34,21 @@ struct FFlexVaultRevisionDetail
 };
 
 /**
+ * Branch metadata extracted from 'fxv branch list --format json'
+ */
+struct FFlexVaultBranchInfo
+{
+	FString Branch;
+	FString BranchUniqueId;
+	FString BranchType; // "global" or "user"
+	FString Owner;
+	FString PublishedHead;
+	FString DraftHead;
+	bool bLocalOnly = false;
+	bool bRetired = false;
+};
+
+/**
  * Builds the CLI args for `fxv snapshot -d <InDescription> --unattended --no-color`, shared by
  * FFlexVaultCheckInWorker's snapshot phase and FFlexVaultAutoSnapshot's background triggers so the
  * two argument lists can't drift apart.
@@ -107,6 +122,50 @@ bool ParseFlexVaultCurrentUser(
 );
 
 /**
+ * Extracts the workspace's current branch (message.payload.current_branch) from an
+ * `fxv status --format json` envelope. Returns false (leaving OutCurrentBranch empty) if the envelope
+ * is malformed or the field is absent.
+ */
+bool ParseFlexVaultCurrentBranch(
+	const TSharedPtr<class FJsonObject>& InEnvelope,
+	FString& OutCurrentBranch
+);
+
+/**
+ * Parses the JSON output of 'fxv branch list --format json' into branch info structures.
+ */
+bool ParseFlexVaultBranchList(
+	const TArray<FString>& InBranchListOutputLines,
+	TArray<FFlexVaultBranchInfo>& OutBranches,
+	FSourceControlResultInfo& OutResultInfo
+);
+
+/**
+ * Queries the list of branches via 'fxv branch list [--all] --format json'.
+ */
+bool QueryFlexVaultBranchList(
+	const FString& InBinaryPath,
+	const FString& InWorkspacePath,
+	bool bAll,
+	TArray<FFlexVaultBranchInfo>& OutBranches,
+	FSourceControlResultInfo& OutResultInfo,
+	const FFlexVaultSourceControlCommand* InCancelCommand = nullptr
+);
+
+/**
+ * Switches the active branch via 'fxv branch switch <branch> --format json'.
+ */
+bool RunFlexVaultBranchSwitch(
+	const FString& InBinaryPath,
+	const FString& InWorkspacePath,
+	const FString& InBranch,
+	TArray<FString>& OutUpdatedFiles,
+	TArray<FString>& OutConflictedFiles,
+	FSourceControlResultInfo& OutResultInfo,
+	const FFlexVaultSourceControlCommand* InCancelCommand = nullptr
+);
+
+/**
  * Checks whether the workspace already has a logged-in FlexVault user, required for `fxv publish`
  * to succeed (fxv-core PR #106). Runs a cheap `fxv status` query; does NOT attempt to log anyone in
  * itself - if nobody is logged in, fails with a message pointing at running `fxv login` from a
@@ -173,3 +232,18 @@ bool QueryFlexVaultFileHistoryDetails(
 	FSourceControlResultInfo& OutResultInfo,
 	const FFlexVaultSourceControlCommand* InCancelCommand = nullptr
 );
+
+/**
+ * Parses a structured JSON error envelope emitted by the CLI under --format json,
+ * or falls back to non-empty raw text lines if not a JSON error.
+ */
+bool ParseFlexVaultErrorMessage(
+	const TArray<FString>& InOutputLines,
+	FString& OutErrorMessage
+);
+
+/**
+ * Inspects an error string to determine if it indicates a workspace or repository format version incompatibility.
+ */
+bool IsFlexVaultFormatIncompatibilityError(const FString& InErrorMessage);
+

@@ -54,6 +54,8 @@ bool FFlexVaultUpdateStatusWorker::Execute(FFlexVaultSourceControlCommand& InCom
 	// Reset cached repository-wide SCM status fields
 	LocalRevision = 0;
 	DepotRevision = 0;
+	CurrentBranch.Empty();
+	CurrentUser.Empty();
 	ModifiedFiles.Empty();
 	ConflictedFiles.Empty();
 	FileHistories.Empty();
@@ -108,6 +110,9 @@ bool FFlexVaultUpdateStatusWorker::Execute(FFlexVaultSourceControlCommand& InCom
 	}
 
 	const TSharedPtr<FJsonObject>& Payload = *PayloadObj;
+
+	Payload->TryGetStringField(TEXT("current_branch"), CurrentBranch);
+	Payload->TryGetStringField(TEXT("current_user"), CurrentUser);
 
 	// ── Revision numbers from head_commit ──────────────────────────────────────────────────────────
 	const TSharedPtr<FJsonObject>* HeadCommitObj = nullptr;
@@ -255,6 +260,14 @@ bool FFlexVaultUpdateStatusWorker::UpdateStates() const
 {
 	FFlexVaultSourceControlProvider& Provider = GetSCCProvider();
 	Provider.SetHasChangesToSync(bHasChangesToSync);
+	if (!CurrentBranch.IsEmpty())
+	{
+		Provider.SetCurrentBranch(CurrentBranch);
+	}
+	if (!CurrentUser.IsEmpty())
+	{
+		Provider.SetCurrentUser(CurrentUser);
+	}
 
 	// Ensure all modified/added/deleted files discovered by SCM status are present in the cache
 	for (const auto& Entry : ModifiedFiles)

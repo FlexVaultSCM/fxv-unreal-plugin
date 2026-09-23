@@ -58,6 +58,7 @@ bool FFlexVaultConnectWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 			InCommand.ResultInfo.ErrorMessages.Add(Error);
 			UE_LOG(LogFlexVault, Error, TEXT("FlexVault: %s"), *Error.ToString());
 			ConnectOperation->SetErrorText(Error);
+			GetSCCProvider().SetLastConnectionError(Error);
 			return false;
 		}
 
@@ -67,10 +68,26 @@ bool FFlexVaultConnectWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 		{
 			if (InCommand.ResultInfo.ErrorMessages.Num() > 0)
 			{
-				ConnectOperation->SetErrorText(InCommand.ResultInfo.ErrorMessages.Last());
+				FText LastErr = InCommand.ResultInfo.ErrorMessages.Last();
+				ConnectOperation->SetErrorText(LastErr);
+				GetSCCProvider().SetLastConnectionError(LastErr);
 			}
 			return false;
 		}
+
+		FString CurrentBranch;
+		if (ParseFlexVaultCurrentBranch(Envelope, CurrentBranch))
+		{
+			GetSCCProvider().SetCurrentBranch(CurrentBranch);
+		}
+
+		FString CurrentUser;
+		if (ParseFlexVaultCurrentUser(Envelope, CurrentUser))
+		{
+			GetSCCProvider().SetCurrentUser(CurrentUser);
+		}
+
+		GetSCCProvider().SetLastConnectionError(FText::GetEmpty());
 
 		TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("FlexVaultSourceControl"));
 		FString PluginVersion = Plugin.IsValid() ? Plugin->GetDescriptor().VersionName : TEXT("Unknown");
@@ -85,22 +102,18 @@ bool FFlexVaultConnectWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 	}
 	else if (InCommand.ResultInfo.ErrorMessages.Num() > 0)
 	{
-		// RunFlexVaultCommand populates ErrorMessages[0] with a general summary line (exit code or launch failure)
-		// and appends raw CLI stdout/stderr lines afterward (indices 1..N). Surface the actionable error details
-		// from the CLI if present; otherwise fall back to the summary line.
+		FText FailureMessage;
 		if (InCommand.ResultInfo.ErrorMessages.Num() > 1)
 		{
-			TArray<FString> DetailMessages;
-			for (int32 Index = 1; Index < InCommand.ResultInfo.ErrorMessages.Num(); ++Index)
-			{
-				DetailMessages.Add(InCommand.ResultInfo.ErrorMessages[Index].ToString());
-			}
-			ConnectOperation->SetErrorText(FText::FromString(FString::Join(DetailMessages, TEXT("\n"))));
+			FailureMessage = InCommand.ResultInfo.ErrorMessages[1];
 		}
 		else
 		{
-			ConnectOperation->SetErrorText(InCommand.ResultInfo.ErrorMessages[0]);
+			FailureMessage = InCommand.ResultInfo.ErrorMessages[0];
 		}
+
+		ConnectOperation->SetErrorText(FailureMessage);
+		GetSCCProvider().SetLastConnectionError(FailureMessage);
 	}
 
 	return bSucceeded;

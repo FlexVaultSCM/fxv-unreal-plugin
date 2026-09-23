@@ -15,6 +15,7 @@
 #include "Workers/FlexVaultResolveWorker.h"
 #include "Workers/FlexVaultSyncWorker.h"
 #include "Workers/FlexVaultGetSourceControlRevisionInfoWorker.h"
+#include "Workers/FlexVaultSourceControlWorkerHelper.h"
 #include "SourceControlOperations.h"
 #include "SourceControlHelpers.h"
 #include "ScopedSourceControlProgress.h"
@@ -22,6 +23,7 @@
 #include "Misc/ScopeRWLock.h"
 #include "Misc/Paths.h"
 #include "Async/Async.h"
+#include "Logging/MessageLog.h"
 
 #if SOURCE_CONTROL_WITH_SLATE
 #include "Widgets/SNullWidget.h"
@@ -92,6 +94,10 @@ ISourceControlProvider::FInitResult FFlexVaultSourceControlProvider::Init(EInitF
 			{
 				Result.Errors.ErrorMessage = ConnectOp->GetErrorText();
 				Result.Errors.AdditionalErrors = ConnectOp->GetResultInfo().ErrorMessages;
+				if (LastConnectionError.IsEmpty())
+				{
+					LastConnectionError = ConnectOp->GetErrorText();
+				}
 			}
 		}
 	}
@@ -106,15 +112,43 @@ void FFlexVaultSourceControlProvider::Close()
 	StateCache.Empty();
 	bIsEnabled = false;
 	bServerAvailable = false;
+	CurrentBranch.Empty();
+	CurrentUser.Empty();
+	LastConnectionError = FText::GetEmpty();
 	PendingStatusUpdates.Empty();
 	bStatusUpdateDelayed = false;
 }
 
 FText FFlexVaultSourceControlProvider::GetStatusText() const
 {
+	if (!bServerAvailable)
+	{
+		if (!LastConnectionError.IsEmpty())
+		{
+			FFormatNamedArguments DisconnectArgs;
+			DisconnectArgs.Add(TEXT("Status"), LOCTEXT("Disconnected", "Disconnected"));
+			DisconnectArgs.Add(TEXT("Reason"), LastConnectionError);
+
+			return FText::Format(
+				LOCTEXT("StatusTextDisconnectedWithReason", "FlexVault Source Control: {Status}\nReason: {Reason}"),
+				DisconnectArgs
+			);
+		}
+
+		return FText::Format(
+			LOCTEXT("StatusTextDisconnected", "FlexVault Source Control: {0}"),
+			LOCTEXT("Disconnected", "Disconnected")
+		);
+	}
+
+	FFormatNamedArguments Args;
+	Args.Add(TEXT("Status"), LOCTEXT("Connected", "Connected"));
+	Args.Add(TEXT("Branch"), FText::FromString(!CurrentBranch.IsEmpty() ? CurrentBranch : TEXT("-")));
+	Args.Add(TEXT("User"), FText::FromString(!CurrentUser.IsEmpty() ? CurrentUser : TEXT("logged out")));
+
 	return FText::Format(
-		LOCTEXT("StatusText", "FlexVault Source Control: {0}"),
-		bServerAvailable ? LOCTEXT("Connected", "Connected") : LOCTEXT("Disconnected", "Disconnected")
+		LOCTEXT("StatusTextConnectedWithBranch", "FlexVault Source Control: {Status}\nBranch: {Branch}\nUser: {User}"),
+		Args
 	);
 }
 
@@ -123,6 +157,15 @@ TMap<ISourceControlProvider::EStatus, FString> FFlexVaultSourceControlProvider::
 	TMap<EStatus, FString> Result;
 	Result.Add(EStatus::Enabled, IsEnabled() ? TEXT("Yes") : TEXT("No"));
 	Result.Add(EStatus::Connected, (IsEnabled() && IsAvailable()) ? TEXT("Yes") : TEXT("No"));
+	Result.Add(EStatus::Repository, FPaths::ProjectDir());
+	if (!CurrentBranch.IsEmpty())
+	{
+		Result.Add(EStatus::Branch, CurrentBranch);
+	}
+	if (!CurrentUser.IsEmpty())
+	{
+		Result.Add(EStatus::User, CurrentUser);
+	}
 	return Result;
 }
 
@@ -302,25 +345,7 @@ void FFlexVaultSourceControlProvider::Tick()
 			CommandQueue.RemoveAt(Index);
 			--Index;
 
-#if SOURCE_CONTROL_WITH_SLATE
-			bool bIsLaunchError = false;
-			for (const FText& ErrorMsg : Command->ResultInfo.ErrorMessages)
-			{
-				if (ErrorMsg.ToString().Contains(TEXT("Failed to launch FlexVault SCM executable")))
-				{
-					bIsLaunchError = true;
-					break;
-				}
-			}
-
-			if (bIsLaunchError)
-			{
-				FNotificationInfo Info(LOCTEXT("FlexVaultLaunchErrorNotification", "FlexVault: Failed to launch SCM executable. Please verify your Binary Path in Developer Settings."));
-				Info.ExpireDuration = 5.0f;
-				Info.bUseSuccessFailIcons = true;
-				FSlateNotificationManager::Get().AddNotification(Info);
-			}
-#endif
+			HandleCommandNotifications(*Command);
 
 			// If Connect operation, update provider connection state before returning results
 			const bool bIsConnect = (Command->Operation->GetName() == FlexVaultSourceControlConstants::Connect);
@@ -454,6 +479,7 @@ void FFlexVaultSourceControlProvider::OnConnectOperationComplete(bool bSuccess)
 
 	if (bServerAvailable)
 	{
+		LastConnectionError = FText::GetEmpty();
 		static bool bHasCheckedIgnoresThisSession = false;
 		if (!bHasCheckedIgnoresThisSession)
 		{
@@ -466,6 +492,92 @@ void FFlexVaultSourceControlProvider::OnConnectOperationComplete(bool bSuccess)
 	{
 		OutputStateChangedEvent();
 	}
+}
+
+void FFlexVaultSourceControlProvider::HandleCommandNotifications(const FFlexVaultSourceControlCommand& InCommand)
+{
+#if SOURCE_CONTROL_WITH_SLATE
+	bool bIsLaunchError = false;
+	for (const FText& ErrorMsg : InCommand.ResultInfo.ErrorMessages)
+	{
+		if (ErrorMsg.ToString().Contains(TEXT("Failed to launch FlexVault SCM executable")))
+		{
+			bIsLaunchError = true;
+			break;
+		}
+	}
+
+	if (bIsLaunchError)
+	{
+		FNotificationInfo Info(LOCTEXT("FlexVaultLaunchErrorNotification", "FlexVault: Failed to launch SCM executable. Please verify your Binary Path in Developer Settings."));
+		Info.ExpireDuration = 6.0f;
+		Info.bUseSuccessFailIcons = true;
+		FSlateNotificationManager::Get().AddNotification(Info);
+		return;
+	}
+
+	const bool bIsConnect = (InCommand.Operation->GetName() == FlexVaultSourceControlConstants::Connect);
+	if (bIsConnect && (!InCommand.bCommandSuccessful || InCommand.IsCanceled()))
+	{
+		TSharedRef<FConnect, ESPMode::ThreadSafe> ConnectOp = StaticCastSharedRef<FConnect>(InCommand.Operation);
+		FText ErrorText = ConnectOp->GetErrorText();
+		if (ErrorText.IsEmpty() && InCommand.ResultInfo.ErrorMessages.Num() > 0)
+		{
+			ErrorText = InCommand.ResultInfo.ErrorMessages.Last();
+		}
+
+		const FString ErrorStr = ErrorText.ToString();
+		FText NotificationTitle;
+		if (IsFlexVaultFormatIncompatibilityError(ErrorStr))
+		{
+			NotificationTitle = LOCTEXT("FlexVaultFormatErrorNotification", "FlexVault: Workspace format is incompatible with CLI. The repository must be recreated.");
+		}
+		else if (ErrorStr.Contains(TEXT("Incompatible FlexVault CLI version")))
+		{
+			NotificationTitle = FText::Format(LOCTEXT("FlexVaultVersionMismatchNotification", "FlexVault: {0}"), ErrorText);
+		}
+		else
+		{
+			NotificationTitle = FText::Format(LOCTEXT("FlexVaultConnectFailedNotification", "FlexVault: Failed to connect ({0})"), ErrorText);
+		}
+
+		FNotificationInfo Info(NotificationTitle);
+		Info.ExpireDuration = 8.0f;
+		Info.bUseSuccessFailIcons = true;
+
+		TSharedRef<TSharedPtr<SNotificationItem>> NotificationHandle = MakeShared<TSharedPtr<SNotificationItem>>();
+		Info.ButtonDetails.Add(FNotificationButtonInfo(
+			LOCTEXT("FlexVaultOpenMessageLog", "Open Message Log"),
+			FText(),
+			FSimpleDelegate::CreateLambda([NotificationHandle]()
+			{
+				FMessageLog("SourceControl").Open(EMessageSeverity::Error, true);
+				if (NotificationHandle->IsValid())
+				{
+					(*NotificationHandle)->ExpireAndFadeout();
+				}
+			}),
+			SNotificationItem::CS_None));
+
+		Info.ButtonDetails.Add(FNotificationButtonInfo(
+			LOCTEXT("FlexVaultDismiss", "Dismiss"),
+			FText(),
+			FSimpleDelegate::CreateLambda([NotificationHandle]()
+			{
+				if (NotificationHandle->IsValid())
+				{
+					(*NotificationHandle)->ExpireAndFadeout();
+				}
+			}),
+			SNotificationItem::CS_None));
+
+		*NotificationHandle = FSlateNotificationManager::Get().AddNotification(Info);
+
+		FMessageLog SourceControlLog("SourceControl");
+		SourceControlLog.Error(FText::Format(LOCTEXT("FlexVaultConnectLogEntry", "FlexVault SCM connection failed: {0}"), ErrorText));
+		SourceControlLog.Notify(LOCTEXT("FlexVaultConnectNotifyBadge", "FlexVault revision control connection failed. Click to open message log."), EMessageSeverity::Error);
+	}
+#endif
 }
 
 ECommandResult::Type FFlexVaultSourceControlProvider::ExecuteSynchronousCommand(TUniquePtr<FFlexVaultSourceControlCommand> InCommand, const FText& Task)
@@ -513,25 +625,7 @@ ECommandResult::Type FFlexVaultSourceControlProvider::ExecuteSynchronousCommand(
 	// Remove from CommandQueue and return results directly on the calling thread
 	CommandQueue.Remove(CommandPtr);
 
-#if SOURCE_CONTROL_WITH_SLATE
-	bool bIsLaunchError = false;
-	for (const FText& ErrorMsg : CommandPtr->ResultInfo.ErrorMessages)
-	{
-		if (ErrorMsg.ToString().Contains(TEXT("Failed to launch FlexVault SCM executable")))
-		{
-			bIsLaunchError = true;
-			break;
-		}
-	}
-
-	if (bIsLaunchError)
-	{
-		FNotificationInfo Info(LOCTEXT("FlexVaultLaunchErrorNotification", "FlexVault: Failed to launch SCM executable. Please verify your Binary Path in Developer Settings."));
-		Info.ExpireDuration = 5.0f;
-		Info.bUseSuccessFailIcons = true;
-		FSlateNotificationManager::Get().AddNotification(Info);
-	}
-#endif
+	HandleCommandNotifications(*CommandPtr);
 
 	const bool bIsConnect = (CommandPtr->Operation->GetName() == FlexVaultSourceControlConstants::Connect);
 	if (bIsConnect)
@@ -579,6 +673,68 @@ ECommandResult::Type FFlexVaultSourceControlProvider::IssueCommand(TUniquePtr<FF
 		GThreadPool->AddQueuedWork(CommandPtr);
 		return ECommandResult::Succeeded;
 	}
+}
+
+ECommandResult::Type FFlexVaultSourceControlProvider::SwitchWorkspace(
+	FStringView NewWorkspaceName,
+	FSourceControlResultInfo& OutResultInfo,
+	FString* OutOldWorkspaceName
+)
+{
+	if (OutOldWorkspaceName != nullptr)
+	{
+		*OutOldWorkspaceName = CurrentBranch;
+	}
+
+	if (!IsEnabled() || !IsAvailable())
+	{
+		OutResultInfo.ErrorMessages.Add(LOCTEXT("SwitchWorkspaceNotAvailable", "FlexVault: Source control provider is not currently available."));
+		return ECommandResult::Failed;
+	}
+
+	if (NewWorkspaceName.IsEmpty())
+	{
+		OutResultInfo.ErrorMessages.Add(LOCTEXT("SwitchWorkspaceEmptyBranch", "FlexVault: Target branch name cannot be empty."));
+		return ECommandResult::Failed;
+	}
+
+	FString BinaryPath = TEXT("fxv");
+	if (UObjectInitialized())
+	{
+		if (const UFlexVaultSourceControlDeveloperSettings* Settings = GetDefault<UFlexVaultSourceControlDeveloperSettings>())
+		{
+			BinaryPath = Settings->GetEffectiveBinaryPath();
+		}
+	}
+	const FString WorkspacePath = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
+	const FString TargetBranch(NewWorkspaceName);
+
+	TArray<FString> UpdatedFiles;
+	TArray<FString> ConflictedFiles;
+
+	UE_LOG(LogFlexVault, Display, TEXT("FlexVault SCM: Switching branch to '%s'..."), *TargetBranch);
+
+	bool bSucceeded = RunFlexVaultBranchSwitch(BinaryPath, WorkspacePath, TargetBranch, UpdatedFiles, ConflictedFiles, OutResultInfo);
+	if (bSucceeded)
+	{
+		CurrentBranch = TargetBranch;
+		InvalidateStateCache();
+		OutputStateChangedEvent();
+
+		OutResultInfo.InfoMessages.Add(FText::Format(
+			LOCTEXT("SwitchWorkspaceSuccess", "Successfully switched to branch '{0}' ({1} file(s) updated, {2} conflict(s))."),
+			FText::FromString(TargetBranch),
+			FText::AsNumber(UpdatedFiles.Num()),
+			FText::AsNumber(ConflictedFiles.Num())
+		));
+
+		UE_LOG(LogFlexVault, Display, TEXT("FlexVault SCM: Switched to branch '%s' (%d updated, %d conflicts)."),
+			*TargetBranch, UpdatedFiles.Num(), ConflictedFiles.Num());
+
+		return ECommandResult::Succeeded;
+	}
+
+	return ECommandResult::Failed;
 }
 
 #undef LOCTEXT_NAMESPACE

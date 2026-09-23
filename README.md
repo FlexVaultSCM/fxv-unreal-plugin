@@ -6,7 +6,7 @@ Unreal Engine source control plugin for [FlexVault](https://fxv.dev). Integrates
 
 - Unreal Engine 5 (tested with UE 5.8)
 - C++ build environment (Visual Studio on Windows, Xcode on macOS, or Clang on Linux), unless your team already distributes precompiled plugin binaries with the project
-- `fxv` CLI version `0.10.0` to `< 0.12.0` installed on your system (configured in **Project Settings > FlexVault Source Control** or detected on `PATH`)
+- `fxv` CLI version `0.11.0` to `< 0.12.0` installed on your system (configured in **Project Settings > FlexVault Source Control** or detected on `PATH`)
 
 ## Installation
 
@@ -31,6 +31,7 @@ Optional settings can be configured in **Edit > Project Settings > Plugins > Fle
 - **Revert**: Discard local asset modifications and restore the published revision state.
 - **Diff Against Depot**: Visually compare modified assets against the base depot revision in Unreal's diff viewer.
 - **History**: Inspect past revisions, authors, timestamps, and commit descriptions.
+- **Branch Support**: Switch branches directly via the Revision Control workspace switch interface while maintaining cache coherency and automatic asset reloading.
 - **Conflict Handling**: Resolves concurrent edits using your configured conflict preference.
 - **Auto-Snapshots**: Automatically captures safety draft snapshots periodically or during high-entropy actions (level saves with significant actor changes, bulk asset reimports).
 
