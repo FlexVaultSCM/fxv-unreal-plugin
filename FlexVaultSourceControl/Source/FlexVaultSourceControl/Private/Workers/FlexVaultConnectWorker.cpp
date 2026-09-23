@@ -76,16 +76,12 @@ bool FFlexVaultConnectWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 		}
 
 		FString CurrentBranch;
-		if (ParseFlexVaultCurrentBranch(Envelope, CurrentBranch))
-		{
-			GetSCCProvider().SetCurrentBranch(CurrentBranch);
-		}
+		ParseFlexVaultCurrentBranch(Envelope, CurrentBranch);
+		GetSCCProvider().SetCurrentBranch(CurrentBranch);
 
 		FString CurrentUser;
-		if (ParseFlexVaultCurrentUser(Envelope, CurrentUser))
-		{
-			GetSCCProvider().SetCurrentUser(CurrentUser);
-		}
+		ParseFlexVaultCurrentUser(Envelope, CurrentUser);
+		GetSCCProvider().SetCurrentUser(CurrentUser);
 
 		GetSCCProvider().SetLastConnectionError(FText::GetEmpty());
 

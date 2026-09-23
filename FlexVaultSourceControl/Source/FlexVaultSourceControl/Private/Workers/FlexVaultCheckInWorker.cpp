@@ -42,11 +42,6 @@ bool FFlexVaultCheckInWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 	if (!EnsureFlexVaultLoggedIn(InCommand.BinaryPath, InCommand.WorkspacePath, InCommand.ResultInfo, &InCommand))
 	{
 		UE_LOG(LogFlexVault, Error, TEXT("FlexVault SCM: Check-in blocked: unable to establish a logged-in FlexVault user."));
-		if (InCommand.ResultInfo.ErrorMessages.Num() == 0)
-		{
-			InCommand.ResultInfo.ErrorMessages.Add(LOCTEXT("CheckInBlockedNoUser",
-				"FlexVault: Check-in blocked: no user is logged in for this workspace. Run 'fxv login <username>' in a terminal before publishing."));
-		}
 		return false;
 	}
 

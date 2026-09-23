@@ -260,14 +260,10 @@ bool FFlexVaultUpdateStatusWorker::UpdateStates() const
 {
 	FFlexVaultSourceControlProvider& Provider = GetSCCProvider();
 	Provider.SetHasChangesToSync(bHasChangesToSync);
-	if (!CurrentBranch.IsEmpty())
-	{
-		Provider.SetCurrentBranch(CurrentBranch);
-	}
-	if (!CurrentUser.IsEmpty())
-	{
-		Provider.SetCurrentUser(CurrentUser);
-	}
+
+	const bool bUserOrBranchChanged = (Provider.GetCurrentBranch() != CurrentBranch) || (Provider.GetCurrentUser() != CurrentUser);
+	Provider.SetCurrentBranch(CurrentBranch);
+	Provider.SetCurrentUser(CurrentUser);
 
 	// Ensure all modified/added/deleted files discovered by SCM status are present in the cache
 	for (const auto& Entry : ModifiedFiles)
@@ -355,10 +351,10 @@ bool FFlexVaultUpdateStatusWorker::UpdateStates() const
 		}
 	}
 
-	if (bStatesUpdated)
+	if (bStatesUpdated || bUserOrBranchChanged)
 	{
 		Provider.OutputStateChangedEvent();
 	}
 
-	return bStatesUpdated;
+	return bStatesUpdated || bUserOrBranchChanged;
 }

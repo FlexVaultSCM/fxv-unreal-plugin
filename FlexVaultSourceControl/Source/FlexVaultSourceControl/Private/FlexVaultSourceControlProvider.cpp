@@ -517,6 +517,49 @@ void FFlexVaultSourceControlProvider::OnConnectOperationComplete(bool bSuccess)
 	}
 }
 
+#if SOURCE_CONTROL_WITH_SLATE
+namespace
+{
+	void SetupErrorNotificationDefaults(FNotificationInfo& InInfo)
+	{
+		InInfo.bFireAndForget = false;
+		InInfo.FadeInDuration = 0.2f;
+		InInfo.FadeOutDuration = 0.5f;
+		InInfo.bUseSuccessFailIcons = true;
+		InInfo.DefaultState = SNotificationItem::CS_Fail;
+		InInfo.WidthOverride = 520.0f;
+	}
+
+	void AddStandardErrorNotificationButtons(FNotificationInfo& InInfo, const TSharedRef<TSharedPtr<SNotificationItem>>& InNotificationHandle)
+	{
+		InInfo.ButtonDetails.Add(FNotificationButtonInfo(
+			LOCTEXT("FlexVaultOpenMessageLog", "Open Message Log"),
+			FText(),
+			FSimpleDelegate::CreateLambda([InNotificationHandle]()
+			{
+				FMessageLog("SourceControl").Open(EMessageSeverity::Error, true);
+				if (InNotificationHandle->IsValid())
+				{
+					(*InNotificationHandle)->ExpireAndFadeout();
+				}
+			}),
+			SNotificationItem::CS_None));
+
+		InInfo.ButtonDetails.Add(FNotificationButtonInfo(
+			LOCTEXT("FlexVaultDismiss", "Dismiss"),
+			FText(),
+			FSimpleDelegate::CreateLambda([InNotificationHandle]()
+			{
+				if (InNotificationHandle->IsValid())
+				{
+					(*InNotificationHandle)->ExpireAndFadeout();
+				}
+			}),
+			SNotificationItem::CS_None));
+	}
+}
+#endif
+
 void FFlexVaultSourceControlProvider::HandleCommandNotifications(const FFlexVaultSourceControlCommand& InCommand)
 {
 #if SOURCE_CONTROL_WITH_SLATE
@@ -565,38 +608,10 @@ void FFlexVaultSourceControlProvider::HandleCommandNotifications(const FFlexVaul
 		}
 
 		FNotificationInfo Info(NotificationTitle);
-		Info.bFireAndForget = false;
-		Info.FadeInDuration = 0.2f;
-		Info.FadeOutDuration = 0.5f;
-		Info.bUseSuccessFailIcons = true;
-		Info.DefaultState = SNotificationItem::CS_Fail;
-		Info.WidthOverride = 520.0f;
+		SetupErrorNotificationDefaults(Info);
 
 		TSharedRef<TSharedPtr<SNotificationItem>> NotificationHandle = MakeShared<TSharedPtr<SNotificationItem>>();
-		Info.ButtonDetails.Add(FNotificationButtonInfo(
-			LOCTEXT("FlexVaultOpenMessageLog", "Open Message Log"),
-			FText(),
-			FSimpleDelegate::CreateLambda([NotificationHandle]()
-			{
-				FMessageLog("SourceControl").Open(EMessageSeverity::Error, true);
-				if (NotificationHandle->IsValid())
-				{
-					(*NotificationHandle)->ExpireAndFadeout();
-				}
-			}),
-			SNotificationItem::CS_None));
-
-		Info.ButtonDetails.Add(FNotificationButtonInfo(
-			LOCTEXT("FlexVaultDismiss", "Dismiss"),
-			FText(),
-			FSimpleDelegate::CreateLambda([NotificationHandle]()
-			{
-				if (NotificationHandle->IsValid())
-				{
-					(*NotificationHandle)->ExpireAndFadeout();
-				}
-			}),
-			SNotificationItem::CS_None));
+		AddStandardErrorNotificationButtons(Info, NotificationHandle);
 
 		*NotificationHandle = FSlateNotificationManager::Get().AddNotification(Info);
 		if (NotificationHandle->IsValid())
@@ -654,12 +669,7 @@ void FFlexVaultSourceControlProvider::HandleCommandNotifications(const FFlexVaul
 
 		FNotificationInfo Info(NotificationTitle);
 		Info.SubText = NotificationSubText;
-		Info.bFireAndForget = false;
-		Info.FadeInDuration = 0.2f;
-		Info.FadeOutDuration = 0.5f;
-		Info.bUseSuccessFailIcons = true;
-		Info.DefaultState = SNotificationItem::CS_Fail;
-		Info.WidthOverride = 520.0f;
+		SetupErrorNotificationDefaults(Info);
 
 		TSharedRef<TSharedPtr<SNotificationItem>> NotificationHandle = MakeShared<TSharedPtr<SNotificationItem>>();
 
@@ -712,30 +722,7 @@ void FFlexVaultSourceControlProvider::HandleCommandNotifications(const FFlexVaul
 				SNotificationItem::CS_None));
 		}
 
-		Info.ButtonDetails.Add(FNotificationButtonInfo(
-			LOCTEXT("FlexVaultOpenMessageLog", "Open Message Log"),
-			FText(),
-			FSimpleDelegate::CreateLambda([NotificationHandle]()
-			{
-				FMessageLog("SourceControl").Open(EMessageSeverity::Error, true);
-				if (NotificationHandle->IsValid())
-				{
-					(*NotificationHandle)->ExpireAndFadeout();
-				}
-			}),
-			SNotificationItem::CS_None));
-
-		Info.ButtonDetails.Add(FNotificationButtonInfo(
-			LOCTEXT("FlexVaultDismiss", "Dismiss"),
-			FText(),
-			FSimpleDelegate::CreateLambda([NotificationHandle]()
-			{
-				if (NotificationHandle->IsValid())
-				{
-					(*NotificationHandle)->ExpireAndFadeout();
-				}
-			}),
-			SNotificationItem::CS_None));
+		AddStandardErrorNotificationButtons(Info, NotificationHandle);
 
 		*NotificationHandle = FSlateNotificationManager::Get().AddNotification(Info);
 		if (NotificationHandle->IsValid())
@@ -759,38 +746,10 @@ void FFlexVaultSourceControlProvider::HandleCommandNotifications(const FFlexVaul
 			FText ErrorText = InCommand.ResultInfo.ErrorMessages.Last();
 			FNotificationInfo Info(FText::Format(LOCTEXT("FlexVaultOperationFailedTitle", "FlexVault: {0} operation failed."), FText::FromName(InCommand.Operation->GetName())));
 			Info.SubText = ErrorText;
-			Info.bFireAndForget = false;
-			Info.FadeInDuration = 0.2f;
-			Info.FadeOutDuration = 0.5f;
-			Info.bUseSuccessFailIcons = true;
-			Info.DefaultState = SNotificationItem::CS_Fail;
-			Info.WidthOverride = 520.0f;
+			SetupErrorNotificationDefaults(Info);
 
 			TSharedRef<TSharedPtr<SNotificationItem>> NotificationHandle = MakeShared<TSharedPtr<SNotificationItem>>();
-			Info.ButtonDetails.Add(FNotificationButtonInfo(
-				LOCTEXT("FlexVaultOpenMessageLog", "Open Message Log"),
-				FText(),
-				FSimpleDelegate::CreateLambda([NotificationHandle]()
-				{
-					FMessageLog("SourceControl").Open(EMessageSeverity::Error, true);
-					if (NotificationHandle->IsValid())
-					{
-						(*NotificationHandle)->ExpireAndFadeout();
-					}
-				}),
-				SNotificationItem::CS_None));
-
-			Info.ButtonDetails.Add(FNotificationButtonInfo(
-				LOCTEXT("FlexVaultDismiss", "Dismiss"),
-				FText(),
-				FSimpleDelegate::CreateLambda([NotificationHandle]()
-				{
-					if (NotificationHandle->IsValid())
-					{
-						(*NotificationHandle)->ExpireAndFadeout();
-					}
-				}),
-				SNotificationItem::CS_None));
+			AddStandardErrorNotificationButtons(Info, NotificationHandle);
 
 			*NotificationHandle = FSlateNotificationManager::Get().AddNotification(Info);
 			if (NotificationHandle->IsValid())
