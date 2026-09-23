@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/FlexVaultSCM/fxv-unreal-plugin/compare/v0.6.0...v0.7.0) (2026-09-23)
+
+
+### Features
+
+* support fxv 0.11.0, branch management, and error surfacing ([#31](https://github.com/FlexVaultSCM/fxv-unreal-plugin/issues/31)) ([b5fb647](https://github.com/FlexVaultSCM/fxv-unreal-plugin/commit/b5fb647697681f288bc489f35c321e0dede0fc5d))
+
 ## [0.6.0](https://github.com/FlexVaultSCM/fxv-unreal-plugin/compare/v0.5.2...v0.6.0) (2026-09-21)
 
 
