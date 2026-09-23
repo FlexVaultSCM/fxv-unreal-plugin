@@ -89,7 +89,18 @@ public:
 	virtual TArray<FSourceControlChangelistRef> GetChangelists(EStateCacheUsage::Type InStateCacheUsage) override { return TArray<FSourceControlChangelistRef>(); }
 
 	virtual bool TryToDownloadFileFromBackgroundThread(const TSharedRef<class FDownloadFile>& InOperation, const TArray<FString>& InFiles) override { return false; }
-	virtual ECommandResult::Type SwitchWorkspace(FStringView NewWorkspaceName, FSourceControlResultInfo& OutResultInfo, FString* OutOldWorkspaceName) override { return ECommandResult::Failed; }
+	virtual ECommandResult::Type SwitchWorkspace(FStringView NewWorkspaceName, FSourceControlResultInfo& OutResultInfo, FString* OutOldWorkspaceName = nullptr) override;
+
+	const FString& GetCurrentBranch() const { return CurrentBranch; }
+	const FString& GetCurrentUser() const { return CurrentUser; }
+	void SetCurrentBranch(const FString& InBranch) { CurrentBranch = InBranch; }
+	void SetCurrentUser(const FString& InUser) { CurrentUser = InUser; }
+
+	/** Returns the most recent connection error message, if any. */
+	const FText& GetLastConnectionError() const { return LastConnectionError; }
+
+	/** Sets the most recent connection error message. */
+	void SetLastConnectionError(const FText& InError) { LastConnectionError = InError; }
 
 #if SOURCE_CONTROL_WITH_SLATE
 	virtual TSharedRef<class SWidget> MakeSettingsWidget() const override;
@@ -118,6 +129,8 @@ private:
 	ECommandResult::Type ExecuteSynchronousCommand(TUniquePtr<FFlexVaultSourceControlCommand> InCommand, const FText& Task);
 	ECommandResult::Type IssueCommand(TUniquePtr<FFlexVaultSourceControlCommand> InCommand, const bool bSynchronous);
 	void OnConnectOperationComplete(bool bSuccess);
+	void HandleCommandNotifications(const FFlexVaultSourceControlCommand& InCommand);
+	bool EnsureUserLoggedInBeforeCheckIn();
 
 private:
 	FString OwnerName;
@@ -127,6 +140,15 @@ private:
 
 	/** Flag indicating connection status */
 	bool bServerAvailable;
+
+	/** Current active branch in workspace */
+	FString CurrentBranch;
+
+	/** Current logged-in user in workspace */
+	FString CurrentUser;
+
+	/** Most recent connection error detail for tooltip / status text */
+	FText LastConnectionError;
 
 	/** Cached files state map */
 	TMap<FString, TSharedRef<FFlexVaultSourceControlState, ESPMode::ThreadSafe>> StateCache;

@@ -243,11 +243,19 @@ bool RunFlexVaultCommand(
 	else if (ReturnCode != 0 && !bIgnoreError)
 	{
 		OutResultInfo.ErrorMessages.Add(FText::Format(LOCTEXT("FlexVaultCommandError", "FlexVault CLI command failed with exit code: {0}"), FText::AsNumber(ReturnCode)));
-		for (const FString& Line : OutOutputLines)
+		FString ParsedError;
+		if (ParseFlexVaultErrorMessage(OutOutputLines, ParsedError))
 		{
-			if (!Line.IsEmpty())
+			OutResultInfo.ErrorMessages.Add(FText::FromString(ParsedError));
+		}
+		else
+		{
+			for (const FString& Line : OutOutputLines)
 			{
-				OutResultInfo.ErrorMessages.Add(FText::FromString(Line));
+				if (!Line.IsEmpty())
+				{
+					OutResultInfo.ErrorMessages.Add(FText::FromString(Line));
+				}
 			}
 		}
 	}
@@ -409,18 +417,74 @@ bool RunFlexVaultCatCommand(
 	return true;
 }
 
-namespace FlexVaultCliCompatibility
+TArray<FString> BuildFlexVaultIntegrationRegisterArgs(const FFlexVaultIntegrationRegisterOptions& InOptions)
 {
-	// fxv-core's VERSIONING.md "Downstream pinning policy": pin a compatible RANGE of fxv-core versions
-	// ([Min, Max), Max exclusive), not a single version, and re-pin deliberately once a newer release has
-	// been reviewed/verified compatible. fxv-core is pre-1.0, where a MINOR bump (not just MAJOR) can carry
-	// a breaking change - a plain feature release also bumps MINOR, so the version number alone can't tell
-	// the two apart. Until fxv-core reaches 1.0, treat every MINOR as a potential break and only widen Max
-	// after checking fxv-core/CHANGELOG.md for a "Breaking Changes" entry between the old and new Max.
-	//
-	// See fxv-core/CHANGELOG.md for the "Breaking Changes" entries that justify this range.
-	constexpr int32 MinMajor = 0, MinMinor = 10, MinPatch = 0; // >= 0.10.0
-	constexpr int32 MaxMajor = 0, MaxMinor = 11, MaxPatch = 0; // < 0.11.0
+	TArray<FString> Args;
+	Args.Add(TEXT("integration"));
+	Args.Add(TEXT("register"));
+	Args.Add(TEXT("--name"));
+	Args.Add(TEXT("unreal"));
+	if (!InOptions.PluginVersion.IsEmpty() && InOptions.PluginVersion != TEXT("Unknown"))
+	{
+		Args.Add(TEXT("--plugin-version"));
+		Args.Add(InOptions.PluginVersion);
+	}
+	if (!InOptions.MinVersion.IsEmpty())
+	{
+		Args.Add(TEXT("--min"));
+		Args.Add(InOptions.MinVersion);
+	}
+	if (!InOptions.MaxVersion.IsEmpty())
+	{
+		Args.Add(TEXT("--max-version"));
+		Args.Add(InOptions.MaxVersion);
+	}
+	Args.Add(TEXT("--workspace"));
+	Args.Add(InOptions.Workspace);
+	Args.Add(TEXT("--unattended"));
+	Args.Add(TEXT("--no-color"));
+	return Args;
+}
+
+bool RunFlexVaultIntegrationRegister(
+	const FString& InBinaryPath,
+	const FString& InWorkspacePath,
+	const FFlexVaultIntegrationRegisterOptions& InOptions,
+	FSourceControlResultInfo& OutResultInfo,
+	const FFlexVaultSourceControlCommand* InCancelCommand
+)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(RunFlexVaultIntegrationRegister);
+
+	const TArray<FString> Args = BuildFlexVaultIntegrationRegisterArgs(InOptions);
+	TArray<FString> OutputLines;
+
+	// Registration is best-effort and non-fatal: callers log failures rather than surfacing them to the user.
+	const bool bSucceeded = RunFlexVaultCommand(
+		InBinaryPath,
+		InWorkspacePath,
+		Args,
+		OutputLines,
+		OutResultInfo,
+		/*bIgnoreError=*/true,
+		InCancelCommand
+	);
+
+	if (bSucceeded)
+	{
+		UE_LOG(LogFlexVault, Log, TEXT("Registered unreal integration for workspace %s."), *InOptions.Workspace);
+	}
+	else
+	{
+		FString ErrorMessage;
+		if (!ParseFlexVaultErrorMessage(OutputLines, ErrorMessage))
+		{
+			ErrorMessage = OutputLines.Num() > 0 ? FString::Join(OutputLines, TEXT(" ")) : TEXT("Unknown error");
+		}
+		UE_LOG(LogFlexVault, Warning, TEXT("Integration registration failed (non-fatal): %s"), *ErrorMessage);
+	}
+
+	return bSucceeded;
 }
 
 namespace
@@ -594,11 +658,194 @@ bool ParseFlexVaultCurrentUser(
 	return PayloadObj->TryGetStringField(TEXT("current_user"), OutCurrentUser);
 }
 
+bool ParseFlexVaultCurrentBranch(
+	const TSharedPtr<FJsonObject>& InEnvelope,
+	FString& OutCurrentBranch
+)
+{
+	OutCurrentBranch.Empty();
+
+	TSharedPtr<FJsonObject> PayloadObj;
+	if (!TryGetFlexVaultEnvelopePayload(InEnvelope, PayloadObj))
+	{
+		return false;
+	}
+
+	return PayloadObj->TryGetStringField(TEXT("current_branch"), OutCurrentBranch);
+}
+
+bool ParseFlexVaultBranchList(
+	const TArray<FString>& InBranchListOutputLines,
+	TArray<FFlexVaultBranchInfo>& OutBranches,
+	FSourceControlResultInfo& OutResultInfo
+)
+{
+	FString OutputString = FString::Join(InBranchListOutputLines, TEXT("\n"));
+	TSharedPtr<FJsonObject> JsonEnvelope;
+	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(OutputString);
+	if (!FJsonSerializer::Deserialize(Reader, JsonEnvelope) || !JsonEnvelope.IsValid())
+	{
+		OutResultInfo.ErrorMessages.Add(
+			LOCTEXT("BranchListJsonError", "FlexVault: Failed to parse branch list JSON output.")
+		);
+		return false;
+	}
+
+	TSharedPtr<FJsonObject> PayloadObj;
+	if (!TryGetFlexVaultEnvelopePayload(JsonEnvelope, PayloadObj))
+	{
+		OutResultInfo.ErrorMessages.Add(
+			LOCTEXT("BranchListPayloadError", "FlexVault: Branch list JSON envelope is missing 'message.payload'.")
+		);
+		return false;
+	}
+
+	const TArray<TSharedPtr<FJsonValue>>* BranchesArray = nullptr;
+	if (PayloadObj->TryGetArrayField(TEXT("branches"), BranchesArray) && BranchesArray != nullptr)
+	{
+		for (const TSharedPtr<FJsonValue>& BranchVal : *BranchesArray)
+		{
+			TSharedPtr<FJsonObject> BranchObj = BranchVal->AsObject();
+			if (BranchObj.IsValid())
+			{
+				FFlexVaultBranchInfo Info;
+				BranchObj->TryGetStringField(TEXT("branch"), Info.Branch);
+				BranchObj->TryGetStringField(TEXT("branch_unique_id"), Info.BranchUniqueId);
+				BranchObj->TryGetStringField(TEXT("branch_type"), Info.BranchType);
+				BranchObj->TryGetStringField(TEXT("owner"), Info.Owner);
+				BranchObj->TryGetStringField(TEXT("published_head"), Info.PublishedHead);
+				BranchObj->TryGetStringField(TEXT("draft_head"), Info.DraftHead);
+				BranchObj->TryGetBoolField(TEXT("local_only"), Info.bLocalOnly);
+				BranchObj->TryGetBoolField(TEXT("retired"), Info.bRetired);
+
+				OutBranches.Add(Info);
+			}
+		}
+	}
+
+	return true;
+}
+
+bool QueryFlexVaultBranchList(
+	const FString& InBinaryPath,
+	const FString& InWorkspacePath,
+	bool bAll,
+	TArray<FFlexVaultBranchInfo>& OutBranches,
+	FSourceControlResultInfo& OutResultInfo,
+	const FFlexVaultSourceControlCommand* InCancelCommand
+)
+{
+	TArray<FString> BranchArgs = {
+		TEXT("branch"),
+		TEXT("list"),
+		TEXT("--format"),
+		TEXT("json"),
+		TEXT("--unattended"),
+		TEXT("--no-color")
+	};
+	if (bAll)
+	{
+		BranchArgs.Add(TEXT("--all"));
+	}
+
+	TArray<FString> OutputLines;
+	if (!RunFlexVaultCommand(InBinaryPath, InWorkspacePath, BranchArgs, OutputLines, OutResultInfo, false, InCancelCommand))
+	{
+		return false;
+	}
+
+	return ParseFlexVaultBranchList(OutputLines, OutBranches, OutResultInfo);
+}
+
+bool RunFlexVaultBranchSwitch(
+	const FString& InBinaryPath,
+	const FString& InWorkspacePath,
+	const FString& InBranch,
+	TArray<FString>& OutUpdatedFiles,
+	TArray<FString>& OutConflictedFiles,
+	FSourceControlResultInfo& OutResultInfo,
+	const FFlexVaultSourceControlCommand* InCancelCommand
+)
+{
+	TArray<FString> Args = {
+		TEXT("branch"),
+		TEXT("switch"),
+		InBranch,
+		TEXT("--format"),
+		TEXT("json"),
+		TEXT("--unattended"),
+		TEXT("--no-color")
+	};
+
+	TArray<FString> OutputLines;
+	if (!RunFlexVaultCommand(InBinaryPath, InWorkspacePath, Args, OutputLines, OutResultInfo, false, InCancelCommand))
+	{
+		return false;
+	}
+
+	FString FullOutput = FString::Join(OutputLines, TEXT("\n"));
+	TSharedPtr<FJsonObject> JsonObject;
+	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(FullOutput);
+	if (!FJsonSerializer::Deserialize(Reader, JsonObject) || !JsonObject.IsValid())
+	{
+		OutResultInfo.ErrorMessages.Add(
+			LOCTEXT("BranchSwitchJsonError", "FlexVault: Failed to parse branch switch JSON output.")
+		);
+		return false;
+	}
+
+	TSharedPtr<FJsonObject> PayloadObj;
+	if (!TryGetFlexVaultEnvelopePayload(JsonObject, PayloadObj))
+	{
+		OutResultInfo.ErrorMessages.Add(
+			LOCTEXT("BranchSwitchPayloadError", "FlexVault: Branch switch JSON envelope is missing 'message.payload'.")
+		);
+		return false;
+	}
+
+	const TArray<TSharedPtr<FJsonValue>>* FilesUpdatedArray = nullptr;
+	if (PayloadObj->TryGetArrayField(TEXT("files_updated"), FilesUpdatedArray) && FilesUpdatedArray != nullptr)
+	{
+		for (const TSharedPtr<FJsonValue>& FileVal : *FilesUpdatedArray)
+		{
+			if (FileVal.IsValid() && FileVal->Type == EJson::Object)
+			{
+				TSharedPtr<FJsonObject> FileObj = FileVal->AsObject();
+				FString RelativePath;
+				if (FileObj->TryGetStringField(TEXT("path"), RelativePath))
+				{
+					FString FullPath = FPaths::Combine(InWorkspacePath, RelativePath);
+					FPaths::NormalizeFilename(FullPath);
+					OutUpdatedFiles.Add(FullPath);
+				}
+			}
+		}
+	}
+
+	const TArray<TSharedPtr<FJsonValue>>* ConflictedFilesArray = nullptr;
+	if (PayloadObj->TryGetArrayField(TEXT("conflicted_files"), ConflictedFilesArray) && ConflictedFilesArray != nullptr)
+	{
+		for (const TSharedPtr<FJsonValue>& FileVal : *ConflictedFilesArray)
+		{
+			if (FileVal.IsValid())
+			{
+				FString RelativePath = FileVal->AsString();
+				FString FullPath = FPaths::Combine(InWorkspacePath, RelativePath);
+				FPaths::NormalizeFilename(FullPath);
+				OutConflictedFiles.Add(FullPath);
+			}
+		}
+	}
+
+	return true;
+}
+
 bool EnsureFlexVaultLoggedIn(
 	const FString& InBinaryPath,
 	const FString& InWorkspacePath,
 	FSourceControlResultInfo& OutResultInfo,
-	const FFlexVaultSourceControlCommand* InCancelCommand
+	const FFlexVaultSourceControlCommand* InCancelCommand,
+	FString* OutCurrentUser
 )
 {
 	TArray<FString> StatusOutputLines;
@@ -632,6 +879,50 @@ bool EnsureFlexVaultLoggedIn(
 	{
 		OutResultInfo.ErrorMessages.Add(LOCTEXT("FlexVaultNotLoggedIn",
 			"FlexVault: No user is logged in for this workspace. Run 'fxv login <username>' from a terminal before publishing."));
+		return false;
+	}
+
+	if (OutCurrentUser)
+	{
+		*OutCurrentUser = CurrentUser;
+	}
+
+	return true;
+}
+
+bool RunFlexVaultLoginCommand(
+	const FString& InBinaryPath,
+	const FString& InWorkspacePath,
+	const FString& InUsername,
+	FSourceControlResultInfo& OutResultInfo,
+	FString* OutErrorMessage
+)
+{
+	TArray<FString> Args = {
+		TEXT("login"),
+		InUsername,
+		TEXT("--format"),
+		TEXT("json"),
+		TEXT("--unattended"),
+		TEXT("--no-color")
+	};
+
+	TArray<FString> OutputLines;
+	bool bOk = RunFlexVaultCommand(InBinaryPath, InWorkspacePath, Args, OutputLines, OutResultInfo, false, nullptr, 15.0);
+	if (!bOk)
+	{
+		FString ParsedError;
+		if (ParseFlexVaultErrorMessage(OutputLines, ParsedError))
+		{
+			if (OutErrorMessage)
+			{
+				*OutErrorMessage = ParsedError;
+			}
+		}
+		else if (OutResultInfo.ErrorMessages.Num() > 0 && OutErrorMessage)
+		{
+			*OutErrorMessage = OutResultInfo.ErrorMessages.Last().ToString();
+		}
 		return false;
 	}
 
@@ -942,6 +1233,61 @@ bool QueryFlexVaultFileHistoryDetails(
 	}
 
 	return true;
+}
+
+bool ParseFlexVaultErrorMessage(const TArray<FString>& InOutputLines, FString& OutErrorMessage)
+{
+	OutErrorMessage.Empty();
+	if (InOutputLines.Num() == 0)
+	{
+		return false;
+	}
+
+	// Attempt JSON envelope parsing first
+	FString RawJson = FString::Join(InOutputLines, TEXT("\n"));
+	TSharedPtr<FJsonObject> Envelope;
+	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(RawJson);
+	if (FJsonSerializer::Deserialize(Reader, Envelope) && Envelope.IsValid())
+	{
+		TSharedPtr<FJsonObject> PayloadObj;
+		if (TryGetFlexVaultEnvelopePayload(Envelope, PayloadObj))
+		{
+			FString Msg;
+			if (PayloadObj->TryGetStringField(TEXT("message"), Msg) && !Msg.IsEmpty())
+			{
+				OutErrorMessage = Msg;
+				return true;
+			}
+		}
+	}
+
+	// Fall back to collecting non-empty raw text lines
+	TArray<FString> NonEmptyLines;
+	for (const FString& Line : InOutputLines)
+	{
+		FString Trimmed = Line;
+		Trimmed.TrimStartAndEndInline();
+		if (!Trimmed.IsEmpty())
+		{
+			NonEmptyLines.Add(Trimmed);
+		}
+	}
+
+	if (NonEmptyLines.Num() > 0)
+	{
+		OutErrorMessage = FString::Join(NonEmptyLines, TEXT(" "));
+		return true;
+	}
+
+	return false;
+}
+
+bool IsFlexVaultFormatIncompatibilityError(const FString& InErrorMessage)
+{
+	return InErrorMessage.Contains(TEXT("format version"), ESearchCase::IgnoreCase) ||
+	       InErrorMessage.Contains(TEXT("RepositoryFormatTooOld"), ESearchCase::IgnoreCase) ||
+	       InErrorMessage.Contains(TEXT("RepositoryFormatTooNew"), ESearchCase::IgnoreCase) ||
+	       InErrorMessage.Contains(TEXT("cannot be upgraded and must be recreated"), ESearchCase::IgnoreCase);
 }
 
 #undef LOCTEXT_NAMESPACE

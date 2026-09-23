@@ -32,6 +32,8 @@ private:
 	mutable TMap<FString, FString> ConflictedFiles;
 	mutable int32 DepotRevision = 0;
 	mutable int32 LocalRevision = 0;
+	mutable FString CurrentBranch;
+	mutable FString CurrentUser;
 	mutable FString WorkspacePath;
 	mutable TOptional<bool> bHasChangesToSync;
 

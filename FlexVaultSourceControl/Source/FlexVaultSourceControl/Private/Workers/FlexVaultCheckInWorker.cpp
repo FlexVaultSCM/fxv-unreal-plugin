@@ -74,7 +74,10 @@ bool FFlexVaultCheckInWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 	if (!bPublishOk)
 	{
 		UE_LOG(LogFlexVault, Error, TEXT("FlexVault SCM: Publish phase failed during check-in."));
-		InCommand.ResultInfo.ErrorMessages.Add(LOCTEXT("PublishFailure", "FlexVault: Publish phase failed during check-in."));
+		if (InCommand.ResultInfo.ErrorMessages.Num() == 0)
+		{
+			InCommand.ResultInfo.ErrorMessages.Add(LOCTEXT("PublishFailure", "FlexVault: Publish phase failed during check-in."));
+		}
 		return false;
 	}
 

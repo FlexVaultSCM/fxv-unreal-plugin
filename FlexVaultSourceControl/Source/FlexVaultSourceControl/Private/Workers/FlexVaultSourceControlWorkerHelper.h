@@ -34,6 +34,21 @@ struct FFlexVaultRevisionDetail
 };
 
 /**
+ * Branch metadata extracted from 'fxv branch list --format json'
+ */
+struct FFlexVaultBranchInfo
+{
+	FString Branch;
+	FString BranchUniqueId;
+	FString BranchType; // "global" or "user"
+	FString Owner;
+	FString PublishedHead;
+	FString DraftHead;
+	bool bLocalOnly = false;
+	bool bRetired = false;
+};
+
+/**
  * Builds the CLI args for `fxv snapshot -d <InDescription> --unattended --no-color`, shared by
  * FFlexVaultCheckInWorker's snapshot phase and FFlexVaultAutoSnapshot's background triggers so the
  * two argument lists can't drift apart.
@@ -85,10 +100,62 @@ bool RunFlexVaultCatCommand(
 	FSourceControlResultInfo& OutResultInfo
 );
 
+namespace FlexVaultCliCompatibility
+{
+	// See fxv-core/CHANGELOG.md for the "Breaking Changes" entries that justify this range.
+	constexpr int32 MinMajor = 0, MinMinor = 11, MinPatch = 0; // >= 0.11.0
+	constexpr int32 MaxMajor = 0, MaxMinor = 12, MaxPatch = 0; // < 0.12.0
+
+	inline FString GetMinVersionString()
+	{
+		return FString::Printf(TEXT("%d.%d.%d"), MinMajor, MinMinor, MinPatch);
+	}
+
+	inline FString GetMaxVersionString()
+	{
+		return FString::Printf(TEXT("%d.%d.%d"), MaxMajor, MaxMinor, MaxPatch);
+	}
+}
+
+/**
+ * Options for registering this plugin with fxv's integration registry.
+ */
+struct FFlexVaultIntegrationRegisterOptions
+{
+	/** Workspace path to associate the registration with. */
+	FString Workspace;
+
+	/** Version of the plugin (e.g. "0.5.2"). */
+	FString PluginVersion;
+
+	/** Minimum compatible fxv version, inclusive (e.g. "0.11.0"). */
+	FString MinVersion;
+
+	/** Maximum compatible fxv version, exclusive (e.g. "0.12.0"). */
+	FString MaxVersion;
+};
+
+/**
+ * Builds the CLI args for 'fxv integration register --name unreal ...', shared between
+ * connection registration and tests.
+ */
+TArray<FString> BuildFlexVaultIntegrationRegisterArgs(const FFlexVaultIntegrationRegisterOptions& InOptions);
+
+/**
+ * Registers this plugin instance with fxv's integration registry for the given workspace.
+ * Best-effort: failures are logged and never surfaced to the user or treated as fatal connection errors.
+ */
+bool RunFlexVaultIntegrationRegister(
+	const FString& InBinaryPath,
+	const FString& InWorkspacePath,
+	const FFlexVaultIntegrationRegisterOptions& InOptions,
+	FSourceControlResultInfo& OutResultInfo,
+	const FFlexVaultSourceControlCommand* InCancelCommand = nullptr
+);
+
 /**
  * Verifies that the FlexVault CLI version in the JSON envelope falls within this plugin's pinned
- * compatible range (see FlexVaultCliCompatibility in FlexVaultSourceControlWorkerHelper.cpp for the
- * current [Min, Max) bounds and the policy for widening them).
+ * compatible range (see FlexVaultCliCompatibility for the current [Min, Max) bounds and the policy for widening them).
  */
 bool CheckFlexVaultVersion(
 	const TSharedPtr<class FJsonObject>& InEnvelope,
@@ -107,6 +174,50 @@ bool ParseFlexVaultCurrentUser(
 );
 
 /**
+ * Extracts the workspace's current branch (message.payload.current_branch) from an
+ * `fxv status --format json` envelope. Returns false (leaving OutCurrentBranch empty) if the envelope
+ * is malformed or the field is absent.
+ */
+bool ParseFlexVaultCurrentBranch(
+	const TSharedPtr<class FJsonObject>& InEnvelope,
+	FString& OutCurrentBranch
+);
+
+/**
+ * Parses the JSON output of 'fxv branch list --format json' into branch info structures.
+ */
+bool ParseFlexVaultBranchList(
+	const TArray<FString>& InBranchListOutputLines,
+	TArray<FFlexVaultBranchInfo>& OutBranches,
+	FSourceControlResultInfo& OutResultInfo
+);
+
+/**
+ * Queries the list of branches via 'fxv branch list [--all] --format json'.
+ */
+bool QueryFlexVaultBranchList(
+	const FString& InBinaryPath,
+	const FString& InWorkspacePath,
+	bool bAll,
+	TArray<FFlexVaultBranchInfo>& OutBranches,
+	FSourceControlResultInfo& OutResultInfo,
+	const FFlexVaultSourceControlCommand* InCancelCommand = nullptr
+);
+
+/**
+ * Switches the active branch via 'fxv branch switch <branch> --format json'.
+ */
+bool RunFlexVaultBranchSwitch(
+	const FString& InBinaryPath,
+	const FString& InWorkspacePath,
+	const FString& InBranch,
+	TArray<FString>& OutUpdatedFiles,
+	TArray<FString>& OutConflictedFiles,
+	FSourceControlResultInfo& OutResultInfo,
+	const FFlexVaultSourceControlCommand* InCancelCommand = nullptr
+);
+
+/**
  * Checks whether the workspace already has a logged-in FlexVault user, required for `fxv publish`
  * to succeed (fxv-core PR #106). Runs a cheap `fxv status` query; does NOT attempt to log anyone in
  * itself - if nobody is logged in, fails with a message pointing at running `fxv login` from a
@@ -119,7 +230,20 @@ bool EnsureFlexVaultLoggedIn(
 	const FString& InBinaryPath,
 	const FString& InWorkspacePath,
 	FSourceControlResultInfo& OutResultInfo,
-	const FFlexVaultSourceControlCommand* InCancelCommand = nullptr
+	const FFlexVaultSourceControlCommand* InCancelCommand = nullptr,
+	FString* OutCurrentUser = nullptr
+);
+
+/**
+ * Logs in to the workspace as the given username via 'fxv login <InUsername> --format json'.
+ * Returns true if login succeeded. If it failed, OutErrorMessage will contain the error details.
+ */
+bool RunFlexVaultLoginCommand(
+	const FString& InBinaryPath,
+	const FString& InWorkspacePath,
+	const FString& InUsername,
+	FSourceControlResultInfo& OutResultInfo,
+	FString* OutErrorMessage = nullptr
 );
 
 /**
@@ -173,3 +297,18 @@ bool QueryFlexVaultFileHistoryDetails(
 	FSourceControlResultInfo& OutResultInfo,
 	const FFlexVaultSourceControlCommand* InCancelCommand = nullptr
 );
+
+/**
+ * Parses a structured JSON error envelope emitted by the CLI under --format json,
+ * or falls back to non-empty raw text lines if not a JSON error.
+ */
+bool ParseFlexVaultErrorMessage(
+	const TArray<FString>& InOutputLines,
+	FString& OutErrorMessage
+);
+
+/**
+ * Inspects an error string to determine if it indicates a workspace or repository format version incompatibility.
+ */
+bool IsFlexVaultFormatIncompatibilityError(const FString& InErrorMessage);
+

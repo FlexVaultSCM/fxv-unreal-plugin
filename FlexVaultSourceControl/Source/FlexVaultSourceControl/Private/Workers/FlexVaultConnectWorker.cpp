@@ -58,6 +58,7 @@ bool FFlexVaultConnectWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 			InCommand.ResultInfo.ErrorMessages.Add(Error);
 			UE_LOG(LogFlexVault, Error, TEXT("FlexVault: %s"), *Error.ToString());
 			ConnectOperation->SetErrorText(Error);
+			LastConnectionError = Error;
 			return false;
 		}
 
@@ -67,10 +68,16 @@ bool FFlexVaultConnectWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 		{
 			if (InCommand.ResultInfo.ErrorMessages.Num() > 0)
 			{
-				ConnectOperation->SetErrorText(InCommand.ResultInfo.ErrorMessages.Last());
+				FText LastErr = InCommand.ResultInfo.ErrorMessages.Last();
+				ConnectOperation->SetErrorText(LastErr);
+				LastConnectionError = LastErr;
 			}
 			return false;
 		}
+
+		ParseFlexVaultCurrentBranch(Envelope, CurrentBranch);
+		ParseFlexVaultCurrentUser(Envelope, CurrentUser);
+		LastConnectionError = FText::GetEmpty();
 
 		TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("FlexVaultSourceControl"));
 		FString PluginVersion = Plugin.IsValid() ? Plugin->GetDescriptor().VersionName : TEXT("Unknown");
@@ -82,28 +89,41 @@ bool FFlexVaultConnectWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 		));
 		UE_LOG(LogFlexVault, Display, TEXT("FlexVault SCM: Connected successfully to repository (Workspace: %s, Plugin v%s, CLI v%s)"),
 			*InCommand.WorkspacePath, *PluginVersion, *CliVersion);
+
+		// Register this plugin instance with fxv's integration registry. Best-effort:
+		// failures are logged and silently dropped so connection is never blocked.
+		FFlexVaultIntegrationRegisterOptions RegOptions;
+		RegOptions.Workspace = InCommand.WorkspacePath;
+		RegOptions.PluginVersion = PluginVersion;
+		RegOptions.MinVersion = FlexVaultCliCompatibility::GetMinVersionString();
+		RegOptions.MaxVersion = FlexVaultCliCompatibility::GetMaxVersionString();
+
+		FSourceControlResultInfo RegResultInfo;
+		RunFlexVaultIntegrationRegister(InCommand.BinaryPath, InCommand.WorkspacePath, RegOptions, RegResultInfo, &InCommand);
 	}
 	else if (InCommand.ResultInfo.ErrorMessages.Num() > 0)
 	{
-		// RunFlexVaultCommand populates ErrorMessages[0] with a general summary line (exit code or launch failure)
-		// and appends raw CLI stdout/stderr lines afterward (indices 1..N). Surface the actionable error details
-		// from the CLI if present; otherwise fall back to the summary line.
-		if (InCommand.ResultInfo.ErrorMessages.Num() > 1)
+		FString ErrorMessage;
+		if (!ParseFlexVaultErrorMessage(OutputLines, ErrorMessage))
 		{
-			TArray<FString> DetailMessages;
-			for (int32 Index = 1; Index < InCommand.ResultInfo.ErrorMessages.Num(); ++Index)
-			{
-				DetailMessages.Add(InCommand.ResultInfo.ErrorMessages[Index].ToString());
-			}
-			ConnectOperation->SetErrorText(FText::FromString(FString::Join(DetailMessages, TEXT("\n"))));
+			ErrorMessage = InCommand.ResultInfo.ErrorMessages.Last().ToString();
 		}
-		else
-		{
-			ConnectOperation->SetErrorText(InCommand.ResultInfo.ErrorMessages[0]);
-		}
+
+		const FText FailureMessage = FText::FromString(ErrorMessage);
+		ConnectOperation->SetErrorText(FailureMessage);
+		LastConnectionError = FailureMessage;
 	}
 
 	return bSucceeded;
+}
+
+bool FFlexVaultConnectWorker::UpdateStates() const
+{
+	FFlexVaultSourceControlProvider& Provider = GetSCCProvider();
+	Provider.SetCurrentBranch(CurrentBranch);
+	Provider.SetCurrentUser(CurrentUser);
+	Provider.SetLastConnectionError(LastConnectionError);
+	return true;
 }
 
 #undef LOCTEXT_NAMESPACE

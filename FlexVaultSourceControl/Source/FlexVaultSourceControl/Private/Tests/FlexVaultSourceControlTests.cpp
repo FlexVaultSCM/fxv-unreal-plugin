@@ -146,33 +146,33 @@ bool FFlexVaultVersionCheckTest::RunTest(const FString& Parameters)
 	AddExpectedErrorPlain(TEXT("Invalid JSON envelope passed to version check"), EAutomationExpectedErrorFlags::Contains, 1);
 	TestFalse(TEXT("Null JSON envelope fails"), CheckFlexVaultVersion(nullptr, ResultInfo));
 
-	// 2. Compatible version (0.10.0), lower bound of the pinned [0.10.0, 0.11.0) range
+	// 2. Compatible version (0.11.0), lower bound of the pinned [0.11.0, 0.12.0) range
 	TSharedPtr<FJsonObject> ValidEnv = MakeShared<FJsonObject>();
 	TSharedPtr<FJsonObject> ValidProg = MakeShared<FJsonObject>();
-	ValidProg->SetStringField(TEXT("version"), TEXT("0.10.0"));
+	ValidProg->SetStringField(TEXT("version"), TEXT("0.11.0"));
 	ValidEnv->SetObjectField(TEXT("program"), ValidProg);
 
 	ResultInfo.ErrorMessages.Empty();
-	TestTrue(TEXT("CLI version 0.10.0 is compatible"), CheckFlexVaultVersion(ValidEnv, ResultInfo));
+	TestTrue(TEXT("CLI version 0.11.0 is compatible"), CheckFlexVaultVersion(ValidEnv, ResultInfo));
 
-	// 3. Compatible version (0.10.1), within the pinned range
+	// 3. Compatible version (0.11.1), within the pinned range
 	TSharedPtr<FJsonObject> WidenedEnv = MakeShared<FJsonObject>();
 	TSharedPtr<FJsonObject> WidenedProg = MakeShared<FJsonObject>();
-	WidenedProg->SetStringField(TEXT("version"), TEXT("0.10.1"));
+	WidenedProg->SetStringField(TEXT("version"), TEXT("0.11.1"));
 	WidenedEnv->SetObjectField(TEXT("program"), WidenedProg);
 
 	ResultInfo.ErrorMessages.Empty();
-	TestTrue(TEXT("CLI version 0.10.1 is compatible"), CheckFlexVaultVersion(WidenedEnv, ResultInfo));
+	TestTrue(TEXT("CLI version 0.11.1 is compatible"), CheckFlexVaultVersion(WidenedEnv, ResultInfo));
 
-	// 4. Incompatible version (0.11.0), the exclusive upper bound of the pinned range
+	// 4. Incompatible version (0.10.1), below the lower bound of the pinned range
 	TSharedPtr<FJsonObject> InvalidEnv = MakeShared<FJsonObject>();
 	TSharedPtr<FJsonObject> InvalidProg = MakeShared<FJsonObject>();
-	InvalidProg->SetStringField(TEXT("version"), TEXT("0.11.0"));
+	InvalidProg->SetStringField(TEXT("version"), TEXT("0.10.1"));
 	InvalidEnv->SetObjectField(TEXT("program"), InvalidProg);
 
 	ResultInfo.ErrorMessages.Empty();
-	AddExpectedErrorPlain(TEXT("Incompatible FlexVault CLI version '0.11.0'"), EAutomationExpectedErrorFlags::Contains, 1);
-	TestFalse(TEXT("CLI version 0.11.0 is incompatible"), CheckFlexVaultVersion(InvalidEnv, ResultInfo));
+	AddExpectedErrorPlain(TEXT("Incompatible FlexVault CLI version '0.10.1'"), EAutomationExpectedErrorFlags::Contains, 1);
+	TestFalse(TEXT("CLI version 0.10.1 is incompatible"), CheckFlexVaultVersion(InvalidEnv, ResultInfo));
 	TestTrue(TEXT("Error reported for version mismatch"), ResultInfo.ErrorMessages.Num() > 0);
 
 	// 5. Malformed non-numeric version string (x.4.2)
@@ -1048,17 +1048,33 @@ bool FFlexVaultCheckVersionTest::RunTest(const FString& Parameters)
 		return Envelope;
 	};
 
-	// 1. Valid compatible version (e.g. 0.10.0, 0.10.1)
+	// 1. Valid compatible version (e.g. 0.11.0, 0.11.5)
+	{
+		FSourceControlResultInfo ResultInfo;
+		FString ExtractedVersion;
+		TSharedPtr<FJsonObject> Env = MakeEnvelope(TEXT("0.11.0"));
+		TestTrue(TEXT("0.11.0 is compatible"), CheckFlexVaultVersion(Env, ResultInfo, &ExtractedVersion));
+		TestEqual(TEXT("Extracted version matches"), ExtractedVersion, TEXT("0.11.0"));
+		TestEqual(TEXT("No errors on success"), ResultInfo.ErrorMessages.Num(), 0);
+	}
+	{
+		FSourceControlResultInfo ResultInfo;
+		FString ExtractedVersion;
+		TSharedPtr<FJsonObject> Env = MakeEnvelope(TEXT("0.11.5"));
+		TestTrue(TEXT("0.11.5 is compatible"), CheckFlexVaultVersion(Env, ResultInfo, &ExtractedVersion));
+		TestEqual(TEXT("Extracted version matches"), ExtractedVersion, TEXT("0.11.5"));
+		TestEqual(TEXT("No errors on success"), ResultInfo.ErrorMessages.Num(), 0);
+	}
+
+	// 2. Incompatible lower version (< 0.11.0)
 	{
 		FSourceControlResultInfo ResultInfo;
 		FString ExtractedVersion;
 		TSharedPtr<FJsonObject> Env = MakeEnvelope(TEXT("0.10.1"));
-		TestTrue(TEXT("0.10.1 is compatible"), CheckFlexVaultVersion(Env, ResultInfo, &ExtractedVersion));
-		TestEqual(TEXT("Extracted version matches"), ExtractedVersion, TEXT("0.10.1"));
-		TestEqual(TEXT("No errors on success"), ResultInfo.ErrorMessages.Num(), 0);
+		AddExpectedErrorPlain(TEXT("Incompatible FlexVault CLI version '0.10.1'"), EAutomationExpectedErrorFlags::Contains, 1);
+		TestFalse(TEXT("0.10.1 is incompatible (too low)"), CheckFlexVaultVersion(Env, ResultInfo, &ExtractedVersion));
+		TestTrue(TEXT("Error reported for incompatible version"), ResultInfo.ErrorMessages.Num() > 0);
 	}
-
-	// 2. Incompatible lower version (< 0.10.0)
 	{
 		FSourceControlResultInfo ResultInfo;
 		FString ExtractedVersion;
@@ -1068,13 +1084,13 @@ bool FFlexVaultCheckVersionTest::RunTest(const FString& Parameters)
 		TestTrue(TEXT("Error reported for incompatible version"), ResultInfo.ErrorMessages.Num() > 0);
 	}
 
-	// 3. Incompatible higher version (>= 0.11.0)
+	// 3. Incompatible higher version (>= 0.12.0)
 	{
 		FSourceControlResultInfo ResultInfo;
 		FString ExtractedVersion;
-		TSharedPtr<FJsonObject> Env = MakeEnvelope(TEXT("0.11.0"));
-		AddExpectedErrorPlain(TEXT("Incompatible FlexVault CLI version '0.11.0'"), EAutomationExpectedErrorFlags::Contains, 1);
-		TestFalse(TEXT("0.11.0 is incompatible (too high)"), CheckFlexVaultVersion(Env, ResultInfo, &ExtractedVersion));
+		TSharedPtr<FJsonObject> Env = MakeEnvelope(TEXT("0.12.0"));
+		AddExpectedErrorPlain(TEXT("Incompatible FlexVault CLI version '0.12.0'"), EAutomationExpectedErrorFlags::Contains, 1);
+		TestFalse(TEXT("0.12.0 is incompatible (too high)"), CheckFlexVaultVersion(Env, ResultInfo, &ExtractedVersion));
 		TestTrue(TEXT("Error reported for incompatible version"), ResultInfo.ErrorMessages.Num() > 0);
 	}
 
@@ -1090,4 +1106,293 @@ bool FFlexVaultCheckVersionTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+// ── Test 25: Branch List Payload Parsing ──────────────────────────────────────
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultBranchListDtoTest, "FlexVault.SourceControl.BranchListDto", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FFlexVaultBranchListDtoTest::RunTest(const FString& Parameters)
+{
+	TArray<FString> SampleBranchListOutput = {
+		TEXT("{"),
+		TEXT("    \"program\": {"),
+		TEXT("        \"name\": \"fxv\","),
+		TEXT("        \"version\": \"0.11.0\","),
+		TEXT("        \"executable\": \"fxv.exe\","),
+		TEXT("        \"arguments\": [\"branch\", \"list\", \"--format\", \"json\"],"),
+		TEXT("        \"invoked_at\": \"2026-09-22T12:00:00Z\""),
+		TEXT("    },"),
+		TEXT("    \"message\": {"),
+		TEXT("        \"kind\": \"branch-list\","),
+		TEXT("        \"version\": \"1.0\","),
+		TEXT("        \"payload\": {"),
+		TEXT("            \"branches\": ["),
+		TEXT("                {"),
+		TEXT("                    \"branch\": \"main\","),
+		TEXT("                    \"branch_unique_id\": \"0123456789abcdef\","),
+		TEXT("                    \"branch_type\": \"global\","),
+		TEXT("                    \"published_head\": \"main.10\","),
+		TEXT("                    \"draft_head\": \"main.10.1\","),
+		TEXT("                    \"local_only\": false,"),
+		TEXT("                    \"retired\": false"),
+		TEXT("                },"),
+		TEXT("                {"),
+		TEXT("                    \"branch\": \"alice/feature\","),
+		TEXT("                    \"branch_unique_id\": \"fedcba9876543210\","),
+		TEXT("                    \"branch_type\": \"user\","),
+		TEXT("                    \"owner\": \"alice\","),
+		TEXT("                    \"draft_head\": \"alice/feature.-.1\","),
+		TEXT("                    \"local_only\": true,"),
+		TEXT("                    \"retired\": false"),
+		TEXT("                }"),
+		TEXT("            ]"),
+		TEXT("        }"),
+		TEXT("    }"),
+		TEXT("}")
+	};
+
+	TArray<FFlexVaultBranchInfo> Branches;
+	FSourceControlResultInfo ResultInfo;
+	TestTrue(TEXT("Parse branch list output"), ParseFlexVaultBranchList(SampleBranchListOutput, Branches, ResultInfo));
+	TestEqual(TEXT("Parsed 2 branches"), Branches.Num(), 2);
+
+	// First branch: main
+	TestEqual(TEXT("Branch name is main"), Branches[0].Branch, TEXT("main"));
+	TestEqual(TEXT("Branch unique id is 0123456789abcdef"), Branches[0].BranchUniqueId, TEXT("0123456789abcdef"));
+	TestEqual(TEXT("Branch type is global"), Branches[0].BranchType, TEXT("global"));
+	TestEqual(TEXT("Branch owner is empty"), Branches[0].Owner, TEXT(""));
+	TestEqual(TEXT("Published head is main.10"), Branches[0].PublishedHead, TEXT("main.10"));
+	TestEqual(TEXT("Draft head is main.10.1"), Branches[0].DraftHead, TEXT("main.10.1"));
+	TestFalse(TEXT("Local only is false"), Branches[0].bLocalOnly);
+	TestFalse(TEXT("Retired is false"), Branches[0].bRetired);
+
+	// Second branch: alice/feature
+	TestEqual(TEXT("Branch name is alice/feature"), Branches[1].Branch, TEXT("alice/feature"));
+	TestEqual(TEXT("Branch unique id is fedcba9876543210"), Branches[1].BranchUniqueId, TEXT("fedcba9876543210"));
+	TestEqual(TEXT("Branch type is user"), Branches[1].BranchType, TEXT("user"));
+	TestEqual(TEXT("Branch owner is alice"), Branches[1].Owner, TEXT("alice"));
+	TestEqual(TEXT("Published head is empty"), Branches[1].PublishedHead, TEXT(""));
+	TestEqual(TEXT("Draft head is alice/feature.-.1"), Branches[1].DraftHead, TEXT("alice/feature.-.1"));
+	TestTrue(TEXT("Local only is true"), Branches[1].bLocalOnly);
+	TestFalse(TEXT("Retired is false"), Branches[1].bRetired);
+
+	return true;
+}
+
+// ── Test 26: Branch Switch and Provider Status ────────────────────────────────
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultBranchStatusTest, "FlexVault.SourceControl.BranchStatus", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FFlexVaultBranchStatusTest::RunTest(const FString& Parameters)
+{
+	FFlexVaultSourceControlProvider Provider;
+	Provider.Init(false);
+
+	TestEqual(TEXT("Initial branch is empty"), Provider.GetCurrentBranch(), TEXT(""));
+	TestEqual(TEXT("Initial user is empty"), Provider.GetCurrentUser(), TEXT(""));
+
+	Provider.SetCurrentBranch(TEXT("feature/test"));
+	Provider.SetCurrentUser(TEXT("bob"));
+
+	TestEqual(TEXT("Branch is feature/test"), Provider.GetCurrentBranch(), TEXT("feature/test"));
+	TestEqual(TEXT("User is bob"), Provider.GetCurrentUser(), TEXT("bob"));
+
+	TMap<ISourceControlProvider::EStatus, FString> Status = Provider.GetStatus();
+	TestEqual(TEXT("Status reports branch"), Status.FindRef(ISourceControlProvider::EStatus::Branch), TEXT("feature/test"));
+	TestEqual(TEXT("Status reports user"), Status.FindRef(ISourceControlProvider::EStatus::User), TEXT("bob"));
+
+	FText StatusText = Provider.GetStatusText();
+	TestTrue(TEXT("Status text disconnected before connect"), StatusText.ToString().Contains(TEXT("Disconnected")));
+	TestFalse(TEXT("Initial disconnected status has no reason"), StatusText.ToString().Contains(TEXT("Reason:")));
+
+	const FText CustomReason = FText::FromString(TEXT("Workspace format version 0 is incompatible (requires version 2)."));
+	Provider.SetLastConnectionError(CustomReason);
+	TestEqual(TEXT("LastConnectionError retrieved correctly"), Provider.GetLastConnectionError().ToString(), CustomReason.ToString());
+
+	FText StatusTextWithReason = Provider.GetStatusText();
+	TestTrue(TEXT("Status text contains Reason when LastConnectionError is set"), StatusTextWithReason.ToString().Contains(TEXT("Reason:")));
+	TestTrue(TEXT("Status text contains exact reason detail"), StatusTextWithReason.ToString().Contains(TEXT("format version 0")));
+
+	// SwitchWorkspace validation on offline provider fails gracefully
+	FSourceControlResultInfo ResultInfo;
+	FString OldWorkspace;
+	ECommandResult::Type SwitchResult = Provider.SwitchWorkspace(TEXT("main"), ResultInfo, &OldWorkspace);
+	TestEqual(TEXT("SwitchWorkspace fails when server unavailable"), SwitchResult, ECommandResult::Failed);
+	TestEqual(TEXT("Old workspace recorded"), OldWorkspace, TEXT("feature/test"));
+
+	Provider.Close();
+	TestEqual(TEXT("Branch cleared on close"), Provider.GetCurrentBranch(), TEXT(""));
+	TestEqual(TEXT("User cleared on close"), Provider.GetCurrentUser(), TEXT(""));
+	TestTrue(TEXT("LastConnectionError cleared on close"), Provider.GetLastConnectionError().IsEmpty());
+
+	return true;
+}
+
+// ── Test 27: Error Message Parsing ───────────────────────────────────────────
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultErrorMessageParsingTest, "FlexVault.SourceControl.ErrorMessageParsing", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FFlexVaultErrorMessageParsingTest::RunTest(const FString& Parameters)
+{
+	// 1. JSON Error Envelope
+	TArray<FString> JsonErrorOutput = {
+		TEXT("{"),
+		TEXT("    \"program\": {"),
+		TEXT("        \"name\": \"fxv\","),
+		TEXT("        \"version\": \"0.11.0\""),
+		TEXT("    },"),
+		TEXT("    \"message\": {"),
+		TEXT("        \"kind\": \"error\","),
+		TEXT("        \"version\": \"1.1\","),
+		TEXT("        \"payload\": {"),
+		TEXT("            \"message\": \"Workspace error: Fxv Repo error: This draft repository uses format version 0, which this version of fxv can no longer read (it requires version 2). Repositories in the older format cannot be upgraded and must be recreated.\","),
+		TEXT("            \"exit_code\": 1"),
+		TEXT("        }"),
+		TEXT("    }"),
+		TEXT("}")
+	};
+
+	FString ParsedError;
+	TestTrue(TEXT("Successfully parsed JSON error envelope"), ParseFlexVaultErrorMessage(JsonErrorOutput, ParsedError));
+	TestTrue(TEXT("Contains format version error detail"), ParsedError.Contains(TEXT("format version 0")));
+	TestTrue(TEXT("Contains recreation message"), ParsedError.Contains(TEXT("must be recreated")));
+
+	// 2. Plain text fallback
+	TArray<FString> PlainTextOutput = {
+		TEXT("   "),
+		TEXT("fatal: unable to find repository root"),
+		TEXT("check your working directory"),
+		TEXT("")
+	};
+
+	FString PlainError;
+	TestTrue(TEXT("Successfully parsed plain text error"), ParseFlexVaultErrorMessage(PlainTextOutput, PlainError));
+	TestEqual(TEXT("Joined non-empty lines"), PlainError, TEXT("fatal: unable to find repository root check your working directory"));
+
+	// 3. Empty output
+	TArray<FString> EmptyOutput;
+	FString EmptyError;
+	TestFalse(TEXT("Empty output returns false"), ParseFlexVaultErrorMessage(EmptyOutput, EmptyError));
+	TestTrue(TEXT("Output error is empty"), EmptyError.IsEmpty());
+
+	return true;
+}
+
+// ── Test 28: Format Incompatibility Error Detection ──────────────────────────
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultFormatIncompatibilityDetectionTest, "FlexVault.SourceControl.FormatIncompatibilityDetection", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FFlexVaultFormatIncompatibilityDetectionTest::RunTest(const FString& Parameters)
+{
+	const FString FormatError1 = TEXT("This published repository uses format version 0, which this version of fxv can no longer read (it requires version 2). Repositories in the older format cannot be upgraded and must be recreated.");
+	const FString FormatError2 = TEXT("Fxv Repo error: RepositoryFormatTooOld { repo_type: \"draft\", found_version: 0, supported_version: 2 }");
+	const FString GenericError = TEXT("Failed to connect to host: connection refused");
+	const FString AuthError = TEXT("No user logged in: please run fxv login");
+
+	TestTrue(TEXT("Detects format version string"), IsFlexVaultFormatIncompatibilityError(FormatError1));
+	TestTrue(TEXT("Detects RepositoryFormatTooOld string"), IsFlexVaultFormatIncompatibilityError(FormatError2));
+	TestFalse(TEXT("Generic network error is not format incompatibility"), IsFlexVaultFormatIncompatibilityError(GenericError));
+	TestFalse(TEXT("Auth error is not format incompatibility"), IsFlexVaultFormatIncompatibilityError(AuthError));
+
+	return true;
+}
+
+// ── Test 29: CheckIn Login Failure Error UX ──────────────────────────────────
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultCheckInLoginFailureTest, "FlexVault.SourceControl.CheckInLoginFailure", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FFlexVaultCheckInLoginFailureTest::RunTest(const FString& Parameters)
+{
+	// 1. Verify ParseFlexVaultCurrentUser behavior
+	TSharedPtr<FJsonObject> Env = MakeShared<FJsonObject>();
+	TSharedPtr<FJsonObject> MessageObj = MakeShared<FJsonObject>();
+	TSharedPtr<FJsonObject> PayloadObj = MakeShared<FJsonObject>();
+	MessageObj->SetObjectField(TEXT("payload"), PayloadObj);
+	Env->SetObjectField(TEXT("message"), MessageObj);
+
+	FString CurrentUser;
+	TestFalse(TEXT("CurrentUser absent in payload fails"), ParseFlexVaultCurrentUser(Env, CurrentUser));
+	TestTrue(TEXT("CurrentUser is empty"), CurrentUser.IsEmpty());
+
+	PayloadObj->SetStringField(TEXT("current_user"), TEXT("alice"));
+	TestTrue(TEXT("CurrentUser present succeeds"), ParseFlexVaultCurrentUser(Env, CurrentUser));
+	TestEqual(TEXT("CurrentUser parsed correctly"), CurrentUser, TEXT("alice"));
+
+	// 2. Verify CheckIn worker populates Operation ErrorText when login validation fails
+	FFlexVaultSourceControlProvider Provider;
+	TSharedRef<FCheckIn, ESPMode::ThreadSafe> CheckInOp = ISourceControlOperation::Create<FCheckIn>();
+	CheckInOp->SetDescription(FText::FromString(TEXT("Test commit message")));
+
+	FFlexVaultCheckInWorker Worker(Provider);
+	FFlexVaultSourceControlCommand Command(CheckInOp, TSharedRef<IFlexVaultSourceControlWorker>(&Worker, [](IFlexVaultSourceControlWorker*){}));
+	Command.Files.Add(FPaths::ProjectDir() / TEXT("Content/TestAsset.uasset"));
+	Command.BinaryPath = TEXT("invalid_binary_stub_login_failure");
+
+	AddExpectedErrorPlain(TEXT("Failed to launch SCM executable: invalid_binary_stub_login_failure"), EAutomationExpectedErrorFlags::Contains, 1);
+	AddExpectedErrorPlain(TEXT("FlexVault SCM: Check-in blocked: unable to establish a logged-in FlexVault user."), EAutomationExpectedErrorFlags::Contains, 1);
+
+	TestFalse(TEXT("CheckIn worker execution fails when user login check fails"), Worker.Execute(Command));
+
+	TestTrue(TEXT("ResultInfo contains error messages"), Command.ResultInfo.ErrorMessages.Num() > 0);
+	const FString LastError = Command.ResultInfo.ErrorMessages.Last().ToString();
+	TestTrue(TEXT("Error message is non-empty"), !LastError.IsEmpty());
+	TestTrue(TEXT("Error message reports command failure"), LastError.Contains(TEXT("executable")) || LastError.Contains(TEXT("login")));
+
+	return true;
+}
+
+// ── Test 30: Integration Registration Helper & Args ───────────────────────────
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultIntegrationRegisterTest, "FlexVault.SourceControl.IntegrationRegister", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FFlexVaultIntegrationRegisterTest::RunTest(const FString& Parameters)
+{
+	// 1. Verify FlexVaultCliCompatibility version strings
+	TestEqual(TEXT("MinVersion string matches expected"), FlexVaultCliCompatibility::GetMinVersionString(), TEXT("0.11.0"));
+	TestEqual(TEXT("MaxVersion string matches expected"), FlexVaultCliCompatibility::GetMaxVersionString(), TEXT("0.12.0"));
+
+	// 2. Verify BuildFlexVaultIntegrationRegisterArgs with full options
+	FFlexVaultIntegrationRegisterOptions FullOptions;
+	FullOptions.Workspace = TEXT("C:/Test/Workspace");
+	FullOptions.PluginVersion = TEXT("0.5.2");
+	FullOptions.MinVersion = FlexVaultCliCompatibility::GetMinVersionString();
+	FullOptions.MaxVersion = FlexVaultCliCompatibility::GetMaxVersionString();
+
+	TArray<FString> FullArgs = BuildFlexVaultIntegrationRegisterArgs(FullOptions);
+	const TArray<FString> ExpectedFullArgs = {
+		TEXT("integration"),
+		TEXT("register"),
+		TEXT("--name"),
+		TEXT("unreal"),
+		TEXT("--plugin-version"),
+		TEXT("0.5.2"),
+		TEXT("--min"),
+		TEXT("0.11.0"),
+		TEXT("--max-version"),
+		TEXT("0.12.0"),
+		TEXT("--workspace"),
+		TEXT("C:/Test/Workspace"),
+		TEXT("--unattended"),
+		TEXT("--no-color")
+	};
+	TestEqual(TEXT("Full registration args count matches"), FullArgs.Num(), ExpectedFullArgs.Num());
+	for (int32 Index = 0; Index < FMath::Min(FullArgs.Num(), ExpectedFullArgs.Num()); ++Index)
+	{
+		TestEqual(FString::Printf(TEXT("FullArg[%d] matches"), Index), FullArgs[Index], ExpectedFullArgs[Index]);
+	}
+
+	// 3. Verify BuildFlexVaultIntegrationRegisterArgs omitting Unknown / empty plugin version
+	FFlexVaultIntegrationRegisterOptions UnknownPluginOptions = FullOptions;
+	UnknownPluginOptions.PluginVersion = TEXT("Unknown");
+	TArray<FString> UnknownPluginArgs = BuildFlexVaultIntegrationRegisterArgs(UnknownPluginOptions);
+	TestFalse(TEXT("Args do not contain --plugin-version when plugin version is Unknown"), UnknownPluginArgs.Contains(TEXT("--plugin-version")));
+
+	FFlexVaultIntegrationRegisterOptions EmptyPluginOptions = FullOptions;
+	EmptyPluginOptions.PluginVersion = TEXT("");
+	TArray<FString> EmptyPluginArgs = BuildFlexVaultIntegrationRegisterArgs(EmptyPluginOptions);
+	TestFalse(TEXT("Args do not contain --plugin-version when plugin version is empty"), EmptyPluginArgs.Contains(TEXT("--plugin-version")));
+
+	// 4. Verify RunFlexVaultIntegrationRegister handles failure gracefully without throwing
+	FSourceControlResultInfo RegResultInfo;
+	AddExpectedErrorPlain(TEXT("Failed to launch SCM executable: invalid_binary_stub_registration"), EAutomationExpectedErrorFlags::Contains, 1);
+	const bool bSuccess = RunFlexVaultIntegrationRegister(TEXT("invalid_binary_stub_registration"), TEXT("C:/Test/Workspace"), FullOptions, RegResultInfo);
+	TestFalse(TEXT("RunFlexVaultIntegrationRegister returns false for invalid binary"), bSuccess);
+
+	return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS
+

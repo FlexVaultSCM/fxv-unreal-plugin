@@ -17,7 +17,8 @@ public class FlexVaultSourceControl : ModuleRules
 				"Json",
 				"Projects",
 				"DeveloperSettings",
-				"UnrealEd"
+				"UnrealEd",
+				"ApplicationCore"
 			}
 		);
 

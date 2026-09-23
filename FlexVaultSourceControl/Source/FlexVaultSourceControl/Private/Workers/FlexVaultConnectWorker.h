@@ -17,5 +17,10 @@ public:
 
 	virtual FName GetName() const override;
 	virtual bool Execute(class FFlexVaultSourceControlCommand& InCommand) override;
-	virtual bool UpdateStates() const override { return false; }
+	virtual bool UpdateStates() const override;
+
+private:
+	FString CurrentBranch;
+	FString CurrentUser;
+	FText LastConnectionError;
 };
