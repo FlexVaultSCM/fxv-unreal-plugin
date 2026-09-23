@@ -58,7 +58,7 @@ bool FFlexVaultConnectWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 			InCommand.ResultInfo.ErrorMessages.Add(Error);
 			UE_LOG(LogFlexVault, Error, TEXT("FlexVault: %s"), *Error.ToString());
 			ConnectOperation->SetErrorText(Error);
-			GetSCCProvider().SetLastConnectionError(Error);
+			LastConnectionError = Error;
 			return false;
 		}
 
@@ -70,20 +70,14 @@ bool FFlexVaultConnectWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 			{
 				FText LastErr = InCommand.ResultInfo.ErrorMessages.Last();
 				ConnectOperation->SetErrorText(LastErr);
-				GetSCCProvider().SetLastConnectionError(LastErr);
+				LastConnectionError = LastErr;
 			}
 			return false;
 		}
 
-		FString CurrentBranch;
 		ParseFlexVaultCurrentBranch(Envelope, CurrentBranch);
-		GetSCCProvider().SetCurrentBranch(CurrentBranch);
-
-		FString CurrentUser;
 		ParseFlexVaultCurrentUser(Envelope, CurrentUser);
-		GetSCCProvider().SetCurrentUser(CurrentUser);
-
-		GetSCCProvider().SetLastConnectionError(FText::GetEmpty());
+		LastConnectionError = FText::GetEmpty();
 
 		TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("FlexVaultSourceControl"));
 		FString PluginVersion = Plugin.IsValid() ? Plugin->GetDescriptor().VersionName : TEXT("Unknown");
@@ -98,21 +92,27 @@ bool FFlexVaultConnectWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 	}
 	else if (InCommand.ResultInfo.ErrorMessages.Num() > 0)
 	{
-		FText FailureMessage;
-		if (InCommand.ResultInfo.ErrorMessages.Num() > 1)
+		FString ErrorMessage;
+		if (!ParseFlexVaultErrorMessage(OutputLines, ErrorMessage))
 		{
-			FailureMessage = InCommand.ResultInfo.ErrorMessages[1];
-		}
-		else
-		{
-			FailureMessage = InCommand.ResultInfo.ErrorMessages[0];
+			ErrorMessage = InCommand.ResultInfo.ErrorMessages.Last().ToString();
 		}
 
+		const FText FailureMessage = FText::FromString(ErrorMessage);
 		ConnectOperation->SetErrorText(FailureMessage);
-		GetSCCProvider().SetLastConnectionError(FailureMessage);
+		LastConnectionError = FailureMessage;
 	}
 
 	return bSucceeded;
+}
+
+bool FFlexVaultConnectWorker::UpdateStates() const
+{
+	FFlexVaultSourceControlProvider& Provider = GetSCCProvider();
+	Provider.SetCurrentBranch(CurrentBranch);
+	Provider.SetCurrentUser(CurrentUser);
+	Provider.SetLastConnectionError(LastConnectionError);
+	return true;
 }
 
 #undef LOCTEXT_NAMESPACE

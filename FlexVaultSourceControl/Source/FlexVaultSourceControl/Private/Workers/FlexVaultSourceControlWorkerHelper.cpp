@@ -730,43 +730,53 @@ bool RunFlexVaultBranchSwitch(
 	FString FullOutput = FString::Join(OutputLines, TEXT("\n"));
 	TSharedPtr<FJsonObject> JsonObject;
 	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(FullOutput);
-	if (FJsonSerializer::Deserialize(Reader, JsonObject) && JsonObject.IsValid())
+	if (!FJsonSerializer::Deserialize(Reader, JsonObject) || !JsonObject.IsValid())
 	{
-		TSharedPtr<FJsonObject> PayloadObj;
-		if (TryGetFlexVaultEnvelopePayload(JsonObject, PayloadObj))
+		OutResultInfo.ErrorMessages.Add(
+			LOCTEXT("BranchSwitchJsonError", "FlexVault: Failed to parse branch switch JSON output.")
+		);
+		return false;
+	}
+
+	TSharedPtr<FJsonObject> PayloadObj;
+	if (!TryGetFlexVaultEnvelopePayload(JsonObject, PayloadObj))
+	{
+		OutResultInfo.ErrorMessages.Add(
+			LOCTEXT("BranchSwitchPayloadError", "FlexVault: Branch switch JSON envelope is missing 'message.payload'.")
+		);
+		return false;
+	}
+
+	const TArray<TSharedPtr<FJsonValue>>* FilesUpdatedArray = nullptr;
+	if (PayloadObj->TryGetArrayField(TEXT("files_updated"), FilesUpdatedArray) && FilesUpdatedArray != nullptr)
+	{
+		for (const TSharedPtr<FJsonValue>& FileVal : *FilesUpdatedArray)
 		{
-			const TArray<TSharedPtr<FJsonValue>>* FilesUpdatedArray = nullptr;
-			if (PayloadObj->TryGetArrayField(TEXT("files_updated"), FilesUpdatedArray) && FilesUpdatedArray != nullptr)
+			if (FileVal.IsValid() && FileVal->Type == EJson::Object)
 			{
-				for (const TSharedPtr<FJsonValue>& FileVal : *FilesUpdatedArray)
+				TSharedPtr<FJsonObject> FileObj = FileVal->AsObject();
+				FString RelativePath;
+				if (FileObj->TryGetStringField(TEXT("path"), RelativePath))
 				{
-					if (FileVal.IsValid() && FileVal->Type == EJson::Object)
-					{
-						TSharedPtr<FJsonObject> FileObj = FileVal->AsObject();
-						FString RelativePath;
-						if (FileObj->TryGetStringField(TEXT("path"), RelativePath))
-						{
-							FString FullPath = FPaths::Combine(InWorkspacePath, RelativePath);
-							FPaths::NormalizeFilename(FullPath);
-							OutUpdatedFiles.Add(FullPath);
-						}
-					}
+					FString FullPath = FPaths::Combine(InWorkspacePath, RelativePath);
+					FPaths::NormalizeFilename(FullPath);
+					OutUpdatedFiles.Add(FullPath);
 				}
 			}
+		}
+	}
 
-			const TArray<TSharedPtr<FJsonValue>>* ConflictedFilesArray = nullptr;
-			if (PayloadObj->TryGetArrayField(TEXT("conflicted_files"), ConflictedFilesArray) && ConflictedFilesArray != nullptr)
+	const TArray<TSharedPtr<FJsonValue>>* ConflictedFilesArray = nullptr;
+	if (PayloadObj->TryGetArrayField(TEXT("conflicted_files"), ConflictedFilesArray) && ConflictedFilesArray != nullptr)
+	{
+		for (const TSharedPtr<FJsonValue>& FileVal : *ConflictedFilesArray)
+		{
+			if (FileVal.IsValid())
 			{
-				for (const TSharedPtr<FJsonValue>& FileVal : *ConflictedFilesArray)
-				{
-					if (FileVal.IsValid())
-					{
-						FString RelativePath = FileVal->AsString();
-						FString FullPath = FPaths::Combine(InWorkspacePath, RelativePath);
-						FPaths::NormalizeFilename(FullPath);
-						OutConflictedFiles.Add(FullPath);
-					}
-				}
+				FString RelativePath = FileVal->AsString();
+				FString FullPath = FPaths::Combine(InWorkspacePath, RelativePath);
+				FPaths::NormalizeFilename(FullPath);
+				OutConflictedFiles.Add(FullPath);
 			}
 		}
 	}
@@ -1183,18 +1193,14 @@ bool ParseFlexVaultErrorMessage(const TArray<FString>& InOutputLines, FString& O
 	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(RawJson);
 	if (FJsonSerializer::Deserialize(Reader, Envelope) && Envelope.IsValid())
 	{
-		const TSharedPtr<FJsonObject>* MessageObj = nullptr;
-		if (Envelope->TryGetObjectField(TEXT("message"), MessageObj) && MessageObj && (*MessageObj).IsValid())
+		TSharedPtr<FJsonObject> PayloadObj;
+		if (TryGetFlexVaultEnvelopePayload(Envelope, PayloadObj))
 		{
-			const TSharedPtr<FJsonObject>* PayloadObj = nullptr;
-			if ((*MessageObj)->TryGetObjectField(TEXT("payload"), PayloadObj) && PayloadObj && (*PayloadObj).IsValid())
+			FString Msg;
+			if (PayloadObj->TryGetStringField(TEXT("message"), Msg) && !Msg.IsEmpty())
 			{
-				FString Msg;
-				if ((*PayloadObj)->TryGetStringField(TEXT("message"), Msg) && !Msg.IsEmpty())
-				{
-					OutErrorMessage = Msg;
-					return true;
-				}
+				OutErrorMessage = Msg;
+				return true;
 			}
 		}
 	}

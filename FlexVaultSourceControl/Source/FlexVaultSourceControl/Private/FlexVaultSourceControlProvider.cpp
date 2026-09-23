@@ -18,6 +18,7 @@
 #include "Workers/FlexVaultSourceControlWorkerHelper.h"
 #include "SourceControlOperations.h"
 #include "SourceControlHelpers.h"
+#include "ISourceControlModule.h"
 #include "ScopedSourceControlProgress.h"
 #include "Misc/QueuedThreadPool.h"
 #include "Misc/ScopeRWLock.h"
@@ -682,13 +683,22 @@ void FFlexVaultSourceControlProvider::HandleCommandNotifications(const FFlexVaul
 			Info.ButtonDetails.Add(FNotificationButtonInfo(
 				LOCTEXT("FlexVaultLoginButton", "Log In..."),
 				FText(),
-				FSimpleDelegate::CreateLambda([this, NotificationHandle, BinaryPath, WorkspacePath]()
+				FSimpleDelegate::CreateLambda([NotificationHandle, BinaryPath, WorkspacePath]()
 				{
 					FString LoggedInUser;
 					if (SFlexVaultLoginDialog::ShowModal(BinaryPath, WorkspacePath, LoggedInUser))
 					{
-						SetCurrentUser(LoggedInUser);
-						OutputStateChangedEvent();
+						if (ISourceControlModule::Get().IsEnabled())
+						{
+							ISourceControlProvider& ActiveProvider = ISourceControlModule::Get().GetProvider();
+							if (ActiveProvider.GetName() == TEXT("FlexVault"))
+							{
+								FFlexVaultSourceControlProvider& FxvProvider = static_cast<FFlexVaultSourceControlProvider&>(ActiveProvider);
+								FxvProvider.SetCurrentUser(LoggedInUser);
+								FxvProvider.OutputStateChangedEvent();
+							}
+						}
+
 						if (NotificationHandle->IsValid())
 						{
 							(*NotificationHandle)->SetText(FText::Format(
@@ -897,6 +907,9 @@ ECommandResult::Type FFlexVaultSourceControlProvider::SwitchWorkspace(
 	TArray<FString> UpdatedFiles;
 	TArray<FString> ConflictedFiles;
 
+	// NOTE: ISourceControlProvider::SwitchWorkspace is an engine-defined synchronous interface method.
+	// Branch switching alters workspace files on disk and invalidates the state cache immediately before
+	// the editor reloads changed packages, so this operation runs synchronously on the calling thread.
 	UE_LOG(LogFlexVault, Display, TEXT("FlexVault SCM: Switching branch to '%s'..."), *TargetBranch);
 
 	bool bSucceeded = RunFlexVaultBranchSwitch(BinaryPath, WorkspacePath, TargetBranch, UpdatedFiles, ConflictedFiles, OutResultInfo);
@@ -934,6 +947,9 @@ bool FFlexVaultSourceControlProvider::EnsureUserLoggedInBeforeCheckIn()
 		}
 	}
 
+	// In the common path where a user is already authenticated in this session, this is an instant
+	// in-memory check (0ms). When logged out, the check runs on the Game Thread because Slate modal
+	// windows (SFlexVaultLoginDialog) cannot be created from background worker threads.
 	if (CurrentUser.IsEmpty())
 	{
 		FSourceControlResultInfo ResultInfo;
@@ -950,6 +966,10 @@ bool FFlexVaultSourceControlProvider::EnsureUserLoggedInBeforeCheckIn()
 	}
 
 #if SOURCE_CONTROL_WITH_SLATE
+	// In unattended / non-game-thread / non-Slate contexts (e.g. CI/CD automation tests, commandlets),
+	// interactive modal dialogs cannot be displayed. We return true here to allow the command to proceed
+	// to FFlexVaultCheckInWorker::Execute(), which performs hard validation via EnsureFlexVaultLoggedIn()
+	// and fails with structured ResultInfo error messages instead of silently cancelling the operation.
 	if (FApp::IsUnattended() || !IsInGameThread() || !FSlateApplication::IsInitialized())
 	{
 		return true;
