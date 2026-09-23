@@ -1292,4 +1292,47 @@ bool FFlexVaultFormatIncompatibilityDetectionTest::RunTest(const FString& Parame
 	return true;
 }
 
+// ── Test 29: CheckIn Login Failure Error UX ──────────────────────────────────
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultCheckInLoginFailureTest, "FlexVault.SourceControl.CheckInLoginFailure", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FFlexVaultCheckInLoginFailureTest::RunTest(const FString& Parameters)
+{
+	// 1. Verify ParseFlexVaultCurrentUser behavior
+	TSharedPtr<FJsonObject> Env = MakeShared<FJsonObject>();
+	TSharedPtr<FJsonObject> MessageObj = MakeShared<FJsonObject>();
+	TSharedPtr<FJsonObject> PayloadObj = MakeShared<FJsonObject>();
+	MessageObj->SetObjectField(TEXT("payload"), PayloadObj);
+	Env->SetObjectField(TEXT("message"), MessageObj);
+
+	FString CurrentUser;
+	TestFalse(TEXT("CurrentUser absent in payload fails"), ParseFlexVaultCurrentUser(Env, CurrentUser));
+	TestTrue(TEXT("CurrentUser is empty"), CurrentUser.IsEmpty());
+
+	PayloadObj->SetStringField(TEXT("current_user"), TEXT("alice"));
+	TestTrue(TEXT("CurrentUser present succeeds"), ParseFlexVaultCurrentUser(Env, CurrentUser));
+	TestEqual(TEXT("CurrentUser parsed correctly"), CurrentUser, TEXT("alice"));
+
+	// 2. Verify CheckIn worker populates Operation ErrorText when login validation fails
+	FFlexVaultSourceControlProvider Provider;
+	TSharedRef<FCheckIn, ESPMode::ThreadSafe> CheckInOp = ISourceControlOperation::Create<FCheckIn>();
+	CheckInOp->SetDescription(FText::FromString(TEXT("Test commit message")));
+
+	FFlexVaultCheckInWorker Worker(Provider);
+	FFlexVaultSourceControlCommand Command(CheckInOp, TSharedRef<IFlexVaultSourceControlWorker>(&Worker, [](IFlexVaultSourceControlWorker*){}));
+	Command.Files.Add(FPaths::ProjectDir() / TEXT("Content/TestAsset.uasset"));
+	Command.BinaryPath = TEXT("invalid_binary_stub_login_failure");
+
+	AddExpectedErrorPlain(TEXT("Failed to launch SCM executable: invalid_binary_stub_login_failure"), EAutomationExpectedErrorFlags::Contains, 1);
+	AddExpectedErrorPlain(TEXT("FlexVault SCM: Check-in blocked: unable to establish a logged-in FlexVault user."), EAutomationExpectedErrorFlags::Contains, 1);
+
+	TestFalse(TEXT("CheckIn worker execution fails when user login check fails"), Worker.Execute(Command));
+
+	const FText OpError = CheckInOp->GetErrorText();
+	TestFalse(TEXT("Operation ErrorText is populated"), OpError.IsEmpty());
+	TestTrue(TEXT("ResultInfo contains error messages"), Command.ResultInfo.ErrorMessages.Num() > 0);
+	TestEqual(TEXT("Operation ErrorText matches latest ResultInfo error message"), OpError.ToString(), Command.ResultInfo.ErrorMessages.Last().ToString());
+
+	return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS

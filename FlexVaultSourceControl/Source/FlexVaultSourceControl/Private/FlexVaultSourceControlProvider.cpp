@@ -24,6 +24,7 @@
 #include "Misc/Paths.h"
 #include "Async/Async.h"
 #include "Logging/MessageLog.h"
+#include "HAL/PlatformApplicationMisc.h"
 
 #if SOURCE_CONTROL_WITH_SLATE
 #include "Widgets/SNullWidget.h"
@@ -141,10 +142,20 @@ FText FFlexVaultSourceControlProvider::GetStatusText() const
 		);
 	}
 
+	FText UserDisplay;
+	if (!CurrentUser.IsEmpty())
+	{
+		UserDisplay = FText::FromString(CurrentUser);
+	}
+	else
+	{
+		UserDisplay = LOCTEXT("UserLoggedOutWarning", "logged out (login required before check-in)");
+	}
+
 	FFormatNamedArguments Args;
 	Args.Add(TEXT("Status"), LOCTEXT("Connected", "Connected"));
 	Args.Add(TEXT("Branch"), FText::FromString(!CurrentBranch.IsEmpty() ? CurrentBranch : TEXT("-")));
-	Args.Add(TEXT("User"), FText::FromString(!CurrentUser.IsEmpty() ? CurrentUser : TEXT("logged out")));
+	Args.Add(TEXT("User"), UserDisplay);
 
 	return FText::Format(
 		LOCTEXT("StatusTextConnectedWithBranch", "FlexVault Source Control: {Status}\nBranch: {Branch}\nUser: {User}"),
@@ -576,6 +587,155 @@ void FFlexVaultSourceControlProvider::HandleCommandNotifications(const FFlexVaul
 		FMessageLog SourceControlLog("SourceControl");
 		SourceControlLog.Error(FText::Format(LOCTEXT("FlexVaultConnectLogEntry", "FlexVault SCM connection failed: {0}"), ErrorText));
 		SourceControlLog.Notify(LOCTEXT("FlexVaultConnectNotifyBadge", "FlexVault revision control connection failed. Click to open message log."), EMessageSeverity::Error);
+	}
+
+	const bool bIsCheckIn = (InCommand.Operation->GetName() == FlexVaultSourceControlConstants::CheckIn);
+	if (bIsCheckIn && (!InCommand.bCommandSuccessful || InCommand.IsCanceled()))
+	{
+		FText ErrorText = InCommand.Operation->GetErrorText();
+		if (ErrorText.IsEmpty())
+		{
+			for (const FText& Err : InCommand.ResultInfo.ErrorMessages)
+			{
+				const FString Msg = Err.ToString();
+				if (Msg.Contains(TEXT("No user is logged in")) ||
+				    Msg.Contains(TEXT("unable to establish a logged-in")) ||
+				    Msg.Contains(TEXT("not logged in")))
+				{
+					ErrorText = Err;
+					break;
+				}
+			}
+		}
+
+		if (ErrorText.IsEmpty() && InCommand.ResultInfo.ErrorMessages.Num() > 0)
+		{
+			ErrorText = InCommand.ResultInfo.ErrorMessages.Last();
+		}
+		if (ErrorText.IsEmpty())
+		{
+			ErrorText = LOCTEXT("CheckInFailedGeneric", "Check-in operation failed.");
+		}
+
+		const FString ErrorStr = ErrorText.ToString();
+		const bool bIsLoginError = ErrorStr.Contains(TEXT("No user is logged in")) ||
+		                           ErrorStr.Contains(TEXT("unable to establish a logged-in")) ||
+		                           ErrorStr.Contains(TEXT("not logged in"));
+
+		FText NotificationTitle;
+		FText NotificationSubText;
+		if (bIsLoginError)
+		{
+			NotificationTitle = LOCTEXT("FlexVaultCheckInNoUserTitle", "FlexVault: Check-in blocked: no user logged in.");
+			NotificationSubText = LOCTEXT("FlexVaultCheckInNoUserSubText", "Run 'fxv login <username>' in a terminal to authenticate before submitting.");
+		}
+		else
+		{
+			NotificationTitle = LOCTEXT("FlexVaultCheckInFailedTitle", "FlexVault: Check-in failed.");
+			NotificationSubText = ErrorText;
+		}
+
+		FNotificationInfo Info(NotificationTitle);
+		Info.SubText = NotificationSubText;
+		Info.ExpireDuration = 10.0f;
+		Info.bUseSuccessFailIcons = true;
+
+		TSharedRef<TSharedPtr<SNotificationItem>> NotificationHandle = MakeShared<TSharedPtr<SNotificationItem>>();
+
+		if (bIsLoginError)
+		{
+			Info.ButtonDetails.Add(FNotificationButtonInfo(
+				LOCTEXT("FlexVaultCopyLoginCommand", "Copy 'fxv login'"),
+				FText(),
+				FSimpleDelegate::CreateLambda([NotificationHandle]()
+				{
+					FPlatformApplicationMisc::ClipboardCopy(TEXT("fxv login "));
+					if (NotificationHandle->IsValid())
+					{
+						(*NotificationHandle)->ExpireAndFadeout();
+					}
+				}),
+				SNotificationItem::CS_None));
+		}
+
+		Info.ButtonDetails.Add(FNotificationButtonInfo(
+			LOCTEXT("FlexVaultOpenMessageLog", "Open Message Log"),
+			FText(),
+			FSimpleDelegate::CreateLambda([NotificationHandle]()
+			{
+				FMessageLog("SourceControl").Open(EMessageSeverity::Error, true);
+				if (NotificationHandle->IsValid())
+				{
+					(*NotificationHandle)->ExpireAndFadeout();
+				}
+			}),
+			SNotificationItem::CS_None));
+
+		Info.ButtonDetails.Add(FNotificationButtonInfo(
+			LOCTEXT("FlexVaultDismiss", "Dismiss"),
+			FText(),
+			FSimpleDelegate::CreateLambda([NotificationHandle]()
+			{
+				if (NotificationHandle->IsValid())
+				{
+					(*NotificationHandle)->ExpireAndFadeout();
+				}
+			}),
+			SNotificationItem::CS_None));
+
+		*NotificationHandle = FSlateNotificationManager::Get().AddNotification(Info);
+
+		FMessageLog SourceControlLog("SourceControl");
+		SourceControlLog.Error(FText::Format(LOCTEXT("FlexVaultCheckInLogEntry", "FlexVault SCM Check-in failed: {0}"), ErrorText));
+		if (bIsLoginError)
+		{
+			SourceControlLog.Info(LOCTEXT("FlexVaultCheckInLoginInstruction", "To fix: Open a terminal in the project directory and run 'fxv login <username>', then retry submitting."));
+		}
+		SourceControlLog.Notify(LOCTEXT("FlexVaultCheckInNotifyBadge", "FlexVault check-in failed. Click to open message log."), EMessageSeverity::Error);
+	}
+	else if (!bIsConnect && !bIsCheckIn && (!InCommand.bCommandSuccessful || InCommand.IsCanceled()))
+	{
+		if (InCommand.ResultInfo.ErrorMessages.Num() > 0 &&
+		    InCommand.Operation->GetName() != FlexVaultSourceControlConstants::UpdateStatus)
+		{
+			FText ErrorText = InCommand.ResultInfo.ErrorMessages.Last();
+			FNotificationInfo Info(FText::Format(LOCTEXT("FlexVaultOperationFailedTitle", "FlexVault: {0} operation failed."), FText::FromName(InCommand.Operation->GetName())));
+			Info.SubText = ErrorText;
+			Info.ExpireDuration = 8.0f;
+			Info.bUseSuccessFailIcons = true;
+
+			TSharedRef<TSharedPtr<SNotificationItem>> NotificationHandle = MakeShared<TSharedPtr<SNotificationItem>>();
+			Info.ButtonDetails.Add(FNotificationButtonInfo(
+				LOCTEXT("FlexVaultOpenMessageLog", "Open Message Log"),
+				FText(),
+				FSimpleDelegate::CreateLambda([NotificationHandle]()
+				{
+					FMessageLog("SourceControl").Open(EMessageSeverity::Error, true);
+					if (NotificationHandle->IsValid())
+					{
+						(*NotificationHandle)->ExpireAndFadeout();
+					}
+				}),
+				SNotificationItem::CS_None));
+
+			Info.ButtonDetails.Add(FNotificationButtonInfo(
+				LOCTEXT("FlexVaultDismiss", "Dismiss"),
+				FText(),
+				FSimpleDelegate::CreateLambda([NotificationHandle]()
+				{
+					if (NotificationHandle->IsValid())
+					{
+						(*NotificationHandle)->ExpireAndFadeout();
+					}
+				}),
+				SNotificationItem::CS_None));
+
+			*NotificationHandle = FSlateNotificationManager::Get().AddNotification(Info);
+
+			FMessageLog SourceControlLog("SourceControl");
+			SourceControlLog.Error(FText::Format(LOCTEXT("FlexVaultOperationFailedLog", "FlexVault SCM {0} failed: {1}"), FText::FromName(InCommand.Operation->GetName()), ErrorText));
+			SourceControlLog.Notify(LOCTEXT("FlexVaultOperationFailedBadge", "FlexVault operation failed. Click to open message log."), EMessageSeverity::Error);
+		}
 	}
 #endif
 }
