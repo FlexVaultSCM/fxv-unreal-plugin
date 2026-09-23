@@ -31,7 +31,7 @@ void SFlexVaultLoginDialog::Construct(const FArguments& InArgs)
 		.Padding(20.0f)
 		[
 			SNew(SBox)
-			.WidthOverride(420.0f)
+			.WidthOverride(520.0f)
 			[
 				SNew(SVerticalBox)
 				// Title
@@ -42,6 +42,7 @@ void SFlexVaultLoginDialog::Construct(const FArguments& InArgs)
 					SNew(STextBlock)
 					.Text(LOCTEXT("FlexVaultLoginHeader", "FlexVault: User Login Required"))
 					.Font(FAppStyle::GetFontStyle("HeadingMedium"))
+					.AutoWrapText(true)
 				]
 				// Description
 				+ SVerticalBox::Slot()
