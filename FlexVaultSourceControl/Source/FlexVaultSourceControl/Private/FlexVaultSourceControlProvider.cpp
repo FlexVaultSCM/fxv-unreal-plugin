@@ -592,19 +592,16 @@ void FFlexVaultSourceControlProvider::HandleCommandNotifications(const FFlexVaul
 	const bool bIsCheckIn = (InCommand.Operation->GetName() == FlexVaultSourceControlConstants::CheckIn);
 	if (bIsCheckIn && (!InCommand.bCommandSuccessful || InCommand.IsCanceled()))
 	{
-		FText ErrorText = InCommand.Operation->GetErrorText();
-		if (ErrorText.IsEmpty())
+		FText ErrorText;
+		for (const FText& Err : InCommand.ResultInfo.ErrorMessages)
 		{
-			for (const FText& Err : InCommand.ResultInfo.ErrorMessages)
+			const FString Msg = Err.ToString();
+			if (Msg.Contains(TEXT("No user is logged in")) ||
+			    Msg.Contains(TEXT("unable to establish a logged-in")) ||
+			    Msg.Contains(TEXT("not logged in")))
 			{
-				const FString Msg = Err.ToString();
-				if (Msg.Contains(TEXT("No user is logged in")) ||
-				    Msg.Contains(TEXT("unable to establish a logged-in")) ||
-				    Msg.Contains(TEXT("not logged in")))
-				{
-					ErrorText = Err;
-					break;
-				}
+				ErrorText = Err;
+				break;
 			}
 		}
 

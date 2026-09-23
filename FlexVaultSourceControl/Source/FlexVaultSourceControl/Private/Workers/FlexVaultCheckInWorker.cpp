@@ -42,18 +42,11 @@ bool FFlexVaultCheckInWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 	if (!EnsureFlexVaultLoggedIn(InCommand.BinaryPath, InCommand.WorkspacePath, InCommand.ResultInfo, &InCommand))
 	{
 		UE_LOG(LogFlexVault, Error, TEXT("FlexVault SCM: Check-in blocked: unable to establish a logged-in FlexVault user."));
-		FText ErrorMessage;
-		if (InCommand.ResultInfo.ErrorMessages.Num() > 0)
+		if (InCommand.ResultInfo.ErrorMessages.Num() == 0)
 		{
-			ErrorMessage = InCommand.ResultInfo.ErrorMessages.Last();
+			InCommand.ResultInfo.ErrorMessages.Add(LOCTEXT("CheckInBlockedNoUser",
+				"FlexVault: Check-in blocked: no user is logged in for this workspace. Run 'fxv login <username>' in a terminal before publishing."));
 		}
-		else
-		{
-			ErrorMessage = LOCTEXT("CheckInBlockedNoUser",
-				"FlexVault: Check-in blocked: no user is logged in for this workspace. Run 'fxv login <username>' in a terminal before publishing.");
-			InCommand.ResultInfo.ErrorMessages.Add(ErrorMessage);
-		}
-		Operation->SetErrorText(ErrorMessage);
 		return false;
 	}
 
@@ -69,9 +62,7 @@ bool FFlexVaultCheckInWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 	if (!bSnapshotOk)
 	{
 		UE_LOG(LogFlexVault, Error, TEXT("FlexVault SCM: Snapshot phase failed during check-in."));
-		FText Err = LOCTEXT("SnapshotFailure", "FlexVault: Snapshot phase failed during check-in.");
-		InCommand.ResultInfo.ErrorMessages.Add(Err);
-		Operation->SetErrorText(Err);
+		InCommand.ResultInfo.ErrorMessages.Add(LOCTEXT("SnapshotFailure", "FlexVault: Snapshot phase failed during check-in."));
 		return false;
 	}
 
@@ -88,17 +79,10 @@ bool FFlexVaultCheckInWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 	if (!bPublishOk)
 	{
 		UE_LOG(LogFlexVault, Error, TEXT("FlexVault SCM: Publish phase failed during check-in."));
-		FText Err;
-		if (InCommand.ResultInfo.ErrorMessages.Num() > 0)
+		if (InCommand.ResultInfo.ErrorMessages.Num() == 0)
 		{
-			Err = InCommand.ResultInfo.ErrorMessages.Last();
+			InCommand.ResultInfo.ErrorMessages.Add(LOCTEXT("PublishFailure", "FlexVault: Publish phase failed during check-in."));
 		}
-		else
-		{
-			Err = LOCTEXT("PublishFailure", "FlexVault: Publish phase failed during check-in.");
-		}
-		InCommand.ResultInfo.ErrorMessages.Add(Err);
-		Operation->SetErrorText(Err);
 		return false;
 	}
 
