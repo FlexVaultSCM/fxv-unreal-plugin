@@ -1335,4 +1335,64 @@ bool FFlexVaultCheckInLoginFailureTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+// ── Test 30: Integration Registration Helper & Args ───────────────────────────
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultIntegrationRegisterTest, "FlexVault.SourceControl.IntegrationRegister", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FFlexVaultIntegrationRegisterTest::RunTest(const FString& Parameters)
+{
+	// 1. Verify FlexVaultCliCompatibility version strings
+	TestEqual(TEXT("MinVersion string matches expected"), FlexVaultCliCompatibility::GetMinVersionString(), TEXT("0.11.0"));
+	TestEqual(TEXT("MaxVersion string matches expected"), FlexVaultCliCompatibility::GetMaxVersionString(), TEXT("0.12.0"));
+
+	// 2. Verify BuildFlexVaultIntegrationRegisterArgs with full options
+	FFlexVaultIntegrationRegisterOptions FullOptions;
+	FullOptions.Workspace = TEXT("C:/Test/Workspace");
+	FullOptions.PluginVersion = TEXT("0.5.2");
+	FullOptions.MinVersion = FlexVaultCliCompatibility::GetMinVersionString();
+	FullOptions.MaxVersion = FlexVaultCliCompatibility::GetMaxVersionString();
+
+	TArray<FString> FullArgs = BuildFlexVaultIntegrationRegisterArgs(FullOptions);
+	const TArray<FString> ExpectedFullArgs = {
+		TEXT("integration"),
+		TEXT("register"),
+		TEXT("--name"),
+		TEXT("unreal"),
+		TEXT("--plugin-version"),
+		TEXT("0.5.2"),
+		TEXT("--min"),
+		TEXT("0.11.0"),
+		TEXT("--max-version"),
+		TEXT("0.12.0"),
+		TEXT("--workspace"),
+		TEXT("C:/Test/Workspace"),
+		TEXT("--unattended"),
+		TEXT("--no-color")
+	};
+	TestEqual(TEXT("Full registration args count matches"), FullArgs.Num(), ExpectedFullArgs.Num());
+	for (int32 Index = 0; Index < FMath::Min(FullArgs.Num(), ExpectedFullArgs.Num()); ++Index)
+	{
+		TestEqual(FString::Printf(TEXT("FullArg[%d] matches"), Index), FullArgs[Index], ExpectedFullArgs[Index]);
+	}
+
+	// 3. Verify BuildFlexVaultIntegrationRegisterArgs omitting Unknown / empty plugin version
+	FFlexVaultIntegrationRegisterOptions UnknownPluginOptions = FullOptions;
+	UnknownPluginOptions.PluginVersion = TEXT("Unknown");
+	TArray<FString> UnknownPluginArgs = BuildFlexVaultIntegrationRegisterArgs(UnknownPluginOptions);
+	TestFalse(TEXT("Args do not contain --plugin-version when plugin version is Unknown"), UnknownPluginArgs.Contains(TEXT("--plugin-version")));
+
+	FFlexVaultIntegrationRegisterOptions EmptyPluginOptions = FullOptions;
+	EmptyPluginOptions.PluginVersion = TEXT("");
+	TArray<FString> EmptyPluginArgs = BuildFlexVaultIntegrationRegisterArgs(EmptyPluginOptions);
+	TestFalse(TEXT("Args do not contain --plugin-version when plugin version is empty"), EmptyPluginArgs.Contains(TEXT("--plugin-version")));
+
+	// 4. Verify RunFlexVaultIntegrationRegister handles failure gracefully without throwing
+	FSourceControlResultInfo RegResultInfo;
+	AddExpectedErrorPlain(TEXT("Failed to launch SCM executable: invalid_binary_stub_registration"), EAutomationExpectedErrorFlags::Contains, 1);
+	const bool bSuccess = RunFlexVaultIntegrationRegister(TEXT("invalid_binary_stub_registration"), TEXT("C:/Test/Workspace"), FullOptions, RegResultInfo);
+	TestFalse(TEXT("RunFlexVaultIntegrationRegister returns false for invalid binary"), bSuccess);
+
+	return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS
+

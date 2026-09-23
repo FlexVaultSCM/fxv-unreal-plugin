@@ -89,6 +89,17 @@ bool FFlexVaultConnectWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 		));
 		UE_LOG(LogFlexVault, Display, TEXT("FlexVault SCM: Connected successfully to repository (Workspace: %s, Plugin v%s, CLI v%s)"),
 			*InCommand.WorkspacePath, *PluginVersion, *CliVersion);
+
+		// Register this plugin instance with fxv's integration registry. Best-effort:
+		// failures are logged and silently dropped so connection is never blocked.
+		FFlexVaultIntegrationRegisterOptions RegOptions;
+		RegOptions.Workspace = InCommand.WorkspacePath;
+		RegOptions.PluginVersion = PluginVersion;
+		RegOptions.MinVersion = FlexVaultCliCompatibility::GetMinVersionString();
+		RegOptions.MaxVersion = FlexVaultCliCompatibility::GetMaxVersionString();
+
+		FSourceControlResultInfo RegResultInfo;
+		RunFlexVaultIntegrationRegister(InCommand.BinaryPath, InCommand.WorkspacePath, RegOptions, RegResultInfo, &InCommand);
 	}
 	else if (InCommand.ResultInfo.ErrorMessages.Num() > 0)
 	{

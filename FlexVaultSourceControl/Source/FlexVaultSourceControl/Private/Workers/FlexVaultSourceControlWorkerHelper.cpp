@@ -417,18 +417,74 @@ bool RunFlexVaultCatCommand(
 	return true;
 }
 
-namespace FlexVaultCliCompatibility
+TArray<FString> BuildFlexVaultIntegrationRegisterArgs(const FFlexVaultIntegrationRegisterOptions& InOptions)
 {
-	// fxv-core's VERSIONING.md "Downstream pinning policy": pin a compatible RANGE of fxv-core versions
-	// ([Min, Max), Max exclusive), not a single version, and re-pin deliberately once a newer release has
-	// been reviewed/verified compatible. fxv-core is pre-1.0, where a MINOR bump (not just MAJOR) can carry
-	// a breaking change - a plain feature release also bumps MINOR, so the version number alone can't tell
-	// the two apart. Until fxv-core reaches 1.0, treat every MINOR as a potential break and only widen Max
-	// after checking fxv-core/CHANGELOG.md for a "Breaking Changes" entry between the old and new Max.
-	//
-	// See fxv-core/CHANGELOG.md for the "Breaking Changes" entries that justify this range.
-	constexpr int32 MinMajor = 0, MinMinor = 11, MinPatch = 0; // >= 0.11.0
-	constexpr int32 MaxMajor = 0, MaxMinor = 12, MaxPatch = 0; // < 0.12.0
+	TArray<FString> Args;
+	Args.Add(TEXT("integration"));
+	Args.Add(TEXT("register"));
+	Args.Add(TEXT("--name"));
+	Args.Add(TEXT("unreal"));
+	if (!InOptions.PluginVersion.IsEmpty() && InOptions.PluginVersion != TEXT("Unknown"))
+	{
+		Args.Add(TEXT("--plugin-version"));
+		Args.Add(InOptions.PluginVersion);
+	}
+	if (!InOptions.MinVersion.IsEmpty())
+	{
+		Args.Add(TEXT("--min"));
+		Args.Add(InOptions.MinVersion);
+	}
+	if (!InOptions.MaxVersion.IsEmpty())
+	{
+		Args.Add(TEXT("--max-version"));
+		Args.Add(InOptions.MaxVersion);
+	}
+	Args.Add(TEXT("--workspace"));
+	Args.Add(InOptions.Workspace);
+	Args.Add(TEXT("--unattended"));
+	Args.Add(TEXT("--no-color"));
+	return Args;
+}
+
+bool RunFlexVaultIntegrationRegister(
+	const FString& InBinaryPath,
+	const FString& InWorkspacePath,
+	const FFlexVaultIntegrationRegisterOptions& InOptions,
+	FSourceControlResultInfo& OutResultInfo,
+	const FFlexVaultSourceControlCommand* InCancelCommand
+)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(RunFlexVaultIntegrationRegister);
+
+	const TArray<FString> Args = BuildFlexVaultIntegrationRegisterArgs(InOptions);
+	TArray<FString> OutputLines;
+
+	// Registration is best-effort and non-fatal: callers log failures rather than surfacing them to the user.
+	const bool bSucceeded = RunFlexVaultCommand(
+		InBinaryPath,
+		InWorkspacePath,
+		Args,
+		OutputLines,
+		OutResultInfo,
+		/*bIgnoreError=*/true,
+		InCancelCommand
+	);
+
+	if (bSucceeded)
+	{
+		UE_LOG(LogFlexVault, Log, TEXT("Registered unreal integration for workspace %s."), *InOptions.Workspace);
+	}
+	else
+	{
+		FString ErrorMessage;
+		if (!ParseFlexVaultErrorMessage(OutputLines, ErrorMessage))
+		{
+			ErrorMessage = OutputLines.Num() > 0 ? FString::Join(OutputLines, TEXT(" ")) : TEXT("Unknown error");
+		}
+		UE_LOG(LogFlexVault, Warning, TEXT("Integration registration failed (non-fatal): %s"), *ErrorMessage);
+	}
+
+	return bSucceeded;
 }
 
 namespace

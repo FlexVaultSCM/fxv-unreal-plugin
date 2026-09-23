@@ -100,10 +100,62 @@ bool RunFlexVaultCatCommand(
 	FSourceControlResultInfo& OutResultInfo
 );
 
+namespace FlexVaultCliCompatibility
+{
+	// See fxv-core/CHANGELOG.md for the "Breaking Changes" entries that justify this range.
+	constexpr int32 MinMajor = 0, MinMinor = 11, MinPatch = 0; // >= 0.11.0
+	constexpr int32 MaxMajor = 0, MaxMinor = 12, MaxPatch = 0; // < 0.12.0
+
+	inline FString GetMinVersionString()
+	{
+		return FString::Printf(TEXT("%d.%d.%d"), MinMajor, MinMinor, MinPatch);
+	}
+
+	inline FString GetMaxVersionString()
+	{
+		return FString::Printf(TEXT("%d.%d.%d"), MaxMajor, MaxMinor, MaxPatch);
+	}
+}
+
+/**
+ * Options for registering this plugin with fxv's integration registry.
+ */
+struct FFlexVaultIntegrationRegisterOptions
+{
+	/** Workspace path to associate the registration with. */
+	FString Workspace;
+
+	/** Version of the plugin (e.g. "0.5.2"). */
+	FString PluginVersion;
+
+	/** Minimum compatible fxv version, inclusive (e.g. "0.11.0"). */
+	FString MinVersion;
+
+	/** Maximum compatible fxv version, exclusive (e.g. "0.12.0"). */
+	FString MaxVersion;
+};
+
+/**
+ * Builds the CLI args for 'fxv integration register --name unreal ...', shared between
+ * connection registration and tests.
+ */
+TArray<FString> BuildFlexVaultIntegrationRegisterArgs(const FFlexVaultIntegrationRegisterOptions& InOptions);
+
+/**
+ * Registers this plugin instance with fxv's integration registry for the given workspace.
+ * Best-effort: failures are logged and never surfaced to the user or treated as fatal connection errors.
+ */
+bool RunFlexVaultIntegrationRegister(
+	const FString& InBinaryPath,
+	const FString& InWorkspacePath,
+	const FFlexVaultIntegrationRegisterOptions& InOptions,
+	FSourceControlResultInfo& OutResultInfo,
+	const FFlexVaultSourceControlCommand* InCancelCommand = nullptr
+);
+
 /**
  * Verifies that the FlexVault CLI version in the JSON envelope falls within this plugin's pinned
- * compatible range (see FlexVaultCliCompatibility in FlexVaultSourceControlWorkerHelper.cpp for the
- * current [Min, Max) bounds and the policy for widening them).
+ * compatible range (see FlexVaultCliCompatibility for the current [Min, Max) bounds and the policy for widening them).
  */
 bool CheckFlexVaultVersion(
 	const TSharedPtr<class FJsonObject>& InEnvelope,
