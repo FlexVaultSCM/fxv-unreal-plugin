@@ -1082,6 +1082,14 @@ bool FFlexVaultCheckVersionTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("Extracted version matches"), ExtractedVersion, TEXT("0.12.0"));
 		TestEqual(TEXT("No errors on success"), ResultInfo.ErrorMessages.Num(), 0);
 	}
+	{
+		FSourceControlResultInfo ResultInfo;
+		FString ExtractedVersion;
+		TSharedPtr<FJsonObject> Env = MakeEnvelope(TEXT("0.12.5"));
+		TestTrue(TEXT("0.12.5 is compatible"), CheckFlexVaultVersion(Env, ResultInfo, &ExtractedVersion));
+		TestEqual(TEXT("Extracted version matches"), ExtractedVersion, TEXT("0.12.5"));
+		TestEqual(TEXT("No errors on success"), ResultInfo.ErrorMessages.Num(), 0);
+	}
 
 	// 2. Incompatible lower version (< 0.11.0)
 	{
