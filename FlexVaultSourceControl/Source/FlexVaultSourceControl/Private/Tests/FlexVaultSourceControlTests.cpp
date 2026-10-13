@@ -1488,6 +1488,19 @@ bool FFlexVaultFetchTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("Repaired file path matches"), FetchResult.RepairedFiles[0], TEXT("Content/Corrupt.uasset"));
 	}
 
+	// 5. Verify ParseFlexVaultFetch fails gracefully on malformed JSON
+	const TArray<FString> MalformedJson = { TEXT("{ corrupt json string ") };
+	FFlexVaultFetchResult MalformedResult;
+	FSourceControlResultInfo MalformedInfo;
+	TestFalse(TEXT("ParseFlexVaultFetch fails on malformed JSON"), ParseFlexVaultFetch(MalformedJson, MalformedResult, MalformedInfo));
+	TestTrue(TEXT("Malformed JSON produces error message"), MalformedInfo.ErrorMessages.Num() > 0);
+
+	// 6. Verify ParseFlexVaultFetch fails gracefully on missing payload
+	const TArray<FString> NoPayloadJson = { TEXT("{ \"program\": {}, \"message\": { \"kind\": \"error\" } }") };
+	FFlexVaultFetchResult NoPayloadResult;
+	FSourceControlResultInfo NoPayloadInfo;
+	TestFalse(TEXT("ParseFlexVaultFetch fails on missing payload"), ParseFlexVaultFetch(NoPayloadJson, NoPayloadResult, NoPayloadInfo));
+
 	return true;
 }
 

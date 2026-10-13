@@ -344,6 +344,7 @@ bool RunFlexVaultFetch(
 	FFlexVaultFetchResult& OutFetchResult,
 	FSourceControlResultInfo& OutResultInfo,
 	bool bRepair = false,
-	const FFlexVaultSourceControlCommand* InCancelCommand = nullptr
+	const FFlexVaultSourceControlCommand* InCancelCommand = nullptr,
+	double InTimeoutSeconds = 60.0
 );
 

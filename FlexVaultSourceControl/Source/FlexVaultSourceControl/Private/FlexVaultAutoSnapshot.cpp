@@ -235,9 +235,9 @@ void FFlexVaultAutoSnapshot::CheckPeriodicSnapshot()
 		return;
 	}
 
-	if (bPeriodicStatusScanInFlight)
+	if (bPeriodicStatusScanInFlight || bFetchInFlight)
 	{
-		// Previous rescan hasn't completed yet. Don't pile up redundant `fxv status` calls.
+		// Previous rescan or fetch hasn't completed yet. Don't pile up redundant calls.
 		return;
 	}
 
@@ -296,7 +296,12 @@ void FFlexVaultAutoSnapshot::CheckPeriodicFetch()
 		return;
 	}
 
-	if (bFetchInFlight)
+	if (bFetchInFlight || bPeriodicStatusScanInFlight)
+	{
+		return;
+	}
+
+	if (Provider && Provider->HasOperationInFlight(FlexVaultSourceControlConstants::UpdateStatus))
 	{
 		return;
 	}
@@ -305,20 +310,21 @@ void FFlexVaultAutoSnapshot::CheckPeriodicFetch()
 	LastFetchTime = Now;
 
 	const FString BinaryPath = Settings ? Settings->GetEffectiveBinaryPath() : TEXT("fxv");
-	const FString WorkspacePath = Provider ? Provider->GetWorkspacePath() : TEXT("");
+	const FString WorkspacePath = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
+	const double TimeoutSeconds = Settings ? Settings->CommandTimeoutSeconds : 60.0;
 
-	Async(EAsyncExecution::ThreadPool, [BinaryPath, WorkspacePath]()
+	Async(EAsyncExecution::ThreadPool, [BinaryPath, WorkspacePath, TimeoutSeconds]()
 	{
 		FFlexVaultFetchResult FetchResult;
 		FSourceControlResultInfo ResultInfo;
-		bool bSuccess = RunFlexVaultFetch(BinaryPath, WorkspacePath, FetchResult, ResultInfo, false);
+		bool bSuccess = RunFlexVaultFetch(BinaryPath, WorkspacePath, FetchResult, ResultInfo, false, nullptr, TimeoutSeconds);
 
-		Async(EAsyncExecution::TaskGraphMainThread, [bSuccess, FetchResult]()
+		AsyncTask(ENamedThreads::GameThread, [bSuccess, FetchResult]()
 		{
 			bFetchInFlight = false;
 			if (bSuccess && FetchResult.BytesDownloaded > 0)
 			{
-				if (Provider && Provider->IsAvailable())
+				if (Provider && Provider->IsAvailable() && !Provider->HasOperationInFlight(FlexVaultSourceControlConstants::UpdateStatus))
 				{
 					const TSharedRef<FUpdateStatus, ESPMode::ThreadSafe> UpdateStatusOp = ISourceControlOperation::Create<FUpdateStatus>();
 					Provider->Execute(UpdateStatusOp, EConcurrency::Asynchronous);

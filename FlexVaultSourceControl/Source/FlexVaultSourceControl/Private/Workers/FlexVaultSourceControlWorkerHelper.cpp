@@ -1322,28 +1322,21 @@ bool ParseFlexVaultFetch(
 		return false;
 	}
 
-	const TSharedPtr<FJsonObject>* MessageObj = nullptr;
-	if (!Envelope->TryGetObjectField(TEXT("message"), MessageObj) || !MessageObj || !MessageObj->IsValid())
-	{
-		OutResultInfo.ErrorMessages.Add(LOCTEXT("FetchJsonNoMessage", "Missing message object in FlexVault fetch response."));
-		return false;
-	}
-
-	const TSharedPtr<FJsonObject>* PayloadObj = nullptr;
-	if (!(*MessageObj)->TryGetObjectField(TEXT("payload"), PayloadObj) || !PayloadObj || !PayloadObj->IsValid())
+	TSharedPtr<FJsonObject> PayloadObj;
+	if (!TryGetFlexVaultEnvelopePayload(Envelope, PayloadObj) || !PayloadObj.IsValid())
 	{
 		OutResultInfo.ErrorMessages.Add(LOCTEXT("FetchJsonNoPayload", "Missing payload object in FlexVault fetch response."));
 		return false;
 	}
 
 	int64 Bytes = 0;
-	if ((*PayloadObj)->TryGetNumberField(TEXT("bytes_downloaded"), Bytes))
+	if (PayloadObj->TryGetNumberField(TEXT("bytes_downloaded"), Bytes))
 	{
 		OutFetchResult.BytesDownloaded = Bytes;
 	}
 
 	const TArray<TSharedPtr<FJsonValue>>* RepairedArray = nullptr;
-	if ((*PayloadObj)->TryGetArrayField(TEXT("repaired_files"), RepairedArray) && RepairedArray)
+	if (PayloadObj->TryGetArrayField(TEXT("repaired_files"), RepairedArray) && RepairedArray)
 	{
 		for (const TSharedPtr<FJsonValue>& Val : *RepairedArray)
 		{
@@ -1363,7 +1356,8 @@ bool RunFlexVaultFetch(
 	FFlexVaultFetchResult& OutFetchResult,
 	FSourceControlResultInfo& OutResultInfo,
 	bool bRepair,
-	const FFlexVaultSourceControlCommand* InCancelCommand
+	const FFlexVaultSourceControlCommand* InCancelCommand,
+	double InTimeoutSeconds
 )
 {
 	TArray<FString> Args = BuildFlexVaultFetchArgs(bRepair);
@@ -1375,7 +1369,8 @@ bool RunFlexVaultFetch(
 		OutputLines,
 		OutResultInfo,
 		false,
-		InCancelCommand
+		InCancelCommand,
+		InTimeoutSeconds
 	);
 
 	if (!bSuccess)
