@@ -39,6 +39,7 @@ private:
 
 	static void FlushReimportBatchIfSettled();
 	static void CheckPeriodicSnapshot();
+	static void CheckPeriodicFetch();
 	static void OnPeriodicStatusUpdated(const FSourceControlOperationRef& Operation, ECommandResult::Type Result);
 	static void CompactStaleWorldEntries();
 	static FString BuildPeriodicDescription(const TArray<FSourceControlStateRef>& PendingStates);
@@ -75,6 +76,8 @@ private:
 	static TMap<TWeakObjectPtr<UWorld>, int32> ActorCountByWorld;
 	static double LastSnapshotTime;
 	static bool bPeriodicStatusScanInFlight;
+	static double LastFetchTime;
+	static bool bFetchInFlight;
 
 	static int32 PendingReimportCount;
 	static double LastReimportEventTime;

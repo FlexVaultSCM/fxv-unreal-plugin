@@ -27,6 +27,8 @@ bool FFlexVaultAutoSnapshot::bEditorHooksRegistered = false;
 TMap<TWeakObjectPtr<UWorld>, int32> FFlexVaultAutoSnapshot::ActorCountByWorld;
 double FFlexVaultAutoSnapshot::LastSnapshotTime = -1.0;
 bool FFlexVaultAutoSnapshot::bPeriodicStatusScanInFlight = false;
+double FFlexVaultAutoSnapshot::LastFetchTime = -1.0;
+bool FFlexVaultAutoSnapshot::bFetchInFlight = false;
 
 int32 FFlexVaultAutoSnapshot::PendingReimportCount = 0;
 double FFlexVaultAutoSnapshot::LastReimportEventTime = -1.0;
@@ -68,6 +70,7 @@ void FFlexVaultAutoSnapshot::OnPostEngineInit()
 	// Counts the periodic interval from registration time so a fresh session with old pending
 	// changes doesn't fire a snapshot on the first tick.
 	LastSnapshotTime = FPlatformTime::Seconds();
+	LastFetchTime = FPlatformTime::Seconds();
 }
 
 void FFlexVaultAutoSnapshot::Unregister()
@@ -95,6 +98,7 @@ void FFlexVaultAutoSnapshot::Unregister()
 	PendingReimportCount = 0;
 	LastReimportEventTime = -1.0;
 	bPeriodicStatusScanInFlight = false;
+	bFetchInFlight = false;
 	Provider = nullptr;
 
 	bSnapshotInFlight = false;
@@ -184,6 +188,7 @@ bool FFlexVaultAutoSnapshot::Tick(float DeltaTime)
 	{
 		FlushReimportBatchIfSettled();
 		CheckPeriodicSnapshot();
+		CheckPeriodicFetch();
 		CompactStaleWorldEntries();
 	}
 
@@ -273,6 +278,54 @@ void FFlexVaultAutoSnapshot::OnPeriodicStatusUpdated(const FSourceControlOperati
 	}
 
 	TriggerSnapshotIfWarranted(BuildPeriodicDescription(PendingStates));
+}
+
+void FFlexVaultAutoSnapshot::CheckPeriodicFetch()
+{
+	const UFlexVaultSourceControlDeveloperSettings* Settings = GetDefault<UFlexVaultSourceControlDeveloperSettings>();
+	const int32 PeriodSeconds = Settings ? Settings->FetchPeriodSeconds : 0;
+	if (PeriodSeconds <= 0)
+	{
+		// Periodic fetch disabled.
+		return;
+	}
+
+	const double Now = FPlatformTime::Seconds();
+	if (LastFetchTime >= 0.0 && Now - LastFetchTime < PeriodSeconds)
+	{
+		return;
+	}
+
+	if (bFetchInFlight)
+	{
+		return;
+	}
+
+	bFetchInFlight = true;
+	LastFetchTime = Now;
+
+	const FString BinaryPath = Settings ? Settings->GetEffectiveBinaryPath() : TEXT("fxv");
+	const FString WorkspacePath = Provider ? Provider->GetWorkspacePath() : TEXT("");
+
+	Async(EAsyncExecution::ThreadPool, [BinaryPath, WorkspacePath]()
+	{
+		FFlexVaultFetchResult FetchResult;
+		FSourceControlResultInfo ResultInfo;
+		bool bSuccess = RunFlexVaultFetch(BinaryPath, WorkspacePath, FetchResult, ResultInfo, false);
+
+		Async(EAsyncExecution::TaskGraphMainThread, [bSuccess, FetchResult]()
+		{
+			bFetchInFlight = false;
+			if (bSuccess && FetchResult.BytesDownloaded > 0)
+			{
+				if (Provider && Provider->IsAvailable())
+				{
+					const TSharedRef<FUpdateStatus, ESPMode::ThreadSafe> UpdateStatusOp = ISourceControlOperation::Create<FUpdateStatus>();
+					Provider->Execute(UpdateStatusOp, EConcurrency::Asynchronous);
+				}
+			}
+		});
+	});
 }
 
 void FFlexVaultAutoSnapshot::CompactStaleWorldEntries()

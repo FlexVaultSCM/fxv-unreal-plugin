@@ -22,7 +22,7 @@ For new installations from source:
 
 ## Configuration
 
-Optional settings can be configured in **Edit > Project Settings > Plugins > FlexVault Source Control** to customize the `fxv` binary location, conflict resolution preferences, command timeouts, and automatic snapshot behavior.
+Optional settings can be configured in **Edit > Project Settings > Plugins > FlexVault Source Control** to customize the `fxv` binary location, conflict resolution preferences, command timeouts, periodic fetch interval, and automatic snapshot behavior.
 
 ## Features
 

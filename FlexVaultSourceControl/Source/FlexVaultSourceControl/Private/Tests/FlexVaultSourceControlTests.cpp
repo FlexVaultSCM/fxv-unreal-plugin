@@ -1419,5 +1419,77 @@ bool FFlexVaultIntegrationRegisterTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+// ── Test 31: Fetch Command Args & Payload Parsing ────────────────────────────
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultFetchTest, "FlexVault.SourceControl.Fetch", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FFlexVaultFetchTest::RunTest(const FString& Parameters)
+{
+	// 1. Verify default developer settings
+	const UFlexVaultSourceControlDeveloperSettings* Settings = GetDefault<UFlexVaultSourceControlDeveloperSettings>();
+	if (Settings)
+	{
+		TestEqual(TEXT("Default FetchPeriodSeconds is 120"), Settings->FetchPeriodSeconds, 120);
+	}
+
+	// 2. Verify BuildFlexVaultFetchArgs without repair
+	TArray<FString> FetchArgs = BuildFlexVaultFetchArgs(false);
+	const TArray<FString> ExpectedFetchArgs = {
+		TEXT("fetch"),
+		TEXT("--format"),
+		TEXT("json"),
+		TEXT("--unattended"),
+		TEXT("--no-color")
+	};
+	TestEqual(TEXT("Fetch args count matches"), FetchArgs.Num(), ExpectedFetchArgs.Num());
+	for (int32 Index = 0; Index < FMath::Min(FetchArgs.Num(), ExpectedFetchArgs.Num()); ++Index)
+	{
+		TestEqual(FString::Printf(TEXT("FetchArg[%d] matches"), Index), FetchArgs[Index], ExpectedFetchArgs[Index]);
+	}
+
+	// 3. Verify BuildFlexVaultFetchArgs with repair
+	TArray<FString> FetchRepairArgs = BuildFlexVaultFetchArgs(true);
+	const TArray<FString> ExpectedRepairArgs = {
+		TEXT("fetch"),
+		TEXT("--repair"),
+		TEXT("--format"),
+		TEXT("json"),
+		TEXT("--unattended"),
+		TEXT("--no-color")
+	};
+	TestEqual(TEXT("Fetch repair args count matches"), FetchRepairArgs.Num(), ExpectedRepairArgs.Num());
+	for (int32 Index = 0; Index < FMath::Min(FetchRepairArgs.Num(), ExpectedRepairArgs.Num()); ++Index)
+	{
+		TestEqual(FString::Printf(TEXT("FetchRepairArg[%d] matches"), Index), FetchRepairArgs[Index], ExpectedRepairArgs[Index]);
+	}
+
+	// 4. Verify ParseFlexVaultFetch parses valid JSON output
+	const TArray<FString> SampleJsonLines = {
+		TEXT("{"),
+		TEXT("  \"program\": { \"name\": \"fxv\", \"version\": \"0.12.0\" },"),
+		TEXT("  \"message\": {"),
+		TEXT("    \"kind\": \"fetch\","),
+		TEXT("    \"version\": \"1.0\","),
+		TEXT("    \"payload\": {"),
+		TEXT("      \"bytes_downloaded\": 1048576,"),
+		TEXT("      \"repaired_files\": [\"Content/Corrupt.uasset\"]"),
+		TEXT("    }"),
+		TEXT("  }"),
+		TEXT("}")
+	};
+
+	FFlexVaultFetchResult FetchResult;
+	FSourceControlResultInfo ResultInfo;
+	const bool bParsed = ParseFlexVaultFetch(SampleJsonLines, FetchResult, ResultInfo);
+	TestTrue(TEXT("ParseFlexVaultFetch succeeded"), bParsed);
+	TestEqual(TEXT("BytesDownloaded matches"), FetchResult.BytesDownloaded, 1048576);
+	TestEqual(TEXT("RepairedFiles count matches"), FetchResult.RepairedFiles.Num(), 1);
+	if (FetchResult.RepairedFiles.Num() > 0)
+	{
+		TestEqual(TEXT("Repaired file path matches"), FetchResult.RepairedFiles[0], TEXT("Content/Corrupt.uasset"));
+	}
+
+	return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS
 

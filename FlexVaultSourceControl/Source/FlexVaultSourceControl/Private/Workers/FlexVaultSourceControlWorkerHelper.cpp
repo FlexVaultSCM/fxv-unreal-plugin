@@ -1290,4 +1290,100 @@ bool IsFlexVaultFormatIncompatibilityError(const FString& InErrorMessage)
 	       InErrorMessage.Contains(TEXT("cannot be upgraded and must be recreated"), ESearchCase::IgnoreCase);
 }
 
+TArray<FString> BuildFlexVaultFetchArgs(bool bRepair)
+{
+	TArray<FString> Args;
+	Args.Add(TEXT("fetch"));
+	if (bRepair)
+	{
+		Args.Add(TEXT("--repair"));
+	}
+	Args.Add(TEXT("--format"));
+	Args.Add(TEXT("json"));
+	Args.Add(TEXT("--unattended"));
+	Args.Add(TEXT("--no-color"));
+	return Args;
+}
+
+bool ParseFlexVaultFetch(
+	const TArray<FString>& InFetchOutputLines,
+	FFlexVaultFetchResult& OutFetchResult,
+	FSourceControlResultInfo& OutResultInfo
+)
+{
+	OutFetchResult = FFlexVaultFetchResult();
+	FString CombinedJson = FString::Join(InFetchOutputLines, TEXT("\n"));
+
+	TSharedPtr<FJsonObject> Envelope;
+	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(CombinedJson);
+	if (!FJsonSerializer::Deserialize(Reader, Envelope) || !Envelope.IsValid())
+	{
+		OutResultInfo.ErrorMessages.Add(LOCTEXT("FetchJsonMalformed", "Failed to parse FlexVault fetch JSON output."));
+		return false;
+	}
+
+	const TSharedPtr<FJsonObject>* MessageObj = nullptr;
+	if (!Envelope->TryGetObjectField(TEXT("message"), MessageObj) || !MessageObj || !MessageObj->IsValid())
+	{
+		OutResultInfo.ErrorMessages.Add(LOCTEXT("FetchJsonNoMessage", "Missing message object in FlexVault fetch response."));
+		return false;
+	}
+
+	const TSharedPtr<FJsonObject>* PayloadObj = nullptr;
+	if (!(*MessageObj)->TryGetObjectField(TEXT("payload"), PayloadObj) || !PayloadObj || !PayloadObj->IsValid())
+	{
+		OutResultInfo.ErrorMessages.Add(LOCTEXT("FetchJsonNoPayload", "Missing payload object in FlexVault fetch response."));
+		return false;
+	}
+
+	int64 Bytes = 0;
+	if ((*PayloadObj)->TryGetNumberField(TEXT("bytes_downloaded"), Bytes))
+	{
+		OutFetchResult.BytesDownloaded = Bytes;
+	}
+
+	const TArray<TSharedPtr<FJsonValue>>* RepairedArray = nullptr;
+	if ((*PayloadObj)->TryGetArrayField(TEXT("repaired_files"), RepairedArray) && RepairedArray)
+	{
+		for (const TSharedPtr<FJsonValue>& Val : *RepairedArray)
+		{
+			if (Val.IsValid())
+			{
+				OutFetchResult.RepairedFiles.Add(Val->AsString());
+			}
+		}
+	}
+
+	return true;
+}
+
+bool RunFlexVaultFetch(
+	const FString& InBinaryPath,
+	const FString& InWorkspacePath,
+	FFlexVaultFetchResult& OutFetchResult,
+	FSourceControlResultInfo& OutResultInfo,
+	bool bRepair,
+	const FFlexVaultSourceControlCommand* InCancelCommand
+)
+{
+	TArray<FString> Args = BuildFlexVaultFetchArgs(bRepair);
+	TArray<FString> OutputLines;
+	bool bSuccess = RunFlexVaultCommand(
+		InBinaryPath,
+		InWorkspacePath,
+		Args,
+		OutputLines,
+		OutResultInfo,
+		false,
+		InCancelCommand
+	);
+
+	if (!bSuccess)
+	{
+		return false;
+	}
+
+	return ParseFlexVaultFetch(OutputLines, OutFetchResult, OutResultInfo);
+}
+
 #undef LOCTEXT_NAMESPACE

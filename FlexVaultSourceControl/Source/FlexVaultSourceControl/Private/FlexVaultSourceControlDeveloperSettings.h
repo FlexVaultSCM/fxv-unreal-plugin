@@ -49,4 +49,8 @@ public:
 	/** Minimum number of assets reimported in one batch before a bulk-reimport auto-snapshot fires. 0 disables this trigger. */
 	UPROPERTY(Config, EditAnywhere, Category="FlexVault", meta=(DisplayName="Auto-Snapshot Bulk Reimport Threshold", ClampMin="0", ToolTip="A batch of reimported assets only triggers an auto-snapshot if it's at least this large. Set to 0 to disable this trigger."))
 	int32 AutoSnapshotBulkReimportThreshold;
+
+	/** Seconds between periodic fxv fetch attempts to pull remote metadata. 0 disables. */
+	UPROPERTY(Config, EditAnywhere, Category="FlexVault", meta=(DisplayName="Fetch Period (Seconds)", ClampMin="0", ToolTip="Remote metadata is polled periodically via fxv fetch. Set to 0 to disable."))
+	int32 FetchPeriodSeconds;
 };

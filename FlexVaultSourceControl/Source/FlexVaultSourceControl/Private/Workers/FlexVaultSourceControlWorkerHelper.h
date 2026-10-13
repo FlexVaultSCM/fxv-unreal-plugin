@@ -312,3 +312,38 @@ bool ParseFlexVaultErrorMessage(
  */
 bool IsFlexVaultFormatIncompatibilityError(const FString& InErrorMessage);
 
+/**
+ * Result data from a successful 'fxv fetch' command.
+ */
+struct FFlexVaultFetchResult
+{
+	int64 BytesDownloaded = 0;
+	TArray<FString> RepairedFiles;
+};
+
+/**
+ * Builds the CLI args for 'fxv fetch [--repair]', shared between runner and tests.
+ */
+TArray<FString> BuildFlexVaultFetchArgs(bool bRepair = false);
+
+/**
+ * Parses the JSON output of 'fxv fetch --format json'.
+ */
+bool ParseFlexVaultFetch(
+	const TArray<FString>& InFetchOutputLines,
+	FFlexVaultFetchResult& OutFetchResult,
+	FSourceControlResultInfo& OutResultInfo
+);
+
+/**
+ * Runs 'fxv fetch [--repair] --format json' to pull remote metadata.
+ */
+bool RunFlexVaultFetch(
+	const FString& InBinaryPath,
+	const FString& InWorkspacePath,
+	FFlexVaultFetchResult& OutFetchResult,
+	FSourceControlResultInfo& OutResultInfo,
+	bool bRepair = false,
+	const FFlexVaultSourceControlCommand* InCancelCommand = nullptr
+);
+
