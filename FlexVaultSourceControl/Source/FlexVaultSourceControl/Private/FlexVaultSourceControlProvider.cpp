@@ -527,7 +527,6 @@ namespace
 		InInfo.FadeInDuration = 0.2f;
 		InInfo.FadeOutDuration = 0.5f;
 		InInfo.bUseSuccessFailIcons = true;
-		InInfo.DefaultState = SNotificationItem::CS_Fail;
 		InInfo.WidthOverride = 520.0f;
 	}
 

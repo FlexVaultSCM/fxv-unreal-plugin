@@ -1481,7 +1481,7 @@ bool FFlexVaultFetchTest::RunTest(const FString& Parameters)
 	FSourceControlResultInfo ResultInfo;
 	const bool bParsed = ParseFlexVaultFetch(SampleJsonLines, FetchResult, ResultInfo);
 	TestTrue(TEXT("ParseFlexVaultFetch succeeded"), bParsed);
-	TestEqual(TEXT("BytesDownloaded matches"), FetchResult.BytesDownloaded, 1048576);
+	TestEqual(TEXT("BytesDownloaded matches"), FetchResult.BytesDownloaded, (int64)1048576);
 	TestEqual(TEXT("RepairedFiles count matches"), FetchResult.RepairedFiles.Num(), 1);
 	if (FetchResult.RepairedFiles.Num() > 0)
 	{
