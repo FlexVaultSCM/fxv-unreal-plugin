@@ -146,7 +146,7 @@ bool FFlexVaultVersionCheckTest::RunTest(const FString& Parameters)
 	AddExpectedErrorPlain(TEXT("Invalid JSON envelope passed to version check"), EAutomationExpectedErrorFlags::Contains, 1);
 	TestFalse(TEXT("Null JSON envelope fails"), CheckFlexVaultVersion(nullptr, ResultInfo));
 
-	// 2. Compatible version (0.11.0), lower bound of the pinned [0.11.0, 0.12.0) range
+	// 2. Compatible version (0.11.0), lower bound of the pinned [0.11.0, 0.13.0) range
 	TSharedPtr<FJsonObject> ValidEnv = MakeShared<FJsonObject>();
 	TSharedPtr<FJsonObject> ValidProg = MakeShared<FJsonObject>();
 	ValidProg->SetStringField(TEXT("version"), TEXT("0.11.0"));
@@ -163,6 +163,15 @@ bool FFlexVaultVersionCheckTest::RunTest(const FString& Parameters)
 
 	ResultInfo.ErrorMessages.Empty();
 	TestTrue(TEXT("CLI version 0.11.1 is compatible"), CheckFlexVaultVersion(WidenedEnv, ResultInfo));
+
+	// 3b. Compatible version (0.12.0), within the pinned range
+	TSharedPtr<FJsonObject> Env012 = MakeShared<FJsonObject>();
+	TSharedPtr<FJsonObject> Prog012 = MakeShared<FJsonObject>();
+	Prog012->SetStringField(TEXT("version"), TEXT("0.12.0"));
+	Env012->SetObjectField(TEXT("program"), Prog012);
+
+	ResultInfo.ErrorMessages.Empty();
+	TestTrue(TEXT("CLI version 0.12.0 is compatible"), CheckFlexVaultVersion(Env012, ResultInfo));
 
 	// 4. Incompatible version (0.10.1), below the lower bound of the pinned range
 	TSharedPtr<FJsonObject> InvalidEnv = MakeShared<FJsonObject>();
@@ -1065,6 +1074,14 @@ bool FFlexVaultCheckVersionTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("Extracted version matches"), ExtractedVersion, TEXT("0.11.5"));
 		TestEqual(TEXT("No errors on success"), ResultInfo.ErrorMessages.Num(), 0);
 	}
+	{
+		FSourceControlResultInfo ResultInfo;
+		FString ExtractedVersion;
+		TSharedPtr<FJsonObject> Env = MakeEnvelope(TEXT("0.12.0"));
+		TestTrue(TEXT("0.12.0 is compatible"), CheckFlexVaultVersion(Env, ResultInfo, &ExtractedVersion));
+		TestEqual(TEXT("Extracted version matches"), ExtractedVersion, TEXT("0.12.0"));
+		TestEqual(TEXT("No errors on success"), ResultInfo.ErrorMessages.Num(), 0);
+	}
 
 	// 2. Incompatible lower version (< 0.11.0)
 	{
@@ -1084,13 +1101,13 @@ bool FFlexVaultCheckVersionTest::RunTest(const FString& Parameters)
 		TestTrue(TEXT("Error reported for incompatible version"), ResultInfo.ErrorMessages.Num() > 0);
 	}
 
-	// 3. Incompatible higher version (>= 0.12.0)
+	// 3. Incompatible higher version (>= 0.13.0)
 	{
 		FSourceControlResultInfo ResultInfo;
 		FString ExtractedVersion;
-		TSharedPtr<FJsonObject> Env = MakeEnvelope(TEXT("0.12.0"));
-		AddExpectedErrorPlain(TEXT("Incompatible FlexVault CLI version '0.12.0'"), EAutomationExpectedErrorFlags::Contains, 1);
-		TestFalse(TEXT("0.12.0 is incompatible (too high)"), CheckFlexVaultVersion(Env, ResultInfo, &ExtractedVersion));
+		TSharedPtr<FJsonObject> Env = MakeEnvelope(TEXT("0.13.0"));
+		AddExpectedErrorPlain(TEXT("Incompatible FlexVault CLI version '0.13.0'"), EAutomationExpectedErrorFlags::Contains, 1);
+		TestFalse(TEXT("0.13.0 is incompatible (too high)"), CheckFlexVaultVersion(Env, ResultInfo, &ExtractedVersion));
 		TestTrue(TEXT("Error reported for incompatible version"), ResultInfo.ErrorMessages.Num() > 0);
 	}
 
@@ -1342,7 +1359,7 @@ bool FFlexVaultIntegrationRegisterTest::RunTest(const FString& Parameters)
 {
 	// 1. Verify FlexVaultCliCompatibility version strings
 	TestEqual(TEXT("MinVersion string matches expected"), FlexVaultCliCompatibility::GetMinVersionString(), TEXT("0.11.0"));
-	TestEqual(TEXT("MaxVersion string matches expected"), FlexVaultCliCompatibility::GetMaxVersionString(), TEXT("0.12.0"));
+	TestEqual(TEXT("MaxVersion string matches expected"), FlexVaultCliCompatibility::GetMaxVersionString(), TEXT("0.13.0"));
 
 	// 2. Verify BuildFlexVaultIntegrationRegisterArgs with full options
 	FFlexVaultIntegrationRegisterOptions FullOptions;
@@ -1362,7 +1379,7 @@ bool FFlexVaultIntegrationRegisterTest::RunTest(const FString& Parameters)
 		TEXT("--min"),
 		TEXT("0.11.0"),
 		TEXT("--max-version"),
-		TEXT("0.12.0"),
+		TEXT("0.13.0"),
 		TEXT("--workspace"),
 		TEXT("C:/Test/Workspace"),
 		TEXT("--unattended"),

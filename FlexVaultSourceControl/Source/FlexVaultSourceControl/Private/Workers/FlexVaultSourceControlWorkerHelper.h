@@ -104,7 +104,7 @@ namespace FlexVaultCliCompatibility
 {
 	// See fxv-core/CHANGELOG.md for the "Breaking Changes" entries that justify this range.
 	constexpr int32 MinMajor = 0, MinMinor = 11, MinPatch = 0; // >= 0.11.0
-	constexpr int32 MaxMajor = 0, MaxMinor = 12, MaxPatch = 0; // < 0.12.0
+	constexpr int32 MaxMajor = 0, MaxMinor = 13, MaxPatch = 0; // < 0.13.0
 
 	inline FString GetMinVersionString()
 	{
@@ -131,7 +131,7 @@ struct FFlexVaultIntegrationRegisterOptions
 	/** Minimum compatible fxv version, inclusive (e.g. "0.11.0"). */
 	FString MinVersion;
 
-	/** Maximum compatible fxv version, exclusive (e.g. "0.12.0"). */
+	/** Maximum compatible fxv version, exclusive (e.g. "0.13.0"). */
 	FString MaxVersion;
 };
 
