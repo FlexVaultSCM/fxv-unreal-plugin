@@ -79,8 +79,10 @@ public:
 	virtual TOptional<bool> HasChangesToSync() const FXV_UE_5_8_OVERRIDE { return bHasChangesToSync; }
 	virtual TOptional<bool> HasChangesToCheckIn() const FXV_UE_5_8_OVERRIDE { return TOptional<bool>(); }
 	void SetHasChangesToSync(TOptional<bool> InHasChangesToSync) { bHasChangesToSync = InHasChangesToSync; }
+#if !(ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 8)
 	virtual TOptional<bool> IsAtLatestRevision() const override { return TOptional<bool>(); }
 	virtual TOptional<int> GetNumLocalChanges() const override { return TOptional<int>(); }
+#endif
 	void OutputStateChangedEvent()
 	{
 		if (!GIsInitialLoad && !IsGarbageCollecting() && !IsAsyncLoading())
