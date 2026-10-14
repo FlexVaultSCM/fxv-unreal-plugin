@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/FlexVaultSCM/fxv-unreal-plugin/compare/v0.7.0...v0.8.0) (2026-10-14)
+
+
+### Features
+
+* upgrade fxv-core compatibility to 0.12.0 ([#33](https://github.com/FlexVaultSCM/fxv-unreal-plugin/issues/33)) ([7d9ef02](https://github.com/FlexVaultSCM/fxv-unreal-plugin/commit/7d9ef02ba0ce32a04847ae50e357e050125f434f))
+
 ## [0.7.0](https://github.com/FlexVaultSCM/fxv-unreal-plugin/compare/v0.6.0...v0.7.0) (2026-09-23)
 
 
