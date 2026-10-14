@@ -1163,7 +1163,7 @@ TSharedRef<FFlexVaultSourceControlRevision, ESPMode::ThreadSafe> CreateFlexVault
 	const FString& InFileName
 )
 {
-	TSharedRef<FFlexVaultSourceControlRevision, ESPMode::ThreadSafe> Revision = MakeShareable(new FFlexVaultSourceControlRevision(InProvider));
+	TSharedRef<FFlexVaultSourceControlRevision, ESPMode::ThreadSafe> Revision = MakeShared<FFlexVaultSourceControlRevision, ESPMode::ThreadSafe>(InProvider);
 	Revision->FileName = InFileName;
 	Revision->RevisionNumber = InDetail.RevisionNumber;
 	Revision->Revision = InDetail.RevisionSpec;
