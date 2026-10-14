@@ -70,20 +70,11 @@ jobs:
             console.log('All required source files present.');
           "
 
-      - name: Package source-only plugin bundle for Fab
+      - name: Validate archive packaging (dry-run)
         run: |
           version=$(node -e "console.log(JSON.parse(require('fs').readFileSync('FlexVaultSourceControl/FlexVaultSourceControl.uplugin')).VersionName)")
-          fab_bundle="FlexVaultSourceControl-${version}-Fab.zip"
-          git archive --format=zip --prefix="FlexVaultSourceControl/" HEAD:FlexVaultSourceControl -o "$fab_bundle"
-          test -s "$fab_bundle"
-          sha256sum "$fab_bundle"
-          echo "FAB_BUNDLE=$fab_bundle" >> "$GITHUB_ENV"
-          echo "FAB_ARTIFACT=FlexVaultSourceControl-${version}-Fab" >> "$GITHUB_ENV"
-
-      - name: Upload Fab source bundle artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.FAB_ARTIFACT }}
-          path: ${{ env.FAB_BUNDLE }}
-          if-no-files-found: error
-          retention-days: 14
+          archive_name="FlexVaultSourceControl-${version}.zip"
+          git archive --format=zip --prefix="FlexVaultSourceControl/" HEAD:FlexVaultSourceControl -o "$archive_name"
+          test -s "$archive_name"
+          sha256sum "$archive_name"
+          echo "Packaging dry-run successful: $archive_name"
