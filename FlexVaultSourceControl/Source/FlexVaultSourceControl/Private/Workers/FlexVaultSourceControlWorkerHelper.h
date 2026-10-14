@@ -103,8 +103,8 @@ bool RunFlexVaultCatCommand(
 namespace FlexVaultCliCompatibility
 {
 	// See fxv-core/CHANGELOG.md for the "Breaking Changes" entries that justify this range.
-	constexpr int32 MinMajor = 0, MinMinor = 11, MinPatch = 0; // >= 0.11.0
-	constexpr int32 MaxMajor = 0, MaxMinor = 13, MaxPatch = 0; // < 0.13.0
+	constexpr int32 MinMajor = 0, MinMinor = 11, MinPatch = 0;
+	constexpr int32 MaxMajor = 0, MaxMinor = 13, MaxPatch = 0;
 
 	inline FString GetMinVersionString()
 	{
@@ -125,13 +125,13 @@ struct FFlexVaultIntegrationRegisterOptions
 	/** Workspace path to associate the registration with. */
 	FString Workspace;
 
-	/** Version of the plugin (e.g. "0.5.2"). */
+	/** Version of the plugin. */
 	FString PluginVersion;
 
-	/** Minimum compatible fxv version, inclusive (e.g. "0.11.0"). */
+	/** Minimum compatible fxv version, inclusive. */
 	FString MinVersion;
 
-	/** Maximum compatible fxv version, exclusive (e.g. "0.13.0"). */
+	/** Maximum compatible fxv version, exclusive. */
 	FString MaxVersion;
 };
 
