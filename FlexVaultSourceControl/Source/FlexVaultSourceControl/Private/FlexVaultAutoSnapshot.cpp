@@ -30,6 +30,11 @@ bool FFlexVaultAutoSnapshot::bPeriodicStatusScanInFlight = false;
 double FFlexVaultAutoSnapshot::LastFetchTime = -1.0;
 bool FFlexVaultAutoSnapshot::bFetchInFlight = false;
 
+TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> FFlexVaultAutoSnapshot::FetchCancelToken;
+TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> FFlexVaultAutoSnapshot::FetchDoneToken;
+TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> FFlexVaultAutoSnapshot::SnapshotCancelToken;
+TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> FFlexVaultAutoSnapshot::SnapshotDoneToken;
+
 int32 FFlexVaultAutoSnapshot::PendingReimportCount = 0;
 double FFlexVaultAutoSnapshot::LastReimportEventTime = -1.0;
 
@@ -73,10 +78,44 @@ void FFlexVaultAutoSnapshot::OnPostEngineInit()
 	LastFetchTime = FPlatformTime::Seconds();
 }
 
+void FFlexVaultAutoSnapshot::CancelFetch()
+{
+	if (FetchCancelToken.IsValid())
+	{
+		FetchCancelToken->Store(true);
+	}
+}
+
 void FFlexVaultAutoSnapshot::Unregister()
 {
 	FCoreDelegates::OnPostEngineInit.Remove(PostEngineInitHandle);
 	PostEngineInitHandle.Reset();
+
+	// Signal cancellation to any in-flight background tasks
+	CancelFetch();
+	if (SnapshotCancelToken.IsValid())
+	{
+		SnapshotCancelToken->Store(true);
+	}
+
+	// Bounded wait for in-flight background tasks before clearing delegates and resetting Provider
+	if (bFetchInFlight && FetchDoneToken.IsValid())
+	{
+		const double StartWait = FPlatformTime::Seconds();
+		while (!FetchDoneToken->Load() && (FPlatformTime::Seconds() - StartWait < 2.0))
+		{
+			FPlatformProcess::Sleep(0.01f);
+		}
+	}
+
+	if (bSnapshotInFlight && SnapshotDoneToken.IsValid())
+	{
+		const double StartWait = FPlatformTime::Seconds();
+		while (!SnapshotDoneToken->Load() && (FPlatformTime::Seconds() - StartWait < 2.0))
+		{
+			FPlatformProcess::Sleep(0.01f);
+		}
+	}
 
 	if (!bEditorHooksRegistered)
 	{
@@ -103,6 +142,10 @@ void FFlexVaultAutoSnapshot::Unregister()
 
 	bSnapshotInFlight = false;
 	PendingSnapshotDescriptions.Reset();
+	FetchCancelToken.Reset();
+	FetchDoneToken.Reset();
+	SnapshotCancelToken.Reset();
+	SnapshotDoneToken.Reset();
 }
 
 void FFlexVaultAutoSnapshot::OnAssetsPreDelete(const TArray<UObject*>& AssetsToDelete)
@@ -235,16 +278,15 @@ void FFlexVaultAutoSnapshot::CheckPeriodicSnapshot()
 		return;
 	}
 
-	if (bPeriodicStatusScanInFlight || bFetchInFlight)
+	if (bPeriodicStatusScanInFlight || bFetchInFlight || bSnapshotInFlight)
 	{
-		// Previous rescan or fetch hasn't completed yet. Don't pile up redundant calls.
+		// Previous rescan, fetch, or snapshot hasn't completed yet. Don't pile up redundant calls.
 		return;
 	}
 
-	if (Provider->HasOperationInFlight(FlexVaultSourceControlConstants::UpdateStatus))
+	if (!Provider || !Provider->IsAvailable() || Provider->IsExecutingCommand() || Provider->HasOperationInFlight(FlexVaultSourceControlConstants::UpdateStatus))
 	{
-		// Another UpdateStatus (e.g. a Content Browser refresh) is already queued. The next
-		// periodic tick picks this back up once that one clears.
+		// Another command is executing or queued. The next periodic tick picks this back up once that clears.
 		return;
 	}
 
@@ -296,12 +338,12 @@ void FFlexVaultAutoSnapshot::CheckPeriodicFetch()
 		return;
 	}
 
-	if (bFetchInFlight || bPeriodicStatusScanInFlight)
+	if (bFetchInFlight || bPeriodicStatusScanInFlight || bSnapshotInFlight)
 	{
 		return;
 	}
 
-	if (Provider && Provider->HasOperationInFlight(FlexVaultSourceControlConstants::UpdateStatus))
+	if (!Provider || !Provider->IsAvailable() || Provider->IsExecutingCommand() || Provider->HasOperationInFlight(FlexVaultSourceControlConstants::UpdateStatus))
 	{
 		return;
 	}
@@ -313,21 +355,46 @@ void FFlexVaultAutoSnapshot::CheckPeriodicFetch()
 	const FString WorkspacePath = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
 	const double TimeoutSeconds = Settings ? Settings->CommandTimeoutSeconds : 60.0;
 
-	Async(EAsyncExecution::ThreadPool, [BinaryPath, WorkspacePath, TimeoutSeconds]()
+	FetchCancelToken = MakeShared<TAtomic<bool>, ESPMode::ThreadSafe>(false);
+	FetchDoneToken = MakeShared<TAtomic<bool>, ESPMode::ThreadSafe>(false);
+	TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> CancelToken = FetchCancelToken;
+	TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> DoneToken = FetchDoneToken;
+
+	Async(EAsyncExecution::ThreadPool, [BinaryPath, WorkspacePath, TimeoutSeconds, CancelToken, DoneToken]()
 	{
 		FFlexVaultFetchResult FetchResult;
 		FSourceControlResultInfo ResultInfo;
-		bool bSuccess = RunFlexVaultFetch(BinaryPath, WorkspacePath, FetchResult, ResultInfo, false, nullptr, TimeoutSeconds);
+		bool bSuccess = RunFlexVaultFetch(BinaryPath, WorkspacePath, FetchResult, ResultInfo, false, nullptr, TimeoutSeconds, CancelToken);
 
-		AsyncTask(ENamedThreads::GameThread, [bSuccess, FetchResult]()
+		if (DoneToken.IsValid())
+		{
+			DoneToken->Store(true);
+		}
+
+		if (CancelToken.IsValid() && CancelToken->Load())
+		{
+			return;
+		}
+
+		AsyncTask(ENamedThreads::GameThread, [bSuccess, FetchResult, ResultInfo]()
 		{
 			bFetchInFlight = false;
-			if (bSuccess && FetchResult.BytesDownloaded > 0)
+			if (bSuccess)
 			{
-				if (Provider && Provider->IsAvailable() && !Provider->HasOperationInFlight(FlexVaultSourceControlConstants::UpdateStatus))
+				if (FetchResult.BytesDownloaded > 0 || FetchResult.RepairedFiles.Num() > 0)
 				{
-					const TSharedRef<FUpdateStatus, ESPMode::ThreadSafe> UpdateStatusOp = ISourceControlOperation::Create<FUpdateStatus>();
-					Provider->Execute(UpdateStatusOp, EConcurrency::Asynchronous);
+					if (Provider && Provider->IsAvailable() && !Provider->IsExecutingCommand() && !Provider->HasOperationInFlight(FlexVaultSourceControlConstants::UpdateStatus))
+					{
+						const TSharedRef<FUpdateStatus, ESPMode::ThreadSafe> UpdateStatusOp = ISourceControlOperation::Create<FUpdateStatus>();
+						Provider->Execute(UpdateStatusOp, EConcurrency::Asynchronous);
+					}
+				}
+			}
+			else
+			{
+				for (const FText& Err : ResultInfo.ErrorMessages)
+				{
+					UE_LOG(LogFlexVault, Verbose, TEXT("Periodic fetch error: %s"), *Err.ToString());
 				}
 			}
 		});
@@ -418,6 +485,11 @@ void FFlexVaultAutoSnapshot::RunSnapshotSyncForDelete(const FString& Description
 {
 	FScopedSourceControlProgress Progress(FText::FromString(TEXT("FlexVault: Snapshotting before deletion...")));
 
+	if (bFetchInFlight)
+	{
+		CancelFetch();
+	}
+
 	const UFlexVaultSourceControlDeveloperSettings* Settings = GetDefault<UFlexVaultSourceControlDeveloperSettings>();
 	const double TimeoutSeconds = (Settings && Settings->CommandTimeoutSeconds > 0.0) ? Settings->CommandTimeoutSeconds : 60.0;
 	const FString BinaryPath = Settings ? Settings->GetEffectiveBinaryPath() : FString();
@@ -477,20 +549,36 @@ void FFlexVaultAutoSnapshot::LaunchSnapshotProcess(const FString& Description)
 	const FString WorkspacePath = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
 	const double TimeoutSeconds = (Settings && Settings->CommandTimeoutSeconds > 0.0) ? Settings->CommandTimeoutSeconds : 60.0;
 
+	SnapshotCancelToken = MakeShared<TAtomic<bool>, ESPMode::ThreadSafe>(false);
+	SnapshotDoneToken = MakeShared<TAtomic<bool>, ESPMode::ThreadSafe>(false);
+	TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> CancelToken = SnapshotCancelToken;
+	TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> DoneToken = SnapshotDoneToken;
+
 	// Runs off the Game Thread so we don't stall the delete/save that triggered it. Best-effort:
 	// it can in rare cases race with the operation it's meant to precede.
-	Async(EAsyncExecution::ThreadPool, [WorkspacePath, BinaryPath, Description, TimeoutSeconds]()
+	Async(EAsyncExecution::ThreadPool, [WorkspacePath, BinaryPath, Description, TimeoutSeconds, CancelToken, DoneToken]()
 	{
 		TArray<FString> OutputLines;
 		FSourceControlResultInfo ResultInfo;
 		const TArray<FString> Args = BuildFlexVaultSnapshotArgs(Description);
-		bool bSucceeded;
+		bool bSucceeded = false;
 		{
 			// Serialize against FFlexVaultCheckInWorker's inline snapshot phase - see GetFlexVaultSnapshotLock().
 			FScopeLock SnapshotLock(&GetFlexVaultSnapshotLock());
-			// This call is ad-hoc and has no FFlexVaultSourceControlCommand to watch for
-			// InCancelCommand, so pass the timeout directly instead.
-			bSucceeded = RunFlexVaultCommand(BinaryPath, WorkspacePath, Args, OutputLines, ResultInfo, /*bIgnoreError=*/true, nullptr, TimeoutSeconds);
+			if (!CancelToken.IsValid() || !CancelToken->Load())
+			{
+				bSucceeded = RunFlexVaultCommand(BinaryPath, WorkspacePath, Args, OutputLines, ResultInfo, /*bIgnoreError=*/true, nullptr, TimeoutSeconds, CancelToken);
+			}
+		}
+
+		if (DoneToken.IsValid())
+		{
+			DoneToken->Store(true);
+		}
+
+		if (CancelToken.IsValid() && CancelToken->Load())
+		{
+			return;
 		}
 
 		AsyncTask(ENamedThreads::GameThread, [bSucceeded]()

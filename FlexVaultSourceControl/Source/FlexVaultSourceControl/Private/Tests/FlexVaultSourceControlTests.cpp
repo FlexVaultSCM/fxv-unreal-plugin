@@ -1466,7 +1466,7 @@ bool FFlexVaultFetchTest::RunTest(const FString& Parameters)
 	// 4. Verify ParseFlexVaultFetch parses valid JSON output
 	const TArray<FString> SampleJsonLines = {
 		TEXT("{"),
-		TEXT("  \"program\": { \"name\": \"fxv\", \"version\": \"0.12.0\" },"),
+		FString::Printf(TEXT("  \"program\": { \"name\": \"fxv\", \"version\": \"%s\" },"), *FlexVaultCliCompatibility::GetMinVersionString()),
 		TEXT("  \"message\": {"),
 		TEXT("    \"kind\": \"fetch\","),
 		TEXT("    \"version\": \"1.0\","),

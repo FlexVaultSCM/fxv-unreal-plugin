@@ -3,6 +3,7 @@
 #include "FlexVaultSourceControlProvider.h"
 #include "FlexVaultSourceControlDeveloperSettings.h"
 #include "FlexVaultSourceControlCommand.h"
+#include "FlexVaultAutoSnapshot.h"
 #include "FlexVaultIgnoreChecker.h"
 #include "Workers/FlexVaultConnectWorker.h"
 #include "Workers/FlexVaultUpdateStatusWorker.h"
@@ -260,6 +261,11 @@ ECommandResult::Type FFlexVaultSourceControlProvider::Execute(
 )
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(FFlexVaultSourceControlProvider::Execute);
+
+	if (FFlexVaultAutoSnapshot::IsFetchInFlight())
+	{
+		FFlexVaultAutoSnapshot::CancelFetch();
+	}
 
 	if (!IsEnabled() && InOperation->GetName() != FlexVaultSourceControlConstants::Connect)
 	{

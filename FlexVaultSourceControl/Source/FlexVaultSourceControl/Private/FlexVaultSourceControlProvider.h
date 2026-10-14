@@ -69,20 +69,11 @@ public:
 	// you just need to have resolved any conflicts.
 	virtual bool UsesSnapshots() const override { return true; }
 	virtual bool AllowsDiffAgainstDepot() const override { return true; }
-#if ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 8
-#define FXV_UE_5_8_OVERRIDE override
-#else
-#define FXV_UE_5_8_OVERRIDE
-#endif
-	// In UE 5.8+, these are pure virtuals on ISourceControlProvider; on earlier versions they are custom provider methods.
-	virtual bool UsesSoftRevertOnDelete() const FXV_UE_5_8_OVERRIDE { return false; }
-	virtual TOptional<bool> HasChangesToSync() const FXV_UE_5_8_OVERRIDE { return bHasChangesToSync; }
-	virtual TOptional<bool> HasChangesToCheckIn() const FXV_UE_5_8_OVERRIDE { return TOptional<bool>(); }
+	// In UE 5.8+, these are pure virtuals on ISourceControlProvider.
+	virtual bool UsesSoftRevertOnDelete() const override { return false; }
+	virtual TOptional<bool> HasChangesToSync() const override { return bHasChangesToSync; }
+	virtual TOptional<bool> HasChangesToCheckIn() const override { return TOptional<bool>(); }
 	void SetHasChangesToSync(TOptional<bool> InHasChangesToSync) { bHasChangesToSync = InHasChangesToSync; }
-#if !(ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 8)
-	virtual TOptional<bool> IsAtLatestRevision() const override { return TOptional<bool>(); }
-	virtual TOptional<int> GetNumLocalChanges() const override { return TOptional<int>(); }
-#endif
 	void OutputStateChangedEvent()
 	{
 		if (!GIsInitialLoad && !IsGarbageCollecting() && !IsAsyncLoading())
@@ -127,6 +118,9 @@ public:
 	 *  periodic check) that want to avoid spawning a redundant concurrent CLI call for an
 	 *  operation someone else already has in flight. Game-thread only, like CommandQueue itself. */
 	bool HasOperationInFlight(const FName& InOperationName) const;
+
+	/** Returns true if an asynchronous command is currently queued or executing in the thread pool. */
+	bool IsExecutingCommand() const { return CommandQueue.Num() > 0; }
 
 private:
 	virtual TUniquePtr<ISourceControlProvider> Create(const FStringView& OwnerName, const FSourceControlInitSettings& InInitialSettings) const override;

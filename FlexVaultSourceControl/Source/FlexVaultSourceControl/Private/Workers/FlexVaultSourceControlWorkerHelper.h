@@ -66,13 +66,12 @@ FCriticalSection& GetFlexVaultSnapshotLock();
 
 /**
  * Runs the FlexVault CLI as a child process and blocks the calling thread until it exits.
- * If InCancelCommand is provided and InCancelCommand->IsCanceled() becomes true while the
- * process is running (e.g. a synchronous wait timed out), the child process is terminated
- * and the call returns promptly with a failure result, rather than blocking indefinitely.
- * Independently, if InTimeoutSeconds is > 0, the process is terminated after that many seconds
- * even with no InCancelCommand - for ad-hoc callers that aren't part of the provider's command
- * queue (and so have no FFlexVaultSourceControlCommand to watch) but still need a bound on how
- * long a hung CLI process can block the calling thread.
+ * Cancellation support:
+ *  - InCancelCommand: For provider-queued operations (FFlexVaultSourceControlCommand). Checks
+ *    IsCanceled() and provides command metadata such as cancel grace periods.
+ *  - InCancelToken: For ad-hoc or background tasks outside the command queue (e.g. periodic
+ *    fetch, auto-snapshot). A lightweight atomic flag that triggers immediate process termination.
+ * If InTimeoutSeconds is > 0, the process is also terminated after that duration as a fallback.
  */
 bool RunFlexVaultCommand(
 	const FString& InBinaryPath,
@@ -82,7 +81,8 @@ bool RunFlexVaultCommand(
 	FSourceControlResultInfo& OutResultInfo,
 	bool bIgnoreError = false,
 	const FFlexVaultSourceControlCommand* InCancelCommand = nullptr,
-	double InTimeoutSeconds = 0.0
+	double InTimeoutSeconds = 0.0,
+	TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> InCancelToken = nullptr
 );
 
 /**
@@ -345,6 +345,7 @@ bool RunFlexVaultFetch(
 	FSourceControlResultInfo& OutResultInfo,
 	bool bRepair = false,
 	const FFlexVaultSourceControlCommand* InCancelCommand = nullptr,
-	double InTimeoutSeconds = 60.0
+	double InTimeoutSeconds = 60.0,
+	TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> InCancelToken = nullptr
 );
 

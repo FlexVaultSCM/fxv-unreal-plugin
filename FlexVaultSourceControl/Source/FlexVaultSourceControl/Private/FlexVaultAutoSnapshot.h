@@ -30,6 +30,12 @@ public:
 	static void Register(FFlexVaultSourceControlProvider& InProvider);
 	static void Unregister();
 
+	/** Returns true if a background periodic fetch is currently in flight. */
+	static bool IsFetchInFlight() { return bFetchInFlight; }
+
+	/** Signals cancellation to any in-flight background periodic fetch. */
+	static void CancelFetch();
+
 private:
 	static void OnPostEngineInit();
 	static void OnAssetsPreDelete(const TArray<UObject*>& AssetsToDelete);
@@ -78,6 +84,13 @@ private:
 	static bool bPeriodicStatusScanInFlight;
 	static double LastFetchTime;
 	static bool bFetchInFlight;
+
+	// Lightweight cooperative cancellation and completion tokens for ad-hoc background tasks
+	// (periodic fetch and auto-snapshots) running outside the provider command queue.
+	static TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> FetchCancelToken;
+	static TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> FetchDoneToken;
+	static TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> SnapshotCancelToken;
+	static TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> SnapshotDoneToken;
 
 	static int32 PendingReimportCount;
 	static double LastReimportEventTime;

@@ -152,7 +152,8 @@ bool RunFlexVaultCommand(
 	FSourceControlResultInfo& OutResultInfo,
 	bool bIgnoreError,
 	const FFlexVaultSourceControlCommand* InCancelCommand,
-	double InTimeoutSeconds
+	double InTimeoutSeconds,
+	TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> InCancelToken
 )
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(RunFlexVaultCommand);
@@ -173,10 +174,10 @@ bool RunFlexVaultCommand(
 	bool bWasCanceled = false;
 	while (FPlatformProcess::IsProcRunning(Process))
 	{
-		if (InCancelCommand && InCancelCommand->IsCanceled())
+		if ((InCancelCommand && InCancelCommand->IsCanceled()) || (InCancelToken.IsValid() && InCancelToken->Load()))
 		{
 			// Terminate the child process so the calling thread's wait for this command
-			// (e.g. ExecuteSynchronousCommand's timeout) is honored promptly and the underlying
+			// (e.g. ExecuteSynchronousCommand's timeout or cancellation token) is honored promptly and the underlying
 			// process is not left running/orphaned in the background.
 			bWasCanceled = true;
 			FPlatformProcess::TerminateProc(Process, true);
@@ -1357,7 +1358,8 @@ bool RunFlexVaultFetch(
 	FSourceControlResultInfo& OutResultInfo,
 	bool bRepair,
 	const FFlexVaultSourceControlCommand* InCancelCommand,
-	double InTimeoutSeconds
+	double InTimeoutSeconds,
+	TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> InCancelToken
 )
 {
 	TArray<FString> Args = BuildFlexVaultFetchArgs(bRepair);
@@ -1370,7 +1372,8 @@ bool RunFlexVaultFetch(
 		OutResultInfo,
 		false,
 		InCancelCommand,
-		InTimeoutSeconds
+		InTimeoutSeconds,
+		InCancelToken
 	);
 
 	if (!bSuccess)
