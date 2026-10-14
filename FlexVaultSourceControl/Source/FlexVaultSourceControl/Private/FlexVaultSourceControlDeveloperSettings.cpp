@@ -10,6 +10,7 @@ UFlexVaultSourceControlDeveloperSettings::UFlexVaultSourceControlDeveloperSettin
 	, PeriodicSnapshotIntervalSeconds(300)
 	, AutoSnapshotActorCountDeltaThreshold(10)
 	, AutoSnapshotBulkReimportThreshold(20)
+	, FetchPeriodSeconds(120)
 {
 }
 

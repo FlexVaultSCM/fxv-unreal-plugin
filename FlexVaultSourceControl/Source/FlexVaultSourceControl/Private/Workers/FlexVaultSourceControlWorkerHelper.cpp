@@ -152,7 +152,8 @@ bool RunFlexVaultCommand(
 	FSourceControlResultInfo& OutResultInfo,
 	bool bIgnoreError,
 	const FFlexVaultSourceControlCommand* InCancelCommand,
-	double InTimeoutSeconds
+	double InTimeoutSeconds,
+	TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> InCancelToken
 )
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(RunFlexVaultCommand);
@@ -173,10 +174,10 @@ bool RunFlexVaultCommand(
 	bool bWasCanceled = false;
 	while (FPlatformProcess::IsProcRunning(Process))
 	{
-		if (InCancelCommand && InCancelCommand->IsCanceled())
+		if ((InCancelCommand && InCancelCommand->IsCanceled()) || (InCancelToken.IsValid() && InCancelToken->Load()))
 		{
 			// Terminate the child process so the calling thread's wait for this command
-			// (e.g. ExecuteSynchronousCommand's timeout) is honored promptly and the underlying
+			// (e.g. ExecuteSynchronousCommand's timeout or cancellation token) is honored promptly and the underlying
 			// process is not left running/orphaned in the background.
 			bWasCanceled = true;
 			FPlatformProcess::TerminateProc(Process, true);
@@ -1162,7 +1163,7 @@ TSharedRef<FFlexVaultSourceControlRevision, ESPMode::ThreadSafe> CreateFlexVault
 	const FString& InFileName
 )
 {
-	TSharedRef<FFlexVaultSourceControlRevision, ESPMode::ThreadSafe> Revision = MakeShared<FFlexVaultSourceControlRevision>(InProvider);
+	TSharedRef<FFlexVaultSourceControlRevision, ESPMode::ThreadSafe> Revision = MakeShared<FFlexVaultSourceControlRevision, ESPMode::ThreadSafe>(InProvider);
 	Revision->FileName = InFileName;
 	Revision->RevisionNumber = InDetail.RevisionNumber;
 	Revision->Revision = InDetail.RevisionSpec;
@@ -1288,6 +1289,99 @@ bool IsFlexVaultFormatIncompatibilityError(const FString& InErrorMessage)
 	       InErrorMessage.Contains(TEXT("RepositoryFormatTooOld"), ESearchCase::IgnoreCase) ||
 	       InErrorMessage.Contains(TEXT("RepositoryFormatTooNew"), ESearchCase::IgnoreCase) ||
 	       InErrorMessage.Contains(TEXT("cannot be upgraded and must be recreated"), ESearchCase::IgnoreCase);
+}
+
+TArray<FString> BuildFlexVaultFetchArgs(bool bRepair)
+{
+	TArray<FString> Args;
+	Args.Add(TEXT("fetch"));
+	if (bRepair)
+	{
+		Args.Add(TEXT("--repair"));
+	}
+	Args.Add(TEXT("--format"));
+	Args.Add(TEXT("json"));
+	Args.Add(TEXT("--unattended"));
+	Args.Add(TEXT("--no-color"));
+	return Args;
+}
+
+bool ParseFlexVaultFetch(
+	const TArray<FString>& InFetchOutputLines,
+	FFlexVaultFetchResult& OutFetchResult,
+	FSourceControlResultInfo& OutResultInfo
+)
+{
+	OutFetchResult = FFlexVaultFetchResult();
+	FString CombinedJson = FString::Join(InFetchOutputLines, TEXT("\n"));
+
+	TSharedPtr<FJsonObject> Envelope;
+	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(CombinedJson);
+	if (!FJsonSerializer::Deserialize(Reader, Envelope) || !Envelope.IsValid())
+	{
+		OutResultInfo.ErrorMessages.Add(LOCTEXT("FetchJsonMalformed", "Failed to parse FlexVault fetch JSON output."));
+		return false;
+	}
+
+	TSharedPtr<FJsonObject> PayloadObj;
+	if (!TryGetFlexVaultEnvelopePayload(Envelope, PayloadObj) || !PayloadObj.IsValid())
+	{
+		OutResultInfo.ErrorMessages.Add(LOCTEXT("FetchJsonNoPayload", "Missing payload object in FlexVault fetch response."));
+		return false;
+	}
+
+	int64 Bytes = 0;
+	if (PayloadObj->TryGetNumberField(TEXT("bytes_downloaded"), Bytes))
+	{
+		OutFetchResult.BytesDownloaded = Bytes;
+	}
+
+	const TArray<TSharedPtr<FJsonValue>>* RepairedArray = nullptr;
+	if (PayloadObj->TryGetArrayField(TEXT("repaired_files"), RepairedArray) && RepairedArray)
+	{
+		for (const TSharedPtr<FJsonValue>& Val : *RepairedArray)
+		{
+			if (Val.IsValid())
+			{
+				OutFetchResult.RepairedFiles.Add(Val->AsString());
+			}
+		}
+	}
+
+	return true;
+}
+
+bool RunFlexVaultFetch(
+	const FString& InBinaryPath,
+	const FString& InWorkspacePath,
+	FFlexVaultFetchResult& OutFetchResult,
+	FSourceControlResultInfo& OutResultInfo,
+	bool bRepair,
+	const FFlexVaultSourceControlCommand* InCancelCommand,
+	double InTimeoutSeconds,
+	TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> InCancelToken
+)
+{
+	TArray<FString> Args = BuildFlexVaultFetchArgs(bRepair);
+	TArray<FString> OutputLines;
+	bool bSuccess = RunFlexVaultCommand(
+		InBinaryPath,
+		InWorkspacePath,
+		Args,
+		OutputLines,
+		OutResultInfo,
+		false,
+		InCancelCommand,
+		InTimeoutSeconds,
+		InCancelToken
+	);
+
+	if (!bSuccess)
+	{
+		return false;
+	}
+
+	return ParseFlexVaultFetch(OutputLines, OutFetchResult, OutResultInfo);
 }
 
 #undef LOCTEXT_NAMESPACE

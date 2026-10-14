@@ -146,33 +146,51 @@ bool FFlexVaultVersionCheckTest::RunTest(const FString& Parameters)
 	AddExpectedErrorPlain(TEXT("Invalid JSON envelope passed to version check"), EAutomationExpectedErrorFlags::Contains, 1);
 	TestFalse(TEXT("Null JSON envelope fails"), CheckFlexVaultVersion(nullptr, ResultInfo));
 
-	// 2. Compatible version (0.11.0), lower bound of the pinned [0.11.0, 0.12.0) range
+	// 2. Compatible version at exact lower bound
+	const FString LowerBoundVersion = FlexVaultCliCompatibility::GetMinVersionString();
 	TSharedPtr<FJsonObject> ValidEnv = MakeShared<FJsonObject>();
 	TSharedPtr<FJsonObject> ValidProg = MakeShared<FJsonObject>();
-	ValidProg->SetStringField(TEXT("version"), TEXT("0.11.0"));
+	ValidProg->SetStringField(TEXT("version"), LowerBoundVersion);
 	ValidEnv->SetObjectField(TEXT("program"), ValidProg);
 
 	ResultInfo.ErrorMessages.Empty();
-	TestTrue(TEXT("CLI version 0.11.0 is compatible"), CheckFlexVaultVersion(ValidEnv, ResultInfo));
+	TestTrue(FString::Printf(TEXT("CLI version %s (lower bound) is compatible"), *LowerBoundVersion), CheckFlexVaultVersion(ValidEnv, ResultInfo));
 
-	// 3. Compatible version (0.11.1), within the pinned range
+	// 3. Compatible version within the pinned range (patch increment)
+	const FString PatchIncrementVersion = FString::Printf(TEXT("%d.%d.%d"), FlexVaultCliCompatibility::MinMajor, FlexVaultCliCompatibility::MinMinor, FlexVaultCliCompatibility::MinPatch + 1);
 	TSharedPtr<FJsonObject> WidenedEnv = MakeShared<FJsonObject>();
 	TSharedPtr<FJsonObject> WidenedProg = MakeShared<FJsonObject>();
-	WidenedProg->SetStringField(TEXT("version"), TEXT("0.11.1"));
+	WidenedProg->SetStringField(TEXT("version"), PatchIncrementVersion);
 	WidenedEnv->SetObjectField(TEXT("program"), WidenedProg);
 
 	ResultInfo.ErrorMessages.Empty();
-	TestTrue(TEXT("CLI version 0.11.1 is compatible"), CheckFlexVaultVersion(WidenedEnv, ResultInfo));
+	TestTrue(FString::Printf(TEXT("CLI version %s is compatible"), *PatchIncrementVersion), CheckFlexVaultVersion(WidenedEnv, ResultInfo));
 
-	// 4. Incompatible version (0.10.1), below the lower bound of the pinned range
+	// 3b. Compatible version within the pinned range (minor increment if range spans multiple minors)
+	if (FlexVaultCliCompatibility::MaxMinor > FlexVaultCliCompatibility::MinMinor + 1)
+	{
+		const FString MidRangeVersion = FString::Printf(TEXT("%d.%d.0"), FlexVaultCliCompatibility::MinMajor, FlexVaultCliCompatibility::MinMinor + 1);
+		TSharedPtr<FJsonObject> EnvMid = MakeShared<FJsonObject>();
+		TSharedPtr<FJsonObject> ProgMid = MakeShared<FJsonObject>();
+		ProgMid->SetStringField(TEXT("version"), MidRangeVersion);
+		EnvMid->SetObjectField(TEXT("program"), ProgMid);
+
+		ResultInfo.ErrorMessages.Empty();
+		TestTrue(FString::Printf(TEXT("CLI version %s is compatible"), *MidRangeVersion), CheckFlexVaultVersion(EnvMid, ResultInfo));
+	}
+
+	// 4. Incompatible version below the lower bound of the pinned range
+	const FString BelowLowerBoundVersion = (FlexVaultCliCompatibility::MinMinor > 0)
+		? FString::Printf(TEXT("%d.%d.1"), FlexVaultCliCompatibility::MinMajor, FlexVaultCliCompatibility::MinMinor - 1)
+		: TEXT("0.0.1");
 	TSharedPtr<FJsonObject> InvalidEnv = MakeShared<FJsonObject>();
 	TSharedPtr<FJsonObject> InvalidProg = MakeShared<FJsonObject>();
-	InvalidProg->SetStringField(TEXT("version"), TEXT("0.10.1"));
+	InvalidProg->SetStringField(TEXT("version"), BelowLowerBoundVersion);
 	InvalidEnv->SetObjectField(TEXT("program"), InvalidProg);
 
 	ResultInfo.ErrorMessages.Empty();
-	AddExpectedErrorPlain(TEXT("Incompatible FlexVault CLI version '0.10.1'"), EAutomationExpectedErrorFlags::Contains, 1);
-	TestFalse(TEXT("CLI version 0.10.1 is incompatible"), CheckFlexVaultVersion(InvalidEnv, ResultInfo));
+	AddExpectedErrorPlain(FString::Printf(TEXT("Incompatible FlexVault CLI version '%s'"), *BelowLowerBoundVersion), EAutomationExpectedErrorFlags::Contains, 1);
+	TestFalse(FString::Printf(TEXT("CLI version %s is incompatible"), *BelowLowerBoundVersion), CheckFlexVaultVersion(InvalidEnv, ResultInfo));
 	TestTrue(TEXT("Error reported for version mismatch"), ResultInfo.ErrorMessages.Num() > 0);
 
 	// 5. Malformed non-numeric version string (x.4.2)
@@ -1048,49 +1066,57 @@ bool FFlexVaultCheckVersionTest::RunTest(const FString& Parameters)
 		return Envelope;
 	};
 
-	// 1. Valid compatible version (e.g. 0.11.0, 0.11.5)
+	// 1. Valid compatible versions within range
 	{
+		const FString LowerBoundVersion = FlexVaultCliCompatibility::GetMinVersionString();
 		FSourceControlResultInfo ResultInfo;
 		FString ExtractedVersion;
-		TSharedPtr<FJsonObject> Env = MakeEnvelope(TEXT("0.11.0"));
-		TestTrue(TEXT("0.11.0 is compatible"), CheckFlexVaultVersion(Env, ResultInfo, &ExtractedVersion));
-		TestEqual(TEXT("Extracted version matches"), ExtractedVersion, TEXT("0.11.0"));
+		TSharedPtr<FJsonObject> Env = MakeEnvelope(LowerBoundVersion);
+		TestTrue(FString::Printf(TEXT("%s (lower bound) is compatible"), *LowerBoundVersion), CheckFlexVaultVersion(Env, ResultInfo, &ExtractedVersion));
+		TestEqual(TEXT("Extracted version matches"), ExtractedVersion, LowerBoundVersion);
 		TestEqual(TEXT("No errors on success"), ResultInfo.ErrorMessages.Num(), 0);
 	}
 	{
+		const FString PatchVersion = FString::Printf(TEXT("%d.%d.%d"), FlexVaultCliCompatibility::MinMajor, FlexVaultCliCompatibility::MinMinor, FlexVaultCliCompatibility::MinPatch + 5);
 		FSourceControlResultInfo ResultInfo;
 		FString ExtractedVersion;
-		TSharedPtr<FJsonObject> Env = MakeEnvelope(TEXT("0.11.5"));
-		TestTrue(TEXT("0.11.5 is compatible"), CheckFlexVaultVersion(Env, ResultInfo, &ExtractedVersion));
-		TestEqual(TEXT("Extracted version matches"), ExtractedVersion, TEXT("0.11.5"));
+		TSharedPtr<FJsonObject> Env = MakeEnvelope(PatchVersion);
+		TestTrue(FString::Printf(TEXT("%s is compatible"), *PatchVersion), CheckFlexVaultVersion(Env, ResultInfo, &ExtractedVersion));
+		TestEqual(TEXT("Extracted version matches"), ExtractedVersion, PatchVersion);
+		TestEqual(TEXT("No errors on success"), ResultInfo.ErrorMessages.Num(), 0);
+	}
+	if (FlexVaultCliCompatibility::MaxMinor > FlexVaultCliCompatibility::MinMinor + 1)
+	{
+		const FString MidVersion = FString::Printf(TEXT("%d.%d.0"), FlexVaultCliCompatibility::MinMajor, FlexVaultCliCompatibility::MinMinor + 1);
+		FSourceControlResultInfo ResultInfo;
+		FString ExtractedVersion;
+		TSharedPtr<FJsonObject> Env = MakeEnvelope(MidVersion);
+		TestTrue(FString::Printf(TEXT("%s is compatible"), *MidVersion), CheckFlexVaultVersion(Env, ResultInfo, &ExtractedVersion));
+		TestEqual(TEXT("Extracted version matches"), ExtractedVersion, MidVersion);
 		TestEqual(TEXT("No errors on success"), ResultInfo.ErrorMessages.Num(), 0);
 	}
 
-	// 2. Incompatible lower version (< 0.11.0)
+	// 2. Incompatible lower version below lower bound
 	{
+		const FString TooLowVersion = (FlexVaultCliCompatibility::MinMinor > 0)
+			? FString::Printf(TEXT("%d.%d.1"), FlexVaultCliCompatibility::MinMajor, FlexVaultCliCompatibility::MinMinor - 1)
+			: TEXT("0.0.1");
 		FSourceControlResultInfo ResultInfo;
 		FString ExtractedVersion;
-		TSharedPtr<FJsonObject> Env = MakeEnvelope(TEXT("0.10.1"));
-		AddExpectedErrorPlain(TEXT("Incompatible FlexVault CLI version '0.10.1'"), EAutomationExpectedErrorFlags::Contains, 1);
-		TestFalse(TEXT("0.10.1 is incompatible (too low)"), CheckFlexVaultVersion(Env, ResultInfo, &ExtractedVersion));
-		TestTrue(TEXT("Error reported for incompatible version"), ResultInfo.ErrorMessages.Num() > 0);
-	}
-	{
-		FSourceControlResultInfo ResultInfo;
-		FString ExtractedVersion;
-		TSharedPtr<FJsonObject> Env = MakeEnvelope(TEXT("0.9.0"));
-		AddExpectedErrorPlain(TEXT("Incompatible FlexVault CLI version '0.9.0'"), EAutomationExpectedErrorFlags::Contains, 1);
-		TestFalse(TEXT("0.9.0 is incompatible (too low)"), CheckFlexVaultVersion(Env, ResultInfo, &ExtractedVersion));
+		TSharedPtr<FJsonObject> Env = MakeEnvelope(TooLowVersion);
+		AddExpectedErrorPlain(FString::Printf(TEXT("Incompatible FlexVault CLI version '%s'"), *TooLowVersion), EAutomationExpectedErrorFlags::Contains, 1);
+		TestFalse(FString::Printf(TEXT("%s is incompatible (too low)"), *TooLowVersion), CheckFlexVaultVersion(Env, ResultInfo, &ExtractedVersion));
 		TestTrue(TEXT("Error reported for incompatible version"), ResultInfo.ErrorMessages.Num() > 0);
 	}
 
-	// 3. Incompatible higher version (>= 0.12.0)
+	// 3. Incompatible higher version at or above upper bound
 	{
+		const FString UpperBoundVersion = FlexVaultCliCompatibility::GetMaxVersionString();
 		FSourceControlResultInfo ResultInfo;
 		FString ExtractedVersion;
-		TSharedPtr<FJsonObject> Env = MakeEnvelope(TEXT("0.12.0"));
-		AddExpectedErrorPlain(TEXT("Incompatible FlexVault CLI version '0.12.0'"), EAutomationExpectedErrorFlags::Contains, 1);
-		TestFalse(TEXT("0.12.0 is incompatible (too high)"), CheckFlexVaultVersion(Env, ResultInfo, &ExtractedVersion));
+		TSharedPtr<FJsonObject> Env = MakeEnvelope(UpperBoundVersion);
+		AddExpectedErrorPlain(FString::Printf(TEXT("Incompatible FlexVault CLI version '%s'"), *UpperBoundVersion), EAutomationExpectedErrorFlags::Contains, 1);
+		TestFalse(FString::Printf(TEXT("%s is incompatible (at/above upper bound)"), *UpperBoundVersion), CheckFlexVaultVersion(Env, ResultInfo, &ExtractedVersion));
 		TestTrue(TEXT("Error reported for incompatible version"), ResultInfo.ErrorMessages.Num() > 0);
 	}
 
@@ -1342,7 +1368,7 @@ bool FFlexVaultIntegrationRegisterTest::RunTest(const FString& Parameters)
 {
 	// 1. Verify FlexVaultCliCompatibility version strings
 	TestEqual(TEXT("MinVersion string matches expected"), FlexVaultCliCompatibility::GetMinVersionString(), TEXT("0.11.0"));
-	TestEqual(TEXT("MaxVersion string matches expected"), FlexVaultCliCompatibility::GetMaxVersionString(), TEXT("0.12.0"));
+	TestEqual(TEXT("MaxVersion string matches expected"), FlexVaultCliCompatibility::GetMaxVersionString(), TEXT("0.13.0"));
 
 	// 2. Verify BuildFlexVaultIntegrationRegisterArgs with full options
 	FFlexVaultIntegrationRegisterOptions FullOptions;
@@ -1360,9 +1386,9 @@ bool FFlexVaultIntegrationRegisterTest::RunTest(const FString& Parameters)
 		TEXT("--plugin-version"),
 		TEXT("0.5.2"),
 		TEXT("--min"),
-		TEXT("0.11.0"),
+		FlexVaultCliCompatibility::GetMinVersionString(),
 		TEXT("--max-version"),
-		TEXT("0.12.0"),
+		FlexVaultCliCompatibility::GetMaxVersionString(),
 		TEXT("--workspace"),
 		TEXT("C:/Test/Workspace"),
 		TEXT("--unattended"),
@@ -1390,6 +1416,91 @@ bool FFlexVaultIntegrationRegisterTest::RunTest(const FString& Parameters)
 	AddExpectedErrorPlain(TEXT("Failed to launch SCM executable: invalid_binary_stub_registration"), EAutomationExpectedErrorFlags::Contains, 1);
 	const bool bSuccess = RunFlexVaultIntegrationRegister(TEXT("invalid_binary_stub_registration"), TEXT("C:/Test/Workspace"), FullOptions, RegResultInfo);
 	TestFalse(TEXT("RunFlexVaultIntegrationRegister returns false for invalid binary"), bSuccess);
+
+	return true;
+}
+
+// ── Test 31: Fetch Command Args & Payload Parsing ────────────────────────────
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultFetchTest, "FlexVault.SourceControl.Fetch", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FFlexVaultFetchTest::RunTest(const FString& Parameters)
+{
+	// 1. Verify default developer settings
+	const UFlexVaultSourceControlDeveloperSettings* Settings = GetDefault<UFlexVaultSourceControlDeveloperSettings>();
+	if (Settings)
+	{
+		TestEqual(TEXT("Default FetchPeriodSeconds is 120"), Settings->FetchPeriodSeconds, 120);
+	}
+
+	// 2. Verify BuildFlexVaultFetchArgs without repair
+	TArray<FString> FetchArgs = BuildFlexVaultFetchArgs(false);
+	const TArray<FString> ExpectedFetchArgs = {
+		TEXT("fetch"),
+		TEXT("--format"),
+		TEXT("json"),
+		TEXT("--unattended"),
+		TEXT("--no-color")
+	};
+	TestEqual(TEXT("Fetch args count matches"), FetchArgs.Num(), ExpectedFetchArgs.Num());
+	for (int32 Index = 0; Index < FMath::Min(FetchArgs.Num(), ExpectedFetchArgs.Num()); ++Index)
+	{
+		TestEqual(FString::Printf(TEXT("FetchArg[%d] matches"), Index), FetchArgs[Index], ExpectedFetchArgs[Index]);
+	}
+
+	// 3. Verify BuildFlexVaultFetchArgs with repair
+	TArray<FString> FetchRepairArgs = BuildFlexVaultFetchArgs(true);
+	const TArray<FString> ExpectedRepairArgs = {
+		TEXT("fetch"),
+		TEXT("--repair"),
+		TEXT("--format"),
+		TEXT("json"),
+		TEXT("--unattended"),
+		TEXT("--no-color")
+	};
+	TestEqual(TEXT("Fetch repair args count matches"), FetchRepairArgs.Num(), ExpectedRepairArgs.Num());
+	for (int32 Index = 0; Index < FMath::Min(FetchRepairArgs.Num(), ExpectedRepairArgs.Num()); ++Index)
+	{
+		TestEqual(FString::Printf(TEXT("FetchRepairArg[%d] matches"), Index), FetchRepairArgs[Index], ExpectedRepairArgs[Index]);
+	}
+
+	// 4. Verify ParseFlexVaultFetch parses valid JSON output
+	const TArray<FString> SampleJsonLines = {
+		TEXT("{"),
+		FString::Printf(TEXT("  \"program\": { \"name\": \"fxv\", \"version\": \"%s\" },"), *FlexVaultCliCompatibility::GetMinVersionString()),
+		TEXT("  \"message\": {"),
+		TEXT("    \"kind\": \"fetch\","),
+		TEXT("    \"version\": \"1.0\","),
+		TEXT("    \"payload\": {"),
+		TEXT("      \"bytes_downloaded\": 1048576,"),
+		TEXT("      \"repaired_files\": [\"Content/Corrupt.uasset\"]"),
+		TEXT("    }"),
+		TEXT("  }"),
+		TEXT("}")
+	};
+
+	FFlexVaultFetchResult FetchResult;
+	FSourceControlResultInfo ResultInfo;
+	const bool bParsed = ParseFlexVaultFetch(SampleJsonLines, FetchResult, ResultInfo);
+	TestTrue(TEXT("ParseFlexVaultFetch succeeded"), bParsed);
+	TestEqual(TEXT("BytesDownloaded matches"), FetchResult.BytesDownloaded, (int64)1048576);
+	TestEqual(TEXT("RepairedFiles count matches"), FetchResult.RepairedFiles.Num(), 1);
+	if (FetchResult.RepairedFiles.Num() > 0)
+	{
+		TestEqual(TEXT("Repaired file path matches"), FetchResult.RepairedFiles[0], TEXT("Content/Corrupt.uasset"));
+	}
+
+	// 5. Verify ParseFlexVaultFetch fails gracefully on malformed JSON
+	const TArray<FString> MalformedJson = { TEXT("{ corrupt json string ") };
+	FFlexVaultFetchResult MalformedResult;
+	FSourceControlResultInfo MalformedInfo;
+	TestFalse(TEXT("ParseFlexVaultFetch fails on malformed JSON"), ParseFlexVaultFetch(MalformedJson, MalformedResult, MalformedInfo));
+	TestTrue(TEXT("Malformed JSON produces error message"), MalformedInfo.ErrorMessages.Num() > 0);
+
+	// 6. Verify ParseFlexVaultFetch fails gracefully on missing payload
+	const TArray<FString> NoPayloadJson = { TEXT("{ \"program\": {}, \"message\": { \"kind\": \"error\" } }") };
+	FFlexVaultFetchResult NoPayloadResult;
+	FSourceControlResultInfo NoPayloadInfo;
+	TestFalse(TEXT("ParseFlexVaultFetch fails on missing payload"), ParseFlexVaultFetch(NoPayloadJson, NoPayloadResult, NoPayloadInfo));
 
 	return true;
 }

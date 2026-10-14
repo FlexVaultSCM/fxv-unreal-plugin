@@ -66,13 +66,12 @@ FCriticalSection& GetFlexVaultSnapshotLock();
 
 /**
  * Runs the FlexVault CLI as a child process and blocks the calling thread until it exits.
- * If InCancelCommand is provided and InCancelCommand->IsCanceled() becomes true while the
- * process is running (e.g. a synchronous wait timed out), the child process is terminated
- * and the call returns promptly with a failure result, rather than blocking indefinitely.
- * Independently, if InTimeoutSeconds is > 0, the process is terminated after that many seconds
- * even with no InCancelCommand - for ad-hoc callers that aren't part of the provider's command
- * queue (and so have no FFlexVaultSourceControlCommand to watch) but still need a bound on how
- * long a hung CLI process can block the calling thread.
+ * Cancellation support:
+ *  - InCancelCommand: For provider-queued operations (FFlexVaultSourceControlCommand). Checks
+ *    IsCanceled() and provides command metadata such as cancel grace periods.
+ *  - InCancelToken: For ad-hoc or background tasks outside the command queue (e.g. periodic
+ *    fetch, auto-snapshot). A lightweight atomic flag that triggers immediate process termination.
+ * If InTimeoutSeconds is > 0, the process is also terminated after that duration as a fallback.
  */
 bool RunFlexVaultCommand(
 	const FString& InBinaryPath,
@@ -82,7 +81,8 @@ bool RunFlexVaultCommand(
 	FSourceControlResultInfo& OutResultInfo,
 	bool bIgnoreError = false,
 	const FFlexVaultSourceControlCommand* InCancelCommand = nullptr,
-	double InTimeoutSeconds = 0.0
+	double InTimeoutSeconds = 0.0,
+	TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> InCancelToken = nullptr
 );
 
 /**
@@ -103,8 +103,8 @@ bool RunFlexVaultCatCommand(
 namespace FlexVaultCliCompatibility
 {
 	// See fxv-core/CHANGELOG.md for the "Breaking Changes" entries that justify this range.
-	constexpr int32 MinMajor = 0, MinMinor = 11, MinPatch = 0; // >= 0.11.0
-	constexpr int32 MaxMajor = 0, MaxMinor = 12, MaxPatch = 0; // < 0.12.0
+	constexpr int32 MinMajor = 0, MinMinor = 11, MinPatch = 0;
+	constexpr int32 MaxMajor = 0, MaxMinor = 13, MaxPatch = 0;
 
 	inline FString GetMinVersionString()
 	{
@@ -125,13 +125,13 @@ struct FFlexVaultIntegrationRegisterOptions
 	/** Workspace path to associate the registration with. */
 	FString Workspace;
 
-	/** Version of the plugin (e.g. "0.5.2"). */
+	/** Version of the plugin. */
 	FString PluginVersion;
 
-	/** Minimum compatible fxv version, inclusive (e.g. "0.11.0"). */
+	/** Minimum compatible fxv version, inclusive. */
 	FString MinVersion;
 
-	/** Maximum compatible fxv version, exclusive (e.g. "0.12.0"). */
+	/** Maximum compatible fxv version, exclusive. */
 	FString MaxVersion;
 };
 
@@ -311,4 +311,41 @@ bool ParseFlexVaultErrorMessage(
  * Inspects an error string to determine if it indicates a workspace or repository format version incompatibility.
  */
 bool IsFlexVaultFormatIncompatibilityError(const FString& InErrorMessage);
+
+/**
+ * Result data from a successful 'fxv fetch' command.
+ */
+struct FFlexVaultFetchResult
+{
+	int64 BytesDownloaded = 0;
+	TArray<FString> RepairedFiles;
+};
+
+/**
+ * Builds the CLI args for 'fxv fetch [--repair]', shared between runner and tests.
+ */
+TArray<FString> BuildFlexVaultFetchArgs(bool bRepair = false);
+
+/**
+ * Parses the JSON output of 'fxv fetch --format json'.
+ */
+bool ParseFlexVaultFetch(
+	const TArray<FString>& InFetchOutputLines,
+	FFlexVaultFetchResult& OutFetchResult,
+	FSourceControlResultInfo& OutResultInfo
+);
+
+/**
+ * Runs 'fxv fetch [--repair] --format json' to pull remote metadata.
+ */
+bool RunFlexVaultFetch(
+	const FString& InBinaryPath,
+	const FString& InWorkspacePath,
+	FFlexVaultFetchResult& OutFetchResult,
+	FSourceControlResultInfo& OutResultInfo,
+	bool bRepair = false,
+	const FFlexVaultSourceControlCommand* InCancelCommand = nullptr,
+	double InTimeoutSeconds = 60.0,
+	TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> InCancelToken = nullptr
+);
 

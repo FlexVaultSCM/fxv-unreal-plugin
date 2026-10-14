@@ -88,16 +88,20 @@ jobs:
 
           asset_versioned="FlexVaultSourceControl-${clean_version}.zip"
           asset_latest="FlexVaultSourceControl.zip"
+          asset_fab="FlexVaultSourceControl-${clean_version}-Fab.zip"
 
           # Package root directory of the plugin suitable for dropping directly into UE Projects/Plugins
           git archive --format=zip --prefix="FlexVaultSourceControl/" HEAD:FlexVaultSourceControl -o "$asset_versioned"
           cp "$asset_versioned" "$asset_latest"
+          cp "$asset_versioned" "$asset_fab"
 
           sha256sum "$asset_versioned" > "${asset_versioned}.sha256"
           sha256sum "$asset_latest" > "${asset_latest}.sha256"
+          sha256sum "$asset_fab" > "${asset_fab}.sha256"
 
           echo "asset_versioned=$asset_versioned" >> "$GITHUB_ENV"
           echo "asset_latest=$asset_latest" >> "$GITHUB_ENV"
+          echo "asset_fab=$asset_fab" >> "$GITHUB_ENV"
 
       - name: Upload assets to GitHub Release
         shell: bash
@@ -110,5 +114,7 @@ jobs:
             "${{ env.asset_versioned }}.sha256" \
             "${{ env.asset_latest }}" \
             "${{ env.asset_latest }}.sha256" \
+            "${{ env.asset_fab }}" \
+            "${{ env.asset_fab }}.sha256" \
             --clobber \
             --repo "${{ github.repository }}"
