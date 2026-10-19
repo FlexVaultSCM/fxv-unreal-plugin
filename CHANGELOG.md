@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.0](https://github.com/FlexVaultSCM/fxv-unreal-plugin/compare/v0.8.1...v0.9.0) (2026-10-19)
+
+
+### Features
+
+* publish version.json manifest with release ([#37](https://github.com/FlexVaultSCM/fxv-unreal-plugin/issues/37)) ([21bcf4d](https://github.com/FlexVaultSCM/fxv-unreal-plugin/commit/21bcf4d4fc1dda31465a9994a3098e69db0cad87))
+
 ## [0.8.1](https://github.com/FlexVaultSCM/fxv-unreal-plugin/compare/v0.8.0...v0.8.1) (2026-10-19)
 
 
