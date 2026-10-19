@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.1](https://github.com/FlexVaultSCM/fxv-unreal-plugin/compare/v0.8.0...v0.8.1) (2026-10-19)
+
+
+### Bug Fixes
+
+* add EngineVersion, PlatformAllowList, and update SupportURL in .uplugin ([#35](https://github.com/FlexVaultSCM/fxv-unreal-plugin/issues/35)) ([b3dfbd5](https://github.com/FlexVaultSCM/fxv-unreal-plugin/commit/b3dfbd5a58989c64484b896dcdcca5e3b48e1421))
+
 ## [0.8.0](https://github.com/FlexVaultSCM/fxv-unreal-plugin/compare/v0.7.0...v0.8.0) (2026-10-14)
 
 
