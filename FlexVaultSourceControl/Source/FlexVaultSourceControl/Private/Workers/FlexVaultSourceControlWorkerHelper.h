@@ -170,11 +170,13 @@ bool CheckFlexVaultVersion(
 
 /**
  * Parses a downloaded version.json manifest string. If the manifest declares a higher plugin_version
- * than InCurrentPluginVersion, returns true and populates OutNewVersion and OutCliRange.
+ * than InCurrentPluginVersion and InCurrentCliVersion satisfies remote cli_compatibility (if specified),
+ * returns true and populates OutNewVersion and OutCliRange.
  */
 bool ParseFlexVaultVersionManifest(
 	const FString& InJsonText,
 	const FString& InCurrentPluginVersion,
+	const FString& InCurrentCliVersion,
 	FString& OutNewVersion,
 	FString& OutCliRange
 );
@@ -184,7 +186,10 @@ bool ParseFlexVaultVersionManifest(
  * If a newer compatible version is available, logs a notice to the Output Log.
  * Throttled so it executes at most once per editor session.
  */
-void CheckForRemotePluginUpdateAsync(const FString& InCurrentPluginVersion);
+void CheckForRemotePluginUpdateAsync(
+	const FString& InCurrentPluginVersion,
+	const FString& InCurrentCliVersion
+);
 
 /**
  * Extracts the workspace's current logged-in username (message.payload.current_user) from an

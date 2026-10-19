@@ -620,6 +620,7 @@ bool CheckFlexVaultVersion(
 bool ParseFlexVaultVersionManifest(
 	const FString& InJsonText,
 	const FString& InCurrentPluginVersion,
+	const FString& InCurrentCliVersion,
 	FString& OutNewVersion,
 	FString& OutCliRange
 )
@@ -657,28 +658,53 @@ bool ParseFlexVaultVersionManifest(
 		return false;
 	}
 
-	// If remote version is greater than current version
-	if (CurrentVer < RemoteVer)
+	// Remote plugin version must be strictly newer than current plugin version
+	if (!(CurrentVer < RemoteVer))
 	{
-		OutNewVersion = RemoteVerStr;
-
-		const TSharedPtr<FJsonObject>* CompatObj = nullptr;
-		if (RootObject->TryGetObjectField(TEXT("cli_compatibility"), CompatObj) && CompatObj && (*CompatObj).IsValid())
-		{
-			FString MinStr, MaxStr;
-			if ((*CompatObj)->TryGetStringField(TEXT("min"), MinStr) && (*CompatObj)->TryGetStringField(TEXT("max"), MaxStr))
-			{
-				OutCliRange = FString::Printf(TEXT(">= %s, < %s"), *MinStr, *MaxStr);
-			}
-		}
-
-		return true;
+		return false;
 	}
 
-	return false;
+	// If the manifest specifies CLI compatibility bounds, verify the user's current CLI satisfies them
+	const TSharedPtr<FJsonObject>* CompatObj = nullptr;
+	if (RootObject->TryGetObjectField(TEXT("cli_compatibility"), CompatObj) && CompatObj && (*CompatObj).IsValid())
+	{
+		FString MinStr, MaxStr;
+		if ((*CompatObj)->TryGetStringField(TEXT("min"), MinStr) && (*CompatObj)->TryGetStringField(TEXT("max"), MaxStr))
+		{
+			OutCliRange = FString::Printf(TEXT(">= %s, < %s"), *MinStr, *MaxStr);
+
+			if (!InCurrentCliVersion.IsEmpty())
+			{
+				FFlexVaultCliVersion CurrentCli;
+				FFlexVaultCliVersion CompatMin;
+				FFlexVaultCliVersion CompatMax;
+
+				if (!FFlexVaultCliVersion::TryParse(InCurrentCliVersion, CurrentCli) ||
+					!FFlexVaultCliVersion::TryParse(MinStr, CompatMin) ||
+					!FFlexVaultCliVersion::TryParse(MaxStr, CompatMax))
+				{
+					OutCliRange.Reset();
+					return false;
+				}
+
+				// The user's CLI must satisfy: CompatMin <= CurrentCli < CompatMax
+				if (CurrentCli < CompatMin || !(CurrentCli < CompatMax))
+				{
+					OutCliRange.Reset();
+					return false;
+				}
+			}
+		}
+	}
+
+	OutNewVersion = RemoteVerStr;
+	return true;
 }
 
-void CheckForRemotePluginUpdateAsync(const FString& InCurrentPluginVersion)
+void CheckForRemotePluginUpdateAsync(
+	const FString& InCurrentPluginVersion,
+	const FString& InCurrentCliVersion
+)
 {
 	static bool bHasChecked = false;
 	if (bHasChecked)
@@ -694,7 +720,7 @@ void CheckForRemotePluginUpdateAsync(const FString& InCurrentPluginVersion)
 	Request->SetTimeout(10.0f);
 
 	Request->OnProcessRequestComplete().BindLambda(
-		[InCurrentPluginVersion](FHttpRequestPtr Request, FHttpResponsePtr Response, bool bConnectedSuccessfully)
+		[InCurrentPluginVersion, InCurrentCliVersion](FHttpRequestPtr Request, FHttpResponsePtr Response, bool bConnectedSuccessfully)
 		{
 			if (!bConnectedSuccessfully || !Response.IsValid() || Response->GetResponseCode() != 200)
 			{
@@ -704,7 +730,7 @@ void CheckForRemotePluginUpdateAsync(const FString& InCurrentPluginVersion)
 			const FString JsonText = Response->GetContentAsString();
 			FString NewVersion;
 			FString CliRange;
-			if (ParseFlexVaultVersionManifest(JsonText, InCurrentPluginVersion, NewVersion, CliRange))
+			if (ParseFlexVaultVersionManifest(JsonText, InCurrentPluginVersion, InCurrentCliVersion, NewVersion, CliRange))
 			{
 				const FString CliRangeNotice = CliRange.IsEmpty() ? FString() : FString::Printf(TEXT(" (supports fxv CLI %s)"), *CliRange);
 				UE_LOG(LogFlexVault, Warning, TEXT("FlexVault SCM: A newer plugin version (v%s) is available%s: https://github.com/FlexVaultSCM/fxv-unreal-plugin/releases/latest"),
