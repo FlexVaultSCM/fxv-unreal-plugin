@@ -90,6 +90,10 @@ jobs:
           asset_latest="FlexVaultSourceControl.zip"
           asset_fab="FlexVaultSourceControl-${clean_version}-Fab.zip"
 
+          # Generate version.json containing version metadata and CLI compatibility range
+          node .github/scripts/generate-version-json.js --tag "$version"
+          sha256sum version.json > version.json.sha256
+
           # Package root directory of the plugin suitable for dropping directly into UE Projects/Plugins
           git archive --format=zip --prefix="FlexVaultSourceControl/" HEAD:FlexVaultSourceControl -o "$asset_versioned"
           cp "$asset_versioned" "$asset_latest"
@@ -110,6 +114,8 @@ jobs:
         run: |
           version="${{ needs.release-please.outputs.tag_name }}"
           gh release upload "${version}" \
+            version.json \
+            version.json.sha256 \
             "${{ env.asset_versioned }}" \
             "${{ env.asset_versioned }}.sha256" \
             "${{ env.asset_latest }}" \

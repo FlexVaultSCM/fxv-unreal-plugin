@@ -1,4 +1,4 @@
-﻿const fs = require('fs');
+const fs = require('fs');
 const path = require('path');
 
 const repoRoot = path.resolve(__dirname, '..', '..');
@@ -49,4 +49,39 @@ if (tagIndex !== -1 && tagIndex + 1 < process.argv.length) {
   console.log(`[Version Check] Release tag matches uplugin VersionName: ${tag} == ${pluginVersion}`);
 }
 
+// 4. Validate CLI compatibility bounds in FlexVaultSourceControlWorkerHelper.h
+const helperHeaderPath = path.join(
+  repoRoot,
+  'FlexVaultSourceControl',
+  'Source',
+  'FlexVaultSourceControl',
+  'Private',
+  'Workers',
+  'FlexVaultSourceControlWorkerHelper.h'
+);
+if (!fs.existsSync(helperHeaderPath)) {
+  console.error('Error: helper header not found at ' + helperHeaderPath);
+  process.exit(1);
+}
+const helperHeader = fs.readFileSync(helperHeaderPath, 'utf8');
+const minMajorMatch = helperHeader.match(/MinMajor\s*=\s*(\d+)/);
+const minMinorMatch = helperHeader.match(/MinMinor\s*=\s*(\d+)/);
+const minPatchMatch = helperHeader.match(/MinPatch\s*=\s*(\d+)/);
+const maxMajorMatch = helperHeader.match(/MaxMajor\s*=\s*(\d+)/);
+const maxMinorMatch = helperHeader.match(/MaxMinor\s*=\s*(\d+)/);
+const maxPatchMatch = helperHeader.match(/MaxPatch\s*=\s*(\d+)/);
+
+if (!minMajorMatch || !minMinorMatch || !minPatchMatch || !maxMajorMatch || !maxMinorMatch || !maxPatchMatch) {
+  console.error('Error: Could not parse FlexVaultCliCompatibility min/max bounds in FlexVaultSourceControlWorkerHelper.h.');
+  process.exit(1);
+}
+const cliMin = `${minMajorMatch[1]}.${minMinorMatch[1]}.${minPatchMatch[1]}`;
+const cliMax = `${maxMajorMatch[1]}.${maxMinorMatch[1]}.${maxPatchMatch[1]}`;
+if (!semverRegex.test(cliMin) || !semverRegex.test(cliMax)) {
+  console.error(`Error: Parsed CLI compatibility bounds ('${cliMin}', '${cliMax}') are not valid semver.`);
+  process.exit(1);
+}
+console.log(`[Version Check] FlexVaultCliCompatibility bounds: >= ${cliMin}, < ${cliMax}`);
+
 console.log('All version checks passed successfully.');
+
