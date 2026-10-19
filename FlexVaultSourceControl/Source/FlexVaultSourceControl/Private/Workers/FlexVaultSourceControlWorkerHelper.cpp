@@ -8,6 +8,7 @@
 #include "GenericPlatform/GenericPlatformFile.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
+#include "Misc/App.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "Serialization/JsonSerializer.h"
@@ -15,6 +16,13 @@
 #include "HttpModule.h"
 #include "Interfaces/IHttpRequest.h"
 #include "Interfaces/IHttpResponse.h"
+#include "Async/Async.h"
+
+#if SOURCE_CONTROL_WITH_SLATE
+#include "Framework/Notifications/NotificationManager.h"
+#include "Widgets/Notifications/SNotificationList.h"
+#include "Framework/Application/SlateApplication.h"
+#endif
 
 #define LOCTEXT_NAMESPACE "FlexVaultSourceControl"
 
@@ -735,6 +743,37 @@ void CheckForRemotePluginUpdateAsync(
 				const FString CliRangeNotice = CliRange.IsEmpty() ? FString() : FString::Printf(TEXT(" (supports fxv CLI %s)"), *CliRange);
 				UE_LOG(LogFlexVault, Warning, TEXT("FlexVault SCM: A newer plugin version (v%s) is available%s. For update instructions, see: %s"),
 					*NewVersion, *CliRangeNotice, FlexVaultCliCompatibility::GetPluginUpdateDocsUrl());
+
+#if SOURCE_CONTROL_WITH_SLATE
+				if (!FApp::IsUnattended() && !GIsAutomationTesting && !IsRunningCommandlet() && FApp::CanEverRender())
+				{
+					Async(EAsyncExecution::TaskGraphMainThread, [NewVersion, CliRangeNotice]()
+					{
+						if (!FSlateApplication::IsInitialized() || FApp::IsUnattended() || GIsAutomationTesting)
+						{
+							return;
+						}
+
+						FNotificationInfo Info(FText::Format(
+							LOCTEXT("FlexVaultUpdateAvailableTitle", "FlexVault: Plugin v{0} is available"),
+							FText::FromString(NewVersion)));
+						if (!CliRangeNotice.IsEmpty())
+						{
+							Info.SubText = FText::FromString(CliRangeNotice.TrimStartAndEnd());
+						}
+						Info.ExpireDuration = 8.0f;
+						Info.bFireAndForget = true;
+						Info.bUseThrobber = false;
+						Info.bUseSuccessFailIcons = false;
+						Info.HyperlinkText = LOCTEXT("FlexVaultViewUpdateGuide", "View Update Guide");
+						Info.Hyperlink = FSimpleDelegate::CreateLambda([]()
+						{
+							FPlatformProcess::LaunchURL(FlexVaultCliCompatibility::GetPluginUpdateDocsUrl(), nullptr, nullptr);
+						});
+						FSlateNotificationManager::Get().AddNotification(Info);
+					});
+				}
+#endif
 			}
 		}
 	);
