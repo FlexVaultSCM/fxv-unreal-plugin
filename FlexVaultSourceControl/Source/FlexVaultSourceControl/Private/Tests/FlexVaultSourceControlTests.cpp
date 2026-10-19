@@ -1129,6 +1129,66 @@ bool FFlexVaultCheckVersionTest::RunTest(const FString& Parameters)
 		TestTrue(TEXT("Error reported for missing version field"), ResultInfo.ErrorMessages.Num() > 0);
 	}
 
+	// 5. Remote version manifest parsing and compatibility filtering
+	{
+		TestTrue(TEXT("GetRemoteVersionJsonUrl is not empty"), FString(FlexVaultCliCompatibility::GetRemoteVersionJsonUrl()).StartsWith(TEXT("https://")));
+		TestTrue(TEXT("GetPluginUpdateDocsUrl points to docs"), FString(FlexVaultCliCompatibility::GetPluginUpdateDocsUrl()).StartsWith(TEXT("https://docs.fxv.dev/how-to/unreal-plugin/")));
+
+		const FString SampleManifest = TEXT("{\n")
+			TEXT("  \"name\": \"unreal\",\n")
+			TEXT("  \"plugin_version\": \"0.9.0\",\n")
+			TEXT("  \"tag\": \"v0.9.0\",\n")
+			TEXT("  \"cli_compatibility\": {\n")
+			TEXT("    \"min\": \"0.12.0\",\n")
+			TEXT("    \"max\": \"0.14.0\"\n")
+			TEXT("  }\n")
+			TEXT("}");
+
+		// Compatible: remote > current plugin AND CLI is within [0.12.0, 0.14.0)
+		FString NewVersion, CliRange;
+		const bool bUpdateAvailable = ParseFlexVaultVersionManifest(SampleManifest, TEXT("0.8.1"), TEXT("0.12.1"), NewVersion, CliRange);
+		TestTrue(TEXT("Update is available when remote > current and CLI compatible"), bUpdateAvailable);
+		TestEqual(TEXT("Parsed remote version"), NewVersion, TEXT("0.9.0"));
+		TestEqual(TEXT("Parsed remote CLI range"), CliRange, TEXT(">= 0.12.0, < 0.14.0"));
+
+		// Incompatible CLI (below min 0.12.0): should NOT prompt update
+		FString IncompatMinVersion, IncompatMinRange;
+		const bool bIncompatMin = ParseFlexVaultVersionManifest(SampleManifest, TEXT("0.8.1"), TEXT("0.11.0"), IncompatMinVersion, IncompatMinRange);
+		TestFalse(TEXT("No update when CLI version is below min compatible"), bIncompatMin);
+		TestTrue(TEXT("Outputs reset when CLI below min"), IncompatMinVersion.IsEmpty() && IncompatMinRange.IsEmpty());
+
+		// Incompatible CLI (at/above max 0.14.0): should NOT prompt update
+		FString IncompatMaxVersion, IncompatMaxRange;
+		const bool bIncompatMax = ParseFlexVaultVersionManifest(SampleManifest, TEXT("0.8.1"), TEXT("0.14.0"), IncompatMaxVersion, IncompatMaxRange);
+		TestFalse(TEXT("No update when CLI version is at or above max compatible"), bIncompatMax);
+		TestTrue(TEXT("Outputs reset when CLI at/above max"), IncompatMaxVersion.IsEmpty() && IncompatMaxRange.IsEmpty());
+
+		// Boundary tests: exactly min (0.12.0, inclusive) should pass
+		FString BoundaryMinVersion, BoundaryMinRange;
+		const bool bBoundaryMin = ParseFlexVaultVersionManifest(SampleManifest, TEXT("0.8.1"), TEXT("0.12.0"), BoundaryMinVersion, BoundaryMinRange);
+		TestTrue(TEXT("Update available when CLI matches min bound exactly"), bBoundaryMin);
+
+		// When remote == current plugin: no update
+		FString SameVersion, SameRange;
+		const bool bNoUpdate = ParseFlexVaultVersionManifest(SampleManifest, TEXT("0.9.0"), TEXT("0.12.1"), SameVersion, SameRange);
+		TestFalse(TEXT("No update when remote == current"), bNoUpdate);
+		TestTrue(TEXT("Outputs reset when remote == current"), SameVersion.IsEmpty() && SameRange.IsEmpty());
+
+		// When remote < current plugin: no update
+		FString OlderVersion, OlderRange;
+		const bool bOlder = ParseFlexVaultVersionManifest(SampleManifest, TEXT("1.0.0"), TEXT("0.12.1"), OlderVersion, OlderRange);
+		TestFalse(TEXT("No update when remote < current"), bOlder);
+		TestTrue(TEXT("Outputs reset when remote < current"), OlderVersion.IsEmpty() && OlderRange.IsEmpty());
+
+		// Manifest without cli_compatibility: should allow update if remote > current
+		const FString NoCompatManifest = TEXT("{\"name\":\"unreal\",\"plugin_version\":\"0.9.0\"}");
+		FString NoCompatVersion, NoCompatRange;
+		const bool bNoCompatUpdate = ParseFlexVaultVersionManifest(NoCompatManifest, TEXT("0.8.1"), TEXT("0.12.1"), NoCompatVersion, NoCompatRange);
+		TestTrue(TEXT("Update available even without cli_compatibility"), bNoCompatUpdate);
+		TestEqual(TEXT("Parsed version without compat"), NoCompatVersion, TEXT("0.9.0"));
+		TestTrue(TEXT("Cli range empty when absent"), NoCompatRange.IsEmpty());
+	}
+
 	return true;
 }
 

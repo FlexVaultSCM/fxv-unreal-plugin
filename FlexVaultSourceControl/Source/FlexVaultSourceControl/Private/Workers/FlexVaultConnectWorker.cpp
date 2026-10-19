@@ -100,6 +100,9 @@ bool FFlexVaultConnectWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 
 		FSourceControlResultInfo RegResultInfo;
 		RunFlexVaultIntegrationRegister(InCommand.BinaryPath, InCommand.WorkspacePath, RegOptions, RegResultInfo, &InCommand);
+
+		// Check for remote plugin updates in the background (non-blocking, best-effort)
+		CheckForRemotePluginUpdateAsync(PluginVersion, CliVersion);
 	}
 	else if (InCommand.ResultInfo.ErrorMessages.Num() > 0)
 	{

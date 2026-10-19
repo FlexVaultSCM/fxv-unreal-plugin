@@ -115,6 +115,16 @@ namespace FlexVaultCliCompatibility
 	{
 		return FString::Printf(TEXT("%d.%d.%d"), MaxMajor, MaxMinor, MaxPatch);
 	}
+
+	inline const TCHAR* GetRemoteVersionJsonUrl()
+	{
+		return TEXT("https://github.com/FlexVaultSCM/fxv-unreal-plugin/releases/latest/download/version.json");
+	}
+
+	inline const TCHAR* GetPluginUpdateDocsUrl()
+	{
+		return TEXT("https://docs.fxv.dev/how-to/unreal-plugin/#updating-the-plugin");
+	}
 }
 
 /**
@@ -161,6 +171,29 @@ bool CheckFlexVaultVersion(
 	const TSharedPtr<class FJsonObject>& InEnvelope,
 	FSourceControlResultInfo& OutResultInfo,
 	FString* OutCliVersion = nullptr
+);
+
+/**
+ * Parses a downloaded version.json manifest string. If the manifest declares a higher plugin_version
+ * than InCurrentPluginVersion and InCurrentCliVersion satisfies remote cli_compatibility (if specified),
+ * returns true and populates OutNewVersion and OutCliRange.
+ */
+bool ParseFlexVaultVersionManifest(
+	const FString& InJsonText,
+	const FString& InCurrentPluginVersion,
+	const FString& InCurrentCliVersion,
+	FString& OutNewVersion,
+	FString& OutCliRange
+);
+
+/**
+ * Asynchronously checks remote version.json manifest for plugin updates.
+ * If a newer compatible version is available, logs a notice to the Output Log.
+ * Throttled so it executes at most once per editor session.
+ */
+void CheckForRemotePluginUpdateAsync(
+	const FString& InCurrentPluginVersion,
+	const FString& InCurrentCliVersion
 );
 
 /**

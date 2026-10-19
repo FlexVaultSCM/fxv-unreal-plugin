@@ -8,10 +8,21 @@
 #include "GenericPlatform/GenericPlatformFile.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
+#include "Misc/App.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonReader.h"
+#include "HttpModule.h"
+#include "Interfaces/IHttpRequest.h"
+#include "Interfaces/IHttpResponse.h"
+#include "Async/Async.h"
+
+#if SOURCE_CONTROL_WITH_SLATE
+#include "Framework/Notifications/NotificationManager.h"
+#include "Widgets/Notifications/SNotificationList.h"
+#include "Framework/Application/SlateApplication.h"
+#endif
 
 #define LOCTEXT_NAMESPACE "FlexVaultSourceControl"
 
@@ -612,6 +623,162 @@ bool CheckFlexVaultVersion(
 	}
 
 	return true;
+}
+
+bool ParseFlexVaultVersionManifest(
+	const FString& InJsonText,
+	const FString& InCurrentPluginVersion,
+	const FString& InCurrentCliVersion,
+	FString& OutNewVersion,
+	FString& OutCliRange
+)
+{
+	OutNewVersion.Reset();
+	OutCliRange.Reset();
+
+	if (InJsonText.IsEmpty())
+	{
+		return false;
+	}
+
+	TSharedPtr<FJsonObject> RootObject;
+	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(InJsonText);
+	if (!FJsonSerializer::Deserialize(Reader, RootObject) || !RootObject.IsValid())
+	{
+		return false;
+	}
+
+	FString RemoteVerStr;
+	if (!RootObject->TryGetStringField(TEXT("plugin_version"), RemoteVerStr) || RemoteVerStr.IsEmpty())
+	{
+		return false;
+	}
+
+	FFlexVaultCliVersion RemoteVer;
+	if (!FFlexVaultCliVersion::TryParse(RemoteVerStr, RemoteVer))
+	{
+		return false;
+	}
+
+	FFlexVaultCliVersion CurrentVer;
+	if (!FFlexVaultCliVersion::TryParse(InCurrentPluginVersion, CurrentVer))
+	{
+		return false;
+	}
+
+	// Remote plugin version must be strictly newer than current plugin version
+	if (!(CurrentVer < RemoteVer))
+	{
+		return false;
+	}
+
+	// If the manifest specifies CLI compatibility bounds, verify the user's current CLI satisfies them
+	const TSharedPtr<FJsonObject>* CompatObj = nullptr;
+	if (RootObject->TryGetObjectField(TEXT("cli_compatibility"), CompatObj) && CompatObj && (*CompatObj).IsValid())
+	{
+		FString MinStr, MaxStr;
+		if ((*CompatObj)->TryGetStringField(TEXT("min"), MinStr) && (*CompatObj)->TryGetStringField(TEXT("max"), MaxStr))
+		{
+			OutCliRange = FString::Printf(TEXT(">= %s, < %s"), *MinStr, *MaxStr);
+
+			if (!InCurrentCliVersion.IsEmpty())
+			{
+				FFlexVaultCliVersion CurrentCli;
+				FFlexVaultCliVersion CompatMin;
+				FFlexVaultCliVersion CompatMax;
+
+				if (!FFlexVaultCliVersion::TryParse(InCurrentCliVersion, CurrentCli) ||
+					!FFlexVaultCliVersion::TryParse(MinStr, CompatMin) ||
+					!FFlexVaultCliVersion::TryParse(MaxStr, CompatMax))
+				{
+					OutCliRange.Reset();
+					return false;
+				}
+
+				// The user's CLI must satisfy: CompatMin <= CurrentCli < CompatMax
+				if (CurrentCli < CompatMin || !(CurrentCli < CompatMax))
+				{
+					OutCliRange.Reset();
+					return false;
+				}
+			}
+		}
+	}
+
+	OutNewVersion = RemoteVerStr;
+	return true;
+}
+
+void CheckForRemotePluginUpdateAsync(
+	const FString& InCurrentPluginVersion,
+	const FString& InCurrentCliVersion
+)
+{
+	static bool bHasChecked = false;
+	if (bHasChecked)
+	{
+		return;
+	}
+	bHasChecked = true;
+
+	const FString Url = FlexVaultCliCompatibility::GetRemoteVersionJsonUrl();
+	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
+	Request->SetURL(Url);
+	Request->SetVerb(TEXT("GET"));
+	Request->SetTimeout(10.0f);
+
+	Request->OnProcessRequestComplete().BindLambda(
+		[InCurrentPluginVersion, InCurrentCliVersion](FHttpRequestPtr Request, FHttpResponsePtr Response, bool bConnectedSuccessfully)
+		{
+			if (!bConnectedSuccessfully || !Response.IsValid() || Response->GetResponseCode() != 200)
+			{
+				return;
+			}
+
+			const FString JsonText = Response->GetContentAsString();
+			FString NewVersion;
+			FString CliRange;
+			if (ParseFlexVaultVersionManifest(JsonText, InCurrentPluginVersion, InCurrentCliVersion, NewVersion, CliRange))
+			{
+				const FString CliRangeNotice = CliRange.IsEmpty() ? FString() : FString::Printf(TEXT(" (supports fxv CLI %s)"), *CliRange);
+				UE_LOG(LogFlexVault, Warning, TEXT("FlexVault SCM: A newer plugin version (v%s) is available%s. For update instructions, see: %s"),
+					*NewVersion, *CliRangeNotice, FlexVaultCliCompatibility::GetPluginUpdateDocsUrl());
+
+#if SOURCE_CONTROL_WITH_SLATE
+				if (!FApp::IsUnattended() && !GIsAutomationTesting && !IsRunningCommandlet() && FApp::CanEverRender())
+				{
+					Async(EAsyncExecution::TaskGraphMainThread, [NewVersion, CliRangeNotice]()
+					{
+						if (!FSlateApplication::IsInitialized() || FApp::IsUnattended() || GIsAutomationTesting)
+						{
+							return;
+						}
+
+						FNotificationInfo Info(FText::Format(
+							LOCTEXT("FlexVaultUpdateAvailableTitle", "FlexVault: Plugin v{0} is available"),
+							FText::FromString(NewVersion)));
+						if (!CliRangeNotice.IsEmpty())
+						{
+							Info.SubText = FText::FromString(CliRangeNotice.TrimStartAndEnd());
+						}
+						Info.ExpireDuration = 8.0f;
+						Info.bFireAndForget = true;
+						Info.bUseThrobber = false;
+						Info.bUseSuccessFailIcons = false;
+						Info.HyperlinkText = LOCTEXT("FlexVaultViewUpdateGuide", "View Update Guide");
+						Info.Hyperlink = FSimpleDelegate::CreateLambda([]()
+						{
+							FPlatformProcess::LaunchURL(FlexVaultCliCompatibility::GetPluginUpdateDocsUrl(), nullptr, nullptr);
+						});
+						FSlateNotificationManager::Get().AddNotification(Info);
+					});
+				}
+#endif
+			}
+		}
+	);
+
+	Request->ProcessRequest();
 }
 
 /**
