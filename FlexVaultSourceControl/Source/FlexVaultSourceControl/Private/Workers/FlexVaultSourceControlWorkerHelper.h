@@ -115,6 +115,11 @@ namespace FlexVaultCliCompatibility
 	{
 		return FString::Printf(TEXT("%d.%d.%d"), MaxMajor, MaxMinor, MaxPatch);
 	}
+
+	inline const TCHAR* GetRemoteVersionJsonUrl()
+	{
+		return TEXT("https://github.com/FlexVaultSCM/fxv-unreal-plugin/releases/latest/download/version.json");
+	}
 }
 
 /**
@@ -161,6 +166,17 @@ bool CheckFlexVaultVersion(
 	const TSharedPtr<class FJsonObject>& InEnvelope,
 	FSourceControlResultInfo& OutResultInfo,
 	FString* OutCliVersion = nullptr
+);
+
+/**
+ * Parses a downloaded version.json manifest string. If the manifest declares a higher plugin_version
+ * than InCurrentPluginVersion, returns true and populates OutNewVersion and OutCliRange.
+ */
+bool ParseFlexVaultVersionManifest(
+	const FString& InJsonText,
+	const FString& InCurrentPluginVersion,
+	FString& OutNewVersion,
+	FString& OutCliRange
 );
 
 /**

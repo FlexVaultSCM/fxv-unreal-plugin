@@ -614,6 +614,64 @@ bool CheckFlexVaultVersion(
 	return true;
 }
 
+bool ParseFlexVaultVersionManifest(
+	const FString& InJsonText,
+	const FString& InCurrentPluginVersion,
+	FString& OutNewVersion,
+	FString& OutCliRange
+)
+{
+	if (InJsonText.IsEmpty())
+	{
+		return false;
+	}
+
+	TSharedPtr<FJsonObject> RootObject;
+	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(InJsonText);
+	if (!FJsonSerializer::Deserialize(Reader, RootObject) || !RootObject.IsValid())
+	{
+		return false;
+	}
+
+	FString RemoteVerStr;
+	if (!RootObject->TryGetStringField(TEXT("plugin_version"), RemoteVerStr) || RemoteVerStr.IsEmpty())
+	{
+		return false;
+	}
+
+	FFlexVaultCliVersion RemoteVer;
+	if (!FFlexVaultCliVersion::TryParse(RemoteVerStr, RemoteVer))
+	{
+		return false;
+	}
+
+	FFlexVaultCliVersion CurrentVer;
+	if (!FFlexVaultCliVersion::TryParse(InCurrentPluginVersion, CurrentVer))
+	{
+		return false;
+	}
+
+	// If remote version is greater than current version
+	if (CurrentVer < RemoteVer)
+	{
+		OutNewVersion = RemoteVerStr;
+
+		const TSharedPtr<FJsonObject>* CompatObj = nullptr;
+		if (RootObject->TryGetObjectField(TEXT("cli_compatibility"), CompatObj) && CompatObj && (*CompatObj).IsValid())
+		{
+			FString MinStr, MaxStr;
+			if ((*CompatObj)->TryGetStringField(TEXT("min"), MinStr) && (*CompatObj)->TryGetStringField(TEXT("max"), MaxStr))
+			{
+				OutCliRange = FString::Printf(TEXT(">= %s, < %s"), *MinStr, *MaxStr);
+			}
+		}
+
+		return true;
+	}
+
+	return false;
+}
+
 /**
  * Unwraps the `message.payload` object shared by all FlexVault CLI JSON envelopes.
  */

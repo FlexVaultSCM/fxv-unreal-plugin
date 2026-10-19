@@ -1129,6 +1129,29 @@ bool FFlexVaultCheckVersionTest::RunTest(const FString& Parameters)
 		TestTrue(TEXT("Error reported for missing version field"), ResultInfo.ErrorMessages.Num() > 0);
 	}
 
+	// 5. Remote version manifest parsing
+	{
+		const FString SampleManifest = TEXT("{\n")
+			TEXT("  \"name\": \"unreal\",\n")
+			TEXT("  \"plugin_version\": \"0.9.0\",\n")
+			TEXT("  \"tag\": \"v0.9.0\",\n")
+			TEXT("  \"cli_compatibility\": {\n")
+			TEXT("    \"min\": \"0.12.0\",\n")
+			TEXT("    \"max\": \"0.14.0\"\n")
+			TEXT("  }\n")
+			TEXT("}");
+
+		FString NewVersion, CliRange;
+		const bool bUpdateAvailable = ParseFlexVaultVersionManifest(SampleManifest, TEXT("0.8.1"), NewVersion, CliRange);
+		TestTrue(TEXT("Update is available when remote > current"), bUpdateAvailable);
+		TestEqual(TEXT("Parsed remote version"), NewVersion, TEXT("0.9.0"));
+		TestEqual(TEXT("Parsed remote CLI range"), CliRange, TEXT(">= 0.12.0, < 0.14.0"));
+
+		FString SameVersion, SameRange;
+		const bool bNoUpdate = ParseFlexVaultVersionManifest(SampleManifest, TEXT("0.9.0"), SameVersion, SameRange);
+		TestFalse(TEXT("No update when remote == current"), bNoUpdate);
+	}
+
 	return true;
 }
 
