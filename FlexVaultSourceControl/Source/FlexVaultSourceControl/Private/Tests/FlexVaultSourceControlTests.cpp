@@ -1132,6 +1132,7 @@ bool FFlexVaultCheckVersionTest::RunTest(const FString& Parameters)
 	// 5. Remote version manifest parsing and compatibility filtering
 	{
 		TestTrue(TEXT("GetRemoteVersionJsonUrl is not empty"), FString(FlexVaultCliCompatibility::GetRemoteVersionJsonUrl()).StartsWith(TEXT("https://")));
+		TestTrue(TEXT("GetPluginUpdateDocsUrl points to docs"), FString(FlexVaultCliCompatibility::GetPluginUpdateDocsUrl()).StartsWith(TEXT("https://docs.fxv.dev/how-to/unreal-plugin/")));
 
 		const FString SampleManifest = TEXT("{\n")
 			TEXT("  \"name\": \"unreal\",\n")

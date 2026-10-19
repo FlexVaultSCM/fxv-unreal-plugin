@@ -733,8 +733,8 @@ void CheckForRemotePluginUpdateAsync(
 			if (ParseFlexVaultVersionManifest(JsonText, InCurrentPluginVersion, InCurrentCliVersion, NewVersion, CliRange))
 			{
 				const FString CliRangeNotice = CliRange.IsEmpty() ? FString() : FString::Printf(TEXT(" (supports fxv CLI %s)"), *CliRange);
-				UE_LOG(LogFlexVault, Warning, TEXT("FlexVault SCM: A newer plugin version (v%s) is available%s: https://github.com/FlexVaultSCM/fxv-unreal-plugin/releases/latest"),
-					*NewVersion, *CliRangeNotice);
+				UE_LOG(LogFlexVault, Warning, TEXT("FlexVault SCM: A newer plugin version (v%s) is available%s. For update instructions, see: %s"),
+					*NewVersion, *CliRangeNotice, FlexVaultCliCompatibility::GetPluginUpdateDocsUrl());
 			}
 		}
 	);

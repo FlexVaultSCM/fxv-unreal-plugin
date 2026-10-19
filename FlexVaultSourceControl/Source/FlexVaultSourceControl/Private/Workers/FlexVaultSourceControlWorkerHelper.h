@@ -120,6 +120,11 @@ namespace FlexVaultCliCompatibility
 	{
 		return TEXT("https://github.com/FlexVaultSCM/fxv-unreal-plugin/releases/latest/download/version.json");
 	}
+
+	inline const TCHAR* GetPluginUpdateDocsUrl()
+	{
+		return TEXT("https://docs.fxv.dev/how-to/unreal-plugin/#updating-the-plugin");
+	}
 }
 
 /**
