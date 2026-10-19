@@ -9,7 +9,8 @@
 	"CreatedByURL": "https://fxv.dev",
 	"DocsURL": "https://docs.fxv.dev/how-to/unreal-plugin/",
 	"MarketplaceURL": "",
-	"SupportURL": "https://discord.gg/KCMHRQBDf",
+	"SupportURL": "https://fxv.dev/discord",
+	"EngineVersion": "5.8",
 	"EnabledByDefault": true,
 	"CanContainContent": false,
 	"IsBetaVersion": true,
@@ -18,7 +19,12 @@
 		{
 			"Name": "FlexVaultSourceControl",
 			"Type": "Editor",
-			"LoadingPhase": "EarliestPossible"
+			"LoadingPhase": "EarliestPossible",
+			"PlatformAllowList": [
+				"Win64",
+				"Mac",
+				"Linux"
+			]
 		}
 	]
 }
