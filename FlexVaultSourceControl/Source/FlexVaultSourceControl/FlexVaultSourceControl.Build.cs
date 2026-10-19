@@ -18,7 +18,8 @@ public class FlexVaultSourceControl : ModuleRules
 				"Projects",
 				"DeveloperSettings",
 				"UnrealEd",
-				"ApplicationCore"
+				"ApplicationCore",
+				"HTTP"
 			}
 		);
 

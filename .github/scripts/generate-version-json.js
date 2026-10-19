@@ -31,22 +31,28 @@ if (!fs.existsSync(helperHeaderPath)) {
   process.exit(1);
 }
 const helperHeader = fs.readFileSync(helperHeaderPath, 'utf8');
+const compatNamespaceMatch = helperHeader.match(/namespace\s+FlexVaultCliCompatibility\s*\{([\s\S]*?)\}/);
+if (!compatNamespaceMatch) {
+  console.error('Error: Could not find namespace FlexVaultCliCompatibility in helper header.');
+  process.exit(1);
+}
+const compatBlock = compatNamespaceMatch[1];
+const minMatch = compatBlock.match(/MinMajor\s*=\s*(\d+)\s*,\s*MinMinor\s*=\s*(\d+)\s*,\s*MinPatch\s*=\s*(\d+)/);
+const maxMatch = compatBlock.match(/MaxMajor\s*=\s*(\d+)\s*,\s*MaxMinor\s*=\s*(\d+)\s*,\s*MaxPatch\s*=\s*(\d+)/);
 
-const minMajorMatch = helperHeader.match(/MinMajor\s*=\s*(\d+)/);
-const minMinorMatch = helperHeader.match(/MinMinor\s*=\s*(\d+)/);
-const minPatchMatch = helperHeader.match(/MinPatch\s*=\s*(\d+)/);
-
-const maxMajorMatch = helperHeader.match(/MaxMajor\s*=\s*(\d+)/);
-const maxMinorMatch = helperHeader.match(/MaxMinor\s*=\s*(\d+)/);
-const maxPatchMatch = helperHeader.match(/MaxPatch\s*=\s*(\d+)/);
-
-if (!minMajorMatch || !minMinorMatch || !minPatchMatch || !maxMajorMatch || !maxMinorMatch || !maxPatchMatch) {
-  console.error('Error: Could not parse FlexVaultCliCompatibility min/max bounds from helper header.');
+if (!minMatch || !maxMatch) {
+  console.error('Error: Could not parse FlexVaultCliCompatibility min/max bounds in helper header.');
   process.exit(1);
 }
 
-const cliMin = `${minMajorMatch[1]}.${minMinorMatch[1]}.${minPatchMatch[1]}`;
-const cliMax = `${maxMajorMatch[1]}.${maxMinorMatch[1]}.${maxPatchMatch[1]}`;
+const cliMin = `${minMatch[1]}.${minMatch[2]}.${minMatch[3]}`;
+const cliMax = `${maxMatch[1]}.${maxMatch[2]}.${maxMatch[3]}`;
+
+const semverRegex = /^\d+\.\d+\.\d+$/;
+if (!semverRegex.test(cliMin) || !semverRegex.test(cliMax)) {
+  console.error(`Error: Parsed CLI compatibility bounds ('${cliMin}', '${cliMax}') are not valid semver.`);
+  process.exit(1);
+}
 
 // 3. Resolve tag and clean version
 let tag = process.env.RELEASE_TAG || `v${pluginVersion}`;
@@ -55,6 +61,11 @@ if (tagArgIndex !== -1 && tagArgIndex + 1 < process.argv.length) {
   tag = process.argv[tagArgIndex + 1];
 }
 const cleanVersion = tag.replace(/^v/, '');
+
+if (cleanVersion !== pluginVersion) {
+  console.error(`Error: Tag version '${cleanVersion}' does not match uplugin VersionName '${pluginVersion}'.`);
+  process.exit(1);
+}
 
 const outputPath = path.join(repoRoot, 'version.json');
 const manifest = {
@@ -67,7 +78,8 @@ const manifest = {
   },
   assets: {
     plugin_zip: `FlexVaultSourceControl-${cleanVersion}.zip`,
-    plugin_zip_latest: 'FlexVaultSourceControl.zip'
+    plugin_zip_latest: 'FlexVaultSourceControl.zip',
+    plugin_fab_zip: `FlexVaultSourceControl-${cleanVersion}-Fab.zip`
   }
 };
 

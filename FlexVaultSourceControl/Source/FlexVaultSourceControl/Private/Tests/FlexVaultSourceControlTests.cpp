@@ -1131,6 +1131,8 @@ bool FFlexVaultCheckVersionTest::RunTest(const FString& Parameters)
 
 	// 5. Remote version manifest parsing
 	{
+		TestTrue(TEXT("GetRemoteVersionJsonUrl is not empty"), FString(FlexVaultCliCompatibility::GetRemoteVersionJsonUrl()).StartsWith(TEXT("https://")));
+
 		const FString SampleManifest = TEXT("{\n")
 			TEXT("  \"name\": \"unreal\",\n")
 			TEXT("  \"plugin_version\": \"0.9.0\",\n")
@@ -1150,6 +1152,20 @@ bool FFlexVaultCheckVersionTest::RunTest(const FString& Parameters)
 		FString SameVersion, SameRange;
 		const bool bNoUpdate = ParseFlexVaultVersionManifest(SampleManifest, TEXT("0.9.0"), SameVersion, SameRange);
 		TestFalse(TEXT("No update when remote == current"), bNoUpdate);
+		TestTrue(TEXT("Outputs reset when remote == current"), SameVersion.IsEmpty() && SameRange.IsEmpty());
+
+		FString OlderVersion, OlderRange;
+		const bool bOlder = ParseFlexVaultVersionManifest(SampleManifest, TEXT("1.0.0"), OlderVersion, OlderRange);
+		TestFalse(TEXT("No update when remote < current"), bOlder);
+		TestTrue(TEXT("Outputs reset when remote < current"), OlderVersion.IsEmpty() && OlderRange.IsEmpty());
+
+		// Manifest without cli_compatibility
+		const FString NoCompatManifest = TEXT("{\"name\":\"unreal\",\"plugin_version\":\"0.9.0\"}");
+		FString NoCompatVersion, NoCompatRange;
+		const bool bNoCompatUpdate = ParseFlexVaultVersionManifest(NoCompatManifest, TEXT("0.8.1"), NoCompatVersion, NoCompatRange);
+		TestTrue(TEXT("Update available even without cli_compatibility"), bNoCompatUpdate);
+		TestEqual(TEXT("Parsed version without compat"), NoCompatVersion, TEXT("0.9.0"));
+		TestTrue(TEXT("Cli range empty when absent"), NoCompatRange.IsEmpty());
 	}
 
 	return true;

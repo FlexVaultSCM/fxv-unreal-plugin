@@ -180,6 +180,13 @@ bool ParseFlexVaultVersionManifest(
 );
 
 /**
+ * Asynchronously checks remote version.json manifest for plugin updates.
+ * If a newer compatible version is available, logs a notice to the Output Log.
+ * Throttled so it executes at most once per editor session.
+ */
+void CheckForRemotePluginUpdateAsync(const FString& InCurrentPluginVersion);
+
+/**
  * Extracts the workspace's current logged-in username (message.payload.current_user) from an
  * `fxv status --format json` envelope. Returns false (leaving OutCurrentUser empty) if the envelope
  * is malformed or the field is absent, which is the normal shape when nobody is logged in.
