@@ -32,6 +32,7 @@ struct FFlexVaultRevisionDetail
 	FDateTime Date;
 	FString ContentAddress;
 	int64 FileSize;
+	FString RelativePath;
 };
 
 /**

@@ -1347,6 +1347,7 @@ bool ParseFlexVaultChangeInfo(
 				Rev.Action = ActionStr;
 			}
 
+			Rev.RelativePath = RelPath;
 			Rev.Date = InCommit.Date;
 
 			if (HashStr.StartsWith(TEXT("BLOB:")) || HashStr.StartsWith(TEXT("content:")))

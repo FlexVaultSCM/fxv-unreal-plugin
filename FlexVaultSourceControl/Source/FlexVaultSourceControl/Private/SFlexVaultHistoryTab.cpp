@@ -727,8 +727,8 @@ void SFlexVaultHistoryTab::FetchCommitDetailsAsync(const TSharedPtr<FFlexVaultHi
 			for (const FFlexVaultRevisionDetail& Detail : Pair.Value)
 			{
 				TSharedRef<FFlexVaultHistoryFileItem> FileItem = MakeShared<FFlexVaultHistoryFileItem>();
-				FileItem->RelativePath = Pair.Key;
-				FileItem->FullPath = FPaths::Combine(WorkspacePath, Pair.Key);
+				FileItem->RelativePath = !Detail.RelativePath.IsEmpty() ? Detail.RelativePath : Pair.Key;
+				FileItem->FullPath = FPaths::Combine(WorkspacePath, FileItem->RelativePath);
 				FileItem->Action = Detail.Action;
 				FileItem->RevisionSpec = Detail.RevisionSpec;
 				FileItem->ContentAddress = Detail.ContentAddress;

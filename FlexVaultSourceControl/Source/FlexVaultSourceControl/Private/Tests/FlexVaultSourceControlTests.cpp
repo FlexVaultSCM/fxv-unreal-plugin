@@ -1670,6 +1670,7 @@ bool FFlexVaultHistoryModelTest::RunTest(const FString& Parameters)
 	{
 		TestEqual(TEXT("Hero.uasset action mapped to Edit"), (*HeroAssetRevs)[0].Action, TEXT("Edit"));
 		TestEqual(TEXT("Hero.uasset size matches"), (*HeroAssetRevs)[0].FileSize, (int64)2048);
+		TestEqual(TEXT("Hero.uasset preserved original casing"), (*HeroAssetRevs)[0].RelativePath, TEXT("Content/Characters/Hero.uasset"));
 	}
 
 	return true;
