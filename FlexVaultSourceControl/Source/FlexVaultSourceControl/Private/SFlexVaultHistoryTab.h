@@ -52,7 +52,6 @@ private:
 
 	// ── Actions ─────────────────────────────────────────────────────
 	void DiffSelectedFileAgainstWorkspace(TSharedPtr<FFlexVaultHistoryFileItem> InItem);
-	void DiffSelectedFileAgainstPrevious(TSharedPtr<FFlexVaultHistoryFileItem> InItem);
 	void LocateInContentBrowser(TSharedPtr<FFlexVaultHistoryFileItem> InItem);
 	void OpenInExternalEditor(TSharedPtr<FFlexVaultHistoryFileItem> InItem);
 	void CopyPathToClipboard(TSharedPtr<FFlexVaultHistoryFileItem> InItem);
@@ -97,6 +96,9 @@ private:
 
 	// Last head commit tracker for automatic refresh detection
 	FString LastKnownHeadCommit;
+
+	// Cancellation token for background worker tasks
+	TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> HistoryTabCancelToken;
 
 	// Periodic ticker
 	FTSTicker::FDelegateHandle TickerHandle;

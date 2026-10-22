@@ -26,9 +26,11 @@
 #include "Framework/MultiBox/MultiBoxBuilder.h"
 #include "HAL/PlatformProcess.h"
 #include "HAL/PlatformFileManager.h"
+#include "HAL/PlatformApplicationMisc.h"
 #include "Misc/PackageName.h"
 #include "Misc/Paths.h"
 #include "Async/Async.h"
+#include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetToolsModule.h"
 #include "IAssetTools.h"
 #include "DiffUtils.h"
@@ -54,6 +56,8 @@ namespace FlexVaultHistoryColumns
 
 void SFlexVaultHistoryTab::Construct(const FArguments& InArgs)
 {
+	HistoryTabCancelToken = MakeShared<TAtomic<bool>, ESPMode::ThreadSafe>(false);
+
 	SelectedBranchOption = MakeShared<FString>(TEXT("All Branches"));
 	BranchOptions.Add(SelectedBranchOption);
 
@@ -218,6 +222,11 @@ SFlexVaultHistoryTab::~SFlexVaultHistoryTab()
 		FTSTicker::GetCoreTicker().RemoveTicker(TickerHandle);
 		TickerHandle.Reset();
 	}
+
+	if (HistoryTabCancelToken.IsValid())
+	{
+		HistoryTabCancelToken->Store(true);
+	}
 }
 
 FFlexVaultSourceControlProvider* SFlexVaultHistoryTab::GetProvider() const
@@ -282,9 +291,15 @@ void SFlexVaultHistoryTab::CheckWorkspaceStatusAsync()
 	const FString WorkspacePath = GetWorkspacePath();
 
 	TWeakPtr<SFlexVaultHistoryTab> WeakSelf = SharedThis(this);
+	TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> LocalCancelToken = HistoryTabCancelToken;
 
-	Async(EAsyncExecution::ThreadPool, [WeakSelf, BinaryPath, WorkspacePath]()
+	Async(EAsyncExecution::ThreadPool, [WeakSelf, BinaryPath, WorkspacePath, LocalCancelToken]()
 	{
+		if (LocalCancelToken.IsValid() && LocalCancelToken->Load())
+		{
+			return;
+		}
+
 		TArray<FString> StatusArgs = {
 			TEXT("status"),
 			TEXT("--format"),
@@ -297,7 +312,12 @@ void SFlexVaultHistoryTab::CheckWorkspaceStatusAsync()
 		TArray<FString> OutputLines;
 		FSourceControlResultInfo ResultInfo;
 
-		bool bOk = RunFlexVaultCommand(BinaryPath, WorkspacePath, StatusArgs, OutputLines, ResultInfo, true);
+		bool bOk = RunFlexVaultCommand(BinaryPath, WorkspacePath, StatusArgs, OutputLines, ResultInfo, true, nullptr, 15.0, LocalCancelToken);
+		if (LocalCancelToken.IsValid() && LocalCancelToken->Load())
+		{
+			return;
+		}
+
 		FString NewHeadCommit;
 
 		if (bOk)
@@ -311,8 +331,13 @@ void SFlexVaultHistoryTab::CheckWorkspaceStatusAsync()
 			}
 		}
 
-		Async(EAsyncExecution::TaskGraphMainThread, [WeakSelf, NewHeadCommit]()
+		Async(EAsyncExecution::TaskGraphMainThread, [WeakSelf, NewHeadCommit, LocalCancelToken]()
 		{
+			if (LocalCancelToken.IsValid() && LocalCancelToken->Load())
+			{
+				return;
+			}
+
 			TSharedPtr<SFlexVaultHistoryTab> Pin = WeakSelf.Pin();
 			if (!Pin.IsValid())
 			{
@@ -381,9 +406,15 @@ void SFlexVaultHistoryTab::FetchHistoryAsync(const FString& InBranchFilter)
 	const FString WorkspacePath = GetWorkspacePath();
 
 	TWeakPtr<SFlexVaultHistoryTab> WeakSelf = SharedThis(this);
+	TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> LocalCancelToken = HistoryTabCancelToken;
 
-	Async(EAsyncExecution::ThreadPool, [WeakSelf, BinaryPath, WorkspacePath, InBranchFilter]()
+	Async(EAsyncExecution::ThreadPool, [WeakSelf, BinaryPath, WorkspacePath, InBranchFilter, LocalCancelToken]()
 	{
+		if (LocalCancelToken.IsValid() && LocalCancelToken->Load())
+		{
+			return;
+		}
+
 		TArray<FString> HistoryArgs = {
 			TEXT("history"),
 			TEXT("--format"),
@@ -398,7 +429,11 @@ void SFlexVaultHistoryTab::FetchHistoryAsync(const FString& InBranchFilter)
 
 		TArray<FString> OutputLines;
 		FSourceControlResultInfo ResultInfo;
-		bool bOk = RunFlexVaultCommand(BinaryPath, WorkspacePath, HistoryArgs, OutputLines, ResultInfo, false);
+		bool bOk = RunFlexVaultCommand(BinaryPath, WorkspacePath, HistoryArgs, OutputLines, ResultInfo, false, nullptr, 30.0, LocalCancelToken);
+		if (LocalCancelToken.IsValid() && LocalCancelToken->Load())
+		{
+			return;
+		}
 
 		TArray<FFlexVaultCommitMeta> ParsedCommits;
 		if (bOk)
@@ -406,8 +441,13 @@ void SFlexVaultHistoryTab::FetchHistoryAsync(const FString& InBranchFilter)
 			ParseFlexVaultHistory(OutputLines, ParsedCommits, ResultInfo);
 		}
 
-		Async(EAsyncExecution::TaskGraphMainThread, [WeakSelf, bOk, ParsedCommits]()
+		Async(EAsyncExecution::TaskGraphMainThread, [WeakSelf, bOk, ParsedCommits, LocalCancelToken]()
 		{
+			if (LocalCancelToken.IsValid() && LocalCancelToken->Load())
+			{
+				return;
+			}
+
 			TSharedPtr<SFlexVaultHistoryTab> Pin = WeakSelf.Pin();
 			if (!Pin.IsValid())
 			{
@@ -475,9 +515,15 @@ void SFlexVaultHistoryTab::FetchCommitDetailsAsync(const TSharedPtr<FFlexVaultHi
 	FFlexVaultCommitMeta CommitMeta = InCommit->CommitMeta;
 
 	TWeakPtr<SFlexVaultHistoryTab> WeakSelf = SharedThis(this);
+	TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> LocalCancelToken = HistoryTabCancelToken;
 
-	Async(EAsyncExecution::ThreadPool, [WeakSelf, BinaryPath, WorkspacePath, CommitMeta, ChangeId]()
+	Async(EAsyncExecution::ThreadPool, [WeakSelf, BinaryPath, WorkspacePath, CommitMeta, ChangeId, LocalCancelToken]()
 	{
+		if (LocalCancelToken.IsValid() && LocalCancelToken->Load())
+		{
+			return;
+		}
+
 		TArray<FString> ChangeInfoArgs = {
 			TEXT("changeinfo"),
 			ChangeId,
@@ -488,7 +534,11 @@ void SFlexVaultHistoryTab::FetchCommitDetailsAsync(const TSharedPtr<FFlexVaultHi
 		};
 		TArray<FString> OutputLines;
 		FSourceControlResultInfo ResultInfo;
-		bool bOk = RunFlexVaultCommand(BinaryPath, WorkspacePath, ChangeInfoArgs, OutputLines, ResultInfo, true);
+		bool bOk = RunFlexVaultCommand(BinaryPath, WorkspacePath, ChangeInfoArgs, OutputLines, ResultInfo, true, nullptr, 20.0, LocalCancelToken);
+		if (LocalCancelToken.IsValid() && LocalCancelToken->Load())
+		{
+			return;
+		}
 
 		TMap<FString, TArray<FFlexVaultRevisionDetail>> RevisionMap;
 		if (bOk)
@@ -516,8 +566,13 @@ void SFlexVaultHistoryTab::FetchCommitDetailsAsync(const TSharedPtr<FFlexVaultHi
 			}
 		}
 
-		Async(EAsyncExecution::TaskGraphMainThread, [WeakSelf, ChangeId, ResultFiles]()
+		Async(EAsyncExecution::TaskGraphMainThread, [WeakSelf, ChangeId, ResultFiles, LocalCancelToken]()
 		{
+			if (LocalCancelToken.IsValid() && LocalCancelToken->Load())
+			{
+				return;
+			}
+
 			TSharedPtr<SFlexVaultHistoryTab> Pin = WeakSelf.Pin();
 			if (!Pin.IsValid())
 			{
@@ -576,7 +631,14 @@ void SFlexVaultHistoryTab::ApplyFilters()
 	{
 		if (CommitListView.IsValid())
 		{
-			CommitListView->SetSelection(FilteredCommits[0]);
+			if (CurrentlySelectedCommit.IsValid() && FilteredCommits.Contains(CurrentlySelectedCommit))
+			{
+				CommitListView->SetSelection(CurrentlySelectedCommit);
+			}
+			else
+			{
+				CommitListView->SetSelection(FilteredCommits[0]);
+			}
 		}
 	}
 	else
@@ -647,7 +709,7 @@ public:
 					SNew(STextBlock)
 					.Text(FText::FromString(Item->RevisionDisplay))
 					.ColorAndOpacity(Item->bIsDraft ? FLinearColor(0.85f, 0.65f, 0.2f, 1.0f) : FSlateColor::UseForeground())
-					.Font(FAppStyle::GetFontStyle(Item->bIsDraft ? "NormalFont" : "BoldFont"))
+					.Font(FAppStyle::GetFontStyle(Item->bIsDraft ? "NormalFont" : "NormalFont.Bold"))
 				];
 		}
 		else if (ColumnName == FlexVaultHistoryColumns::CommitAuthor)
@@ -756,7 +818,7 @@ public:
 					SNew(STextBlock)
 					.Text(FText::FromString(Item->Action))
 					.ColorAndOpacity(Color)
-					.Font(FAppStyle::GetFontStyle("BoldFont"))
+					.Font(FAppStyle::GetFontStyle("NormalFont.Bold"))
 				];
 		}
 		else if (ColumnName == FlexVaultHistoryColumns::FilePath)
@@ -979,9 +1041,20 @@ void SFlexVaultHistoryTab::LocateInContentBrowser(TSharedPtr<FFlexVaultHistoryFi
 	if (FPackageName::TryConvertFilenameToLongPackageName(InItem->FullPath, LongPackageName))
 	{
 		FContentBrowserModule& ContentBrowserModule = FModuleManager::LoadModuleChecked<FContentBrowserModule>(TEXT("ContentBrowser"));
-		TArray<FString> PackageNames;
-		PackageNames.Add(LongPackageName);
-		ContentBrowserModule.Get().SyncBrowserToFolders(PackageNames);
+		FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
+
+		TArray<FAssetData> AssetsToSync;
+		AssetRegistryModule.Get().GetAssetsByPackageName(FName(*LongPackageName), AssetsToSync);
+		if (AssetsToSync.Num() > 0)
+		{
+			ContentBrowserModule.Get().SyncBrowserToAssets(AssetsToSync);
+		}
+		else
+		{
+			TArray<FString> FolderNames;
+			FolderNames.Add(FPackageName::GetLongPackagePath(LongPackageName));
+			ContentBrowserModule.Get().SyncBrowserToFolders(FolderNames);
+		}
 	}
 }
 
@@ -990,6 +1063,28 @@ void SFlexVaultHistoryTab::OpenInExternalEditor(TSharedPtr<FFlexVaultHistoryFile
 	if (!InItem.IsValid())
 	{
 		return;
+	}
+
+	FFlexVaultSourceControlProvider* Provider = GetProvider();
+	if (Provider && !InItem->RevisionSpec.IsEmpty())
+	{
+		FFlexVaultRevisionDetail Detail;
+		Detail.Action = InItem->Action;
+		Detail.Date = CurrentlySelectedCommit.IsValid() ? CurrentlySelectedCommit->CommitMeta.Date : FDateTime::Now();
+		Detail.Description = CurrentlySelectedCommit.IsValid() ? CurrentlySelectedCommit->CommitMeta.Description : TEXT("");
+		Detail.FileSize = InItem->FileSize;
+		Detail.RevisionNumber = 0;
+		Detail.RevisionSpec = InItem->RevisionSpec;
+		Detail.UserName = CurrentlySelectedCommit.IsValid() ? CurrentlySelectedCommit->CommitMeta.Author : TEXT("");
+		Detail.ContentAddress = InItem->ContentAddress;
+
+		TSharedRef<FFlexVaultSourceControlRevision, ESPMode::ThreadSafe> HistRev = CreateFlexVaultRevision(Detail, *Provider, InItem->FullPath);
+		FString TempHistoricalFile;
+		if (HistRev->Get(TempHistoricalFile))
+		{
+			FPlatformProcess::LaunchFileInDefaultExternalApplication(*TempHistoricalFile);
+			return;
+		}
 	}
 
 	FPlatformProcess::LaunchFileInDefaultExternalApplication(*InItem->FullPath);

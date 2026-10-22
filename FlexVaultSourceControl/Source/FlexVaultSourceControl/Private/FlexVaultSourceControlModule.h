@@ -31,6 +31,8 @@ public:
 
 private:
 #if SOURCE_CONTROL_WITH_SLATE
+	void InitializeUI();
+	void UnregisterUI();
 	TSharedRef<SDockTab> CreateHistoryTab(const FSpawnTabArgs& Args);
 	void RegisterMenus();
 #endif
@@ -41,5 +43,7 @@ private:
 
 #if SOURCE_CONTROL_WITH_SLATE
 	TWeakPtr<SDockTab> HistoryTab;
+	FDelegateHandle PostEngineInitHandle;
+	bool bTabSpawnerRegistered = false;
 #endif
 };

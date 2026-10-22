@@ -23,7 +23,8 @@ public class FlexVaultSourceControl : ModuleRules
 				"ToolMenus",
 				"WorkspaceMenuStructure",
 				"AssetTools",
-				"ContentBrowser"
+				"ContentBrowser",
+				"AssetRegistry"
 			}
 		);
 

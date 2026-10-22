@@ -857,10 +857,35 @@ bool ParseFlexVaultHeadCommitId(
 	const TSharedPtr<FJsonObject>* HeadCommitObj = nullptr;
 	if (PayloadObj->TryGetObjectField(TEXT("head_commit"), HeadCommitObj) && HeadCommitObj && HeadCommitObj->IsValid())
 	{
+		// 1. Check local draft snapshot first
 		const TSharedPtr<FJsonObject>* LocalSnapshotObj = nullptr;
 		if ((*HeadCommitObj)->TryGetObjectField(TEXT("local_snapshot"), LocalSnapshotObj) && LocalSnapshotObj && LocalSnapshotObj->IsValid())
 		{
-			return (*LocalSnapshotObj)->TryGetStringField(TEXT("id"), OutHeadCommitId);
+			if ((*LocalSnapshotObj)->TryGetStringField(TEXT("id"), OutHeadCommitId) && !OutHeadCommitId.IsEmpty())
+			{
+				return true;
+			}
+		}
+
+		// 2. Fall back to published head
+		const TSharedPtr<FJsonObject>* PublishedHeadObj = nullptr;
+		if ((*HeadCommitObj)->TryGetObjectField(TEXT("published_head"), PublishedHeadObj) && PublishedHeadObj && PublishedHeadObj->IsValid())
+		{
+			if ((*PublishedHeadObj)->TryGetStringField(TEXT("id"), OutHeadCommitId) && !OutHeadCommitId.IsEmpty())
+			{
+				return true;
+			}
+
+			const TSharedPtr<FJsonObject>* CommitObj = nullptr;
+			if ((*PublishedHeadObj)->TryGetObjectField(TEXT("commit"), CommitObj) && CommitObj && CommitObj->IsValid())
+			{
+				uint64 RevNumber = 0;
+				if ((*CommitObj)->TryGetNumberField(TEXT("revision"), RevNumber))
+				{
+					OutHeadCommitId = FString::Printf(TEXT("rev_%llu"), RevNumber);
+					return true;
+				}
+			}
 		}
 	}
 
@@ -1209,14 +1234,8 @@ bool ParseFlexVaultChangeInfo(
 		return false;
 	}
 
-	TSharedPtr<FJsonObject> MessageObj = JsonEnvelope->GetObjectField(TEXT("message"));
-	if (!MessageObj.IsValid())
-	{
-		return false;
-	}
-
-	TSharedPtr<FJsonObject> PayloadObj = MessageObj->GetObjectField(TEXT("payload"));
-	if (!PayloadObj.IsValid())
+	TSharedPtr<FJsonObject> PayloadObj;
+	if (!TryGetFlexVaultEnvelopePayload(JsonEnvelope, PayloadObj) || !PayloadObj.IsValid())
 	{
 		return false;
 	}

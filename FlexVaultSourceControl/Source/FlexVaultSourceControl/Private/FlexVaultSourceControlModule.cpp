@@ -36,20 +36,16 @@ void FFlexVaultSourceControlModule::StartupModule()
 	FFlexVaultAutoSnapshot::Register(FlexVaultSourceControlProvider);
 
 #if SOURCE_CONTROL_WITH_SLATE
-	if (FSlateApplication::IsInitialized())
+	if (!IsRunningCommandlet() && !IsRunningDedicatedServer())
 	{
-		const FSlateIcon HistoryIcon(FAppStyle::GetAppStyleSetName(), "SourceControl.Actions.History");
-
-		FGlobalTabmanager::Get()->RegisterNomadTabSpawner(
-			FlexVaultHistoryTabName,
-			FOnSpawnTab::CreateRaw(this, &FFlexVaultSourceControlModule::CreateHistoryTab)
-		)
-		.SetDisplayName(LOCTEXT("FlexVaultHistoryTabTitle", "FlexVault History"))
-		.SetTooltipText(LOCTEXT("FlexVaultHistoryTabTooltip", "Displays repository commits and submitted changelists for FlexVault."))
-		.SetIcon(HistoryIcon)
-		.SetGroup(WorkspaceMenu::GetMenuStructure().GetToolsCategory());
-
-		RegisterMenus();
+		if (GEngine && GEngine->IsInitialized())
+		{
+			InitializeUI();
+		}
+		else
+		{
+			PostEngineInitHandle = FCoreDelegates::GetOnPostEngineInit().AddRaw(this, &FFlexVaultSourceControlModule::InitializeUI);
+		}
 	}
 #endif
 }
@@ -57,15 +53,13 @@ void FFlexVaultSourceControlModule::StartupModule()
 void FFlexVaultSourceControlModule::ShutdownModule()
 {
 #if SOURCE_CONTROL_WITH_SLATE
-	if (FSlateApplication::IsInitialized())
+	if (PostEngineInitHandle.IsValid())
 	{
-		FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(FlexVaultHistoryTabName);
-
-		if (HistoryTab.IsValid())
-		{
-			HistoryTab.Pin()->RequestCloseTab();
-		}
+		FCoreDelegates::GetOnPostEngineInit().Remove(PostEngineInitHandle);
+		PostEngineInitHandle.Reset();
 	}
+
+	UnregisterUI();
 #endif
 
 	FFlexVaultAutoSnapshot::Unregister();
@@ -78,6 +72,48 @@ void FFlexVaultSourceControlModule::ShutdownModule()
 }
 
 #if SOURCE_CONTROL_WITH_SLATE
+
+void FFlexVaultSourceControlModule::InitializeUI()
+{
+	if (bTabSpawnerRegistered || IsRunningCommandlet() || IsRunningDedicatedServer() || !FSlateApplication::IsInitialized())
+	{
+		return;
+	}
+
+	const FSlateIcon HistoryIcon(FAppStyle::GetAppStyleSetName(), "SourceControl.Actions.History");
+
+	FGlobalTabmanager::Get()->RegisterNomadTabSpawner(
+		FlexVaultHistoryTabName,
+		FOnSpawnTab::CreateRaw(this, &FFlexVaultSourceControlModule::CreateHistoryTab)
+	)
+	.SetDisplayName(LOCTEXT("FlexVaultHistoryTabTitle", "FlexVault History"))
+	.SetTooltipText(LOCTEXT("FlexVaultHistoryTabTooltip", "Displays repository commits and submitted changelists for FlexVault."))
+	.SetIcon(HistoryIcon)
+	.SetGroup(WorkspaceMenu::GetMenuStructure().GetToolsCategory());
+
+	bTabSpawnerRegistered = true;
+
+	RegisterMenus();
+}
+
+void FFlexVaultSourceControlModule::UnregisterUI()
+{
+	UToolMenus::UnRegisterStartupCallback(this);
+
+	if (bTabSpawnerRegistered)
+	{
+		if (FSlateApplication::IsInitialized())
+		{
+			FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(FlexVaultHistoryTabName);
+		}
+		bTabSpawnerRegistered = false;
+	}
+
+	if (HistoryTab.IsValid())
+	{
+		HistoryTab.Pin()->RequestCloseTab();
+	}
+}
 
 TSharedRef<SDockTab> FFlexVaultSourceControlModule::CreateHistoryTab(const FSpawnTabArgs& Args)
 {
@@ -106,35 +142,43 @@ void FFlexVaultSourceControlModule::RegisterMenus()
 			return;
 		}
 
-		UToolMenu* Menu = ToolMenus->ExtendMenu("MainFrame.MainMenu.Tools");
-		if (!Menu)
-		{
-			return;
-		}
+		const FName MenuNames[] = {
+			"LevelEditor.MainMenu.Tools",
+			"MainFrame.MainMenu.Tools"
+		};
 
-		FToolMenuSection& Section = Menu->FindOrAddSection("RevisionControl");
-		Section.AddMenuEntry(
-			"FlexVaultHistory",
-			LOCTEXT("FlexVaultHistoryMenuLabel", "FlexVault History"),
-			LOCTEXT("FlexVaultHistoryMenuTooltip", "Open the FlexVault repository commit history visualizer."),
-			FSlateIcon(FAppStyle::GetAppStyleSetName(), "SourceControl.Actions.History"),
-			FUIAction(
-				FExecuteAction::CreateLambda([]()
-				{
-					FGlobalTabmanager::Get()->TryInvokeTab(FTabId(FlexVaultHistoryTabName));
-				}),
-				FCanExecuteAction::CreateLambda([]()
-				{
-					FModuleManager& ModuleManager = FModuleManager::Get();
-					if (ModuleManager.IsModuleLoaded(TEXT("FlexVaultSourceControl")))
+		for (const FName& MenuName : MenuNames)
+		{
+			UToolMenu* Menu = ToolMenus->ExtendMenu(MenuName);
+			if (!Menu)
+			{
+				continue;
+			}
+
+			FToolMenuSection& Section = Menu->FindOrAddSection("Source Control");
+			Section.AddMenuEntry(
+				"FlexVaultHistory",
+				LOCTEXT("FlexVaultHistoryMenuLabel", "FlexVault History"),
+				LOCTEXT("FlexVaultHistoryMenuTooltip", "Open the FlexVault repository commit history visualizer."),
+				FSlateIcon(FAppStyle::GetAppStyleSetName(), "SourceControl.Actions.History"),
+				FUIAction(
+					FExecuteAction::CreateLambda([]()
 					{
-						FFlexVaultSourceControlModule& Module = FModuleManager::GetModuleChecked<FFlexVaultSourceControlModule>(TEXT("FlexVaultSourceControl"));
-						return Module.GetProvider().IsEnabled();
-					}
-					return false;
-				})
-			)
-		);
+						FGlobalTabmanager::Get()->TryInvokeTab(FTabId(FlexVaultHistoryTabName));
+					}),
+					FCanExecuteAction::CreateLambda([]()
+					{
+						FModuleManager& ModuleManager = FModuleManager::Get();
+						if (ModuleManager.IsModuleLoaded(TEXT("FlexVaultSourceControl")))
+						{
+							FFlexVaultSourceControlModule& Module = FModuleManager::GetModuleChecked<FFlexVaultSourceControlModule>(TEXT("FlexVaultSourceControl"));
+							return Module.GetProvider().IsEnabled();
+						}
+						return false;
+					})
+				)
+			);
+		}
 	}));
 }
 
