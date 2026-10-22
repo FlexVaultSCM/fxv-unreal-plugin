@@ -462,6 +462,7 @@ bool FFlexVaultWorkerUpdateStatusTest::RunTest(const FString& Parameters)
 	Worker.LocalRevision = 14;
 	Worker.DepotRevision = 15;
 	Worker.bHasChangesToSync = true;
+	Worker.OutdatedFiles.Add(ModFileRelative.ToLower());
 	Worker.ModifiedFiles.Add(ModFileRelative, EFlexVaultState::CheckedOut);
 	Worker.ModifiedFiles.Add(AddFileRelative, EFlexVaultState::OpenForAdd);
 	Worker.ConflictedFiles.Add(ModFileRelative, TEXT("content"));
@@ -479,6 +480,9 @@ bool FFlexVaultWorkerUpdateStatusTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Modified file conflict reason kind matches"), ModCached->ConflictReasonKind, TEXT("content"));
 
 	TestEqual(TEXT("Added file SCM state set to OpenForAdd"), AddCached->GetState(), EFlexVaultState::OpenForAdd);
+	TestEqual(TEXT("Added file not in OutdatedFiles has DepotRevision matching LocalRevision"), AddCached->DepotRevNumber, 14);
+	TestTrue(TEXT("Added file not in OutdatedFiles is current"), AddCached->IsCurrent());
+	TestFalse(TEXT("Modified file in OutdatedFiles is not current"), ModCached->IsCurrent());
 
 	TestTrue(TEXT("SCM provider flags changes to sync correctly"), Provider.HasChangesToSync().Get(false));
 

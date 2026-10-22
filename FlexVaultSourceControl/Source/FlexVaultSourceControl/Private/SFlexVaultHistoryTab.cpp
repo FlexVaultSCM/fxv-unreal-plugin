@@ -1630,8 +1630,11 @@ void SFlexVaultHistoryTab::DiffSelectedFileAgainstWorkspace(TSharedPtr<FFlexVaul
 			WorkspaceAsset = WorkspacePackage->FindAssetInPackage();
 		}
 
-		if (!WorkspaceAsset)
+		if (!HistAsset || !WorkspaceAsset)
 		{
+			FNotificationInfo LoadFailedInfo(LOCTEXT("DiffAssetLoadFailed", "Failed to load asset package(s) for comparison."));
+			LoadFailedInfo.ExpireDuration = 4.0f;
+			FSlateNotificationManager::Get().AddNotification(LoadFailedInfo);
 			return;
 		}
 
@@ -1710,7 +1713,8 @@ bool SFlexVaultHistoryTab::CanDiffSelectedFileAgainstPrevious(TSharedPtr<FFlexVa
 		return false;
 	}
 
-	if (InItem->Action.Equals(TEXT("Add"), ESearchCase::IgnoreCase) || InItem->Action.Equals(TEXT("Added"), ESearchCase::IgnoreCase))
+	if (InItem->Action.Equals(TEXT("Add"), ESearchCase::IgnoreCase) || InItem->Action.Equals(TEXT("Added"), ESearchCase::IgnoreCase)
+		|| InItem->Action.Equals(TEXT("Delete"), ESearchCase::IgnoreCase) || InItem->Action.Equals(TEXT("Deleted"), ESearchCase::IgnoreCase))
 	{
 		return false;
 	}

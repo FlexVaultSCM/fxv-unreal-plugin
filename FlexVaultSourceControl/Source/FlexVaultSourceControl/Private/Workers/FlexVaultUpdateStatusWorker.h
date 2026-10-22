@@ -30,6 +30,9 @@ private:
 	// Maps a conflicted file's relative path to its conflict_state.kind ("content", "deleted",
 	// "type_change"), or an empty string if the entry has no kind (older CLI / malformed payload).
 	mutable TMap<FString, FString> ConflictedFiles;
+	// Relative paths (lowercase) of files that have newer revisions upstream between local synced revision and published head
+	mutable TSet<FString> OutdatedFiles;
+	mutable bool bOutdatedFilesKnown = true;
 	mutable int32 DepotRevision = 0;
 	mutable int32 LocalRevision = 0;
 	mutable FString CurrentBranch;
