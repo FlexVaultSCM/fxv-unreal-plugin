@@ -124,6 +124,26 @@ void SFlexVaultHistoryTab::Construct(const FArguments& InArgs)
 					.OnTextChanged(this, &SFlexVaultHistoryTab::OnFilterTextChanged)
 				]
 
+				// Simulate Artist Mode Checkbox
+				+ SHorizontalBox::Slot()
+				.AutoWidth()
+				.VAlign(VAlign_Center)
+				.Padding(0.0f, 0.0f, 8.0f, 0.0f)
+				[
+					SNew(SCheckBox)
+					.IsChecked_Lambda([this]() { return bSimulateArtistMode ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
+					.OnCheckStateChanged_Lambda([this](ECheckBoxState NewState)
+					{
+						bSimulateArtistMode = (NewState == ECheckBoxState::Checked);
+						UpdateCommitDisabledStates();
+					})
+					.ToolTipText(LOCTEXT("SimulateArtistModeTooltip", "Simulate non-compiler (artist/designer) mode to test disabled/external sync protection for C++ code changes."))
+					[
+						SNew(STextBlock)
+						.Text(LOCTEXT("SimulateArtistModeLabel", "Simulate Artist Mode"))
+					]
+				]
+
 				// Refresh Button
 				+ SHorizontalBox::Slot()
 				.AutoWidth()
@@ -220,11 +240,15 @@ void SFlexVaultHistoryTab::Construct(const FArguments& InArgs)
 		]
 	];
 
-	// Register 10s periodic background ticker to detect workspace status / head updates
-	TickerHandle = FTSTicker::GetCoreTicker().AddTicker(
-		FTickerDelegate::CreateSP(this, &SFlexVaultHistoryTab::OnPeriodicTick),
-		10.0f
-	);
+	// Register with SCC provider state change delegate (driven by provider heartbeat and operations)
+	FFlexVaultSourceControlProvider* Provider = GetProvider();
+	if (Provider != nullptr)
+	{
+		SourceControlStateChangedHandle = Provider->RegisterSourceControlStateChanged_Handle(
+			FSourceControlStateChanged::FDelegate::CreateSP(this, &SFlexVaultHistoryTab::OnSourceControlStateChanged)
+		);
+		LastKnownHeadCommit = Provider->GetCurrentHeadCommit();
+	}
 
 	// Initial data fetch
 	RefreshBranchListAsync();
@@ -233,10 +257,11 @@ void SFlexVaultHistoryTab::Construct(const FArguments& InArgs)
 
 SFlexVaultHistoryTab::~SFlexVaultHistoryTab()
 {
-	if (TickerHandle.IsValid())
+	FFlexVaultSourceControlProvider* Provider = GetProvider();
+	if (Provider != nullptr && SourceControlStateChangedHandle.IsValid())
 	{
-		FTSTicker::GetCoreTicker().RemoveTicker(TickerHandle);
-		TickerHandle.Reset();
+		Provider->UnregisterSourceControlStateChanged_Handle(SourceControlStateChangedHandle);
+		SourceControlStateChangedHandle.Reset();
 	}
 
 	if (HistoryTabCancelToken.IsValid())
@@ -288,96 +313,24 @@ void SFlexVaultHistoryTab::RequestRefreshHistory()
 	FetchHistoryAsync(BranchFilter);
 }
 
-bool SFlexVaultHistoryTab::OnPeriodicTick(float DeltaTime)
+void SFlexVaultHistoryTab::OnSourceControlStateChanged()
 {
-	TimeSinceLastPeriodicCheck += DeltaTime;
-	if (TimeSinceLastPeriodicCheck >= 10.0f)
-	{
-		TimeSinceLastPeriodicCheck = 0.0f;
-		CheckWorkspaceStatusAsync();
-	}
-	return true;
-}
-
-void SFlexVaultHistoryTab::CheckWorkspaceStatusAsync()
-{
-	if (bIsStatusCheckInFlight || bIsLoadingHistory)
+	FFlexVaultSourceControlProvider* Provider = GetProvider();
+	if (Provider == nullptr)
 	{
 		return;
 	}
 
-	bIsStatusCheckInFlight = true;
-
-	const FString BinaryPath = GetEffectiveBinaryPath();
-	const FString WorkspacePath = GetWorkspacePath();
-
-	TWeakPtr<SFlexVaultHistoryTab> WeakSelf = SharedThis(this);
-	TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> LocalCancelToken = HistoryTabCancelToken;
-
-	Async(EAsyncExecution::ThreadPool, [WeakSelf, BinaryPath, WorkspacePath, LocalCancelToken]()
+	const FString NewHead = Provider->GetCurrentHeadCommit();
+	if (!NewHead.IsEmpty() && NewHead != LastKnownHeadCommit)
 	{
-		if (LocalCancelToken.IsValid() && LocalCancelToken->Load())
-		{
-			return;
-		}
-
-		TArray<FString> StatusArgs = {
-			TEXT("status"),
-			TEXT("--format"),
-			TEXT("json"),
-			TEXT("--unattended"),
-			TEXT("--no-color"),
-			TEXT("--skip-remote-update"),
-			TEXT("--skip-scan")
-		};
-		TArray<FString> OutputLines;
-		FSourceControlResultInfo ResultInfo;
-
-		bool bOk = RunFlexVaultCommand(BinaryPath, WorkspacePath, StatusArgs, OutputLines, ResultInfo, true, nullptr, 15.0, LocalCancelToken);
-		if (LocalCancelToken.IsValid() && LocalCancelToken->Load())
-		{
-			return;
-		}
-
-		FString NewHeadCommit;
-
-		if (bOk)
-		{
-			FString RawJson = FString::Join(OutputLines, TEXT("\n"));
-			TSharedPtr<FJsonObject> Envelope;
-			TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(RawJson);
-			if (FJsonSerializer::Deserialize(Reader, Envelope) && Envelope.IsValid())
-			{
-				ParseFlexVaultHeadCommitId(Envelope, NewHeadCommit);
-			}
-		}
-
-		Async(EAsyncExecution::TaskGraphMainThread, [WeakSelf, NewHeadCommit, LocalCancelToken]()
-		{
-			if (LocalCancelToken.IsValid() && LocalCancelToken->Load())
-			{
-				return;
-			}
-
-			TSharedPtr<SFlexVaultHistoryTab> Pin = WeakSelf.Pin();
-			if (!Pin.IsValid())
-			{
-				return;
-			}
-
-			Pin->bIsStatusCheckInFlight = false;
-
-			if (!NewHeadCommit.IsEmpty())
-			{
-				if (!Pin->LastKnownHeadCommit.IsEmpty() && Pin->LastKnownHeadCommit != NewHeadCommit)
-				{
-					Pin->RequestRefreshHistory();
-				}
-				Pin->LastKnownHeadCommit = NewHeadCommit;
-				Pin->UpdateCommitDisabledStates();
-			}
-		});
-	});
+		LastKnownHeadCommit = NewHead;
+		RequestRefreshHistory();
+	}
+	else
+	{
+		UpdateCommitDisabledStates();
+	}
 }
 
 void SFlexVaultHistoryTab::RefreshBranchListAsync()
@@ -525,6 +478,11 @@ void SFlexVaultHistoryTab::FetchHistoryAsync(const FString& InBranchFilter)
 
 bool SFlexVaultHistoryTab::CanCompileLocally() const
 {
+	if (bSimulateArtistMode)
+	{
+		return false;
+	}
+
 #if WITH_LIVE_CODING
 	ILiveCodingModule* LiveCoding = FModuleManager::GetModulePtr<ILiveCodingModule>(LIVE_CODING_MODULE_NAME);
 	if (LiveCoding != nullptr && LiveCoding->IsEnabledForSession())
@@ -537,6 +495,15 @@ bool SFlexVaultHistoryTab::CanCompileLocally() const
 
 void SFlexVaultHistoryTab::UpdateCommitDisabledStates()
 {
+	if (LastKnownHeadCommit.IsEmpty())
+	{
+		FFlexVaultSourceControlProvider* Provider = GetProvider();
+		if (Provider != nullptr)
+		{
+			LastKnownHeadCommit = Provider->GetCurrentHeadCommit();
+		}
+	}
+
 	const bool bCanCompile = CanCompileLocally();
 	UpdateFlexVaultHistorySyncDisabledStates(AllCommits, LastKnownHeadCommit, bCanCompile);
 	ApplyFilters();

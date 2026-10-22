@@ -30,8 +30,7 @@ public:
 	/** Triggers an asynchronous reload of the history list */
 	void RequestRefreshHistory();
 
-	/** Occasional / periodic background check */
-	bool OnPeriodicTick(float DeltaTime);
+
 
 private:
 	// ── Commit List Row & Column Generation ─────────────────────────
@@ -64,8 +63,8 @@ private:
 	void RefreshBranchListAsync();
 	void FetchHistoryAsync(const FString& InBranchFilter);
 	void FetchCommitDetailsAsync(const TSharedPtr<FFlexVaultHistoryCommitItem>& InCommit);
-	void CheckWorkspaceStatusAsync();
 	void ScanCommitsForCodeChangesAsync();
+	void OnSourceControlStateChanged();
 	void UpdateCommitDisabledStates();
 	bool CanCompileLocally() const;
 
@@ -98,11 +97,11 @@ private:
 
 	// Filter state
 	FString FilterString;
+	bool bSimulateArtistMode = false;
 
 	// Async state
 	bool bIsLoadingHistory = false;
 	bool bIsLoadingDetails = false;
-	bool bIsStatusCheckInFlight = false;
 	uint32 CodeScanGeneration = 0;
 
 	// Last head commit tracker for automatic refresh detection
@@ -111,9 +110,8 @@ private:
 	// Cancellation token for background worker tasks
 	TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> HistoryTabCancelToken;
 
-	// Periodic ticker
-	FTSTicker::FDelegateHandle TickerHandle;
-	float TimeSinceLastPeriodicCheck = 0.0f;
+	// Provider state change listener handle
+	FDelegateHandle SourceControlStateChangedHandle;
 };
 
 #endif // SOURCE_CONTROL_WITH_SLATE

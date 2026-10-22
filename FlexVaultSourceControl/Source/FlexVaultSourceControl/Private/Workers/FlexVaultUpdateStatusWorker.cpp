@@ -56,6 +56,7 @@ bool FFlexVaultUpdateStatusWorker::Execute(FFlexVaultSourceControlCommand& InCom
 	DepotRevision = 0;
 	CurrentBranch.Empty();
 	CurrentUser.Empty();
+	CurrentHeadCommit.Empty();
 	ModifiedFiles.Empty();
 	ConflictedFiles.Empty();
 	FileHistories.Empty();
@@ -113,6 +114,7 @@ bool FFlexVaultUpdateStatusWorker::Execute(FFlexVaultSourceControlCommand& InCom
 
 	Payload->TryGetStringField(TEXT("current_branch"), CurrentBranch);
 	Payload->TryGetStringField(TEXT("current_user"), CurrentUser);
+	ParseFlexVaultHeadCommitId(Envelope, CurrentHeadCommit);
 
 	// ── Revision numbers from head_commit ──────────────────────────────────────────────────────────
 	const TSharedPtr<FJsonObject>* HeadCommitObj = nullptr;
@@ -262,8 +264,10 @@ bool FFlexVaultUpdateStatusWorker::UpdateStates() const
 	Provider.SetHasChangesToSync(bHasChangesToSync);
 
 	const bool bUserOrBranchChanged = (Provider.GetCurrentBranch() != CurrentBranch) || (Provider.GetCurrentUser() != CurrentUser);
+	const bool bHeadChanged = (Provider.GetCurrentHeadCommit() != CurrentHeadCommit);
 	Provider.SetCurrentBranch(CurrentBranch);
 	Provider.SetCurrentUser(CurrentUser);
+	Provider.SetCurrentHeadCommit(CurrentHeadCommit);
 
 	// Ensure all modified/added/deleted files discovered by SCM status are present in the cache
 	for (const auto& Entry : ModifiedFiles)
@@ -351,10 +355,10 @@ bool FFlexVaultUpdateStatusWorker::UpdateStates() const
 		}
 	}
 
-	if (bStatesUpdated || bUserOrBranchChanged)
+	if (bStatesUpdated || bUserOrBranchChanged || bHeadChanged)
 	{
 		Provider.OutputStateChangedEvent();
 	}
 
-	return bStatesUpdated || bUserOrBranchChanged;
+	return bStatesUpdated || bUserOrBranchChanged || bHeadChanged;
 }

@@ -34,6 +34,7 @@ private:
 	mutable int32 LocalRevision = 0;
 	mutable FString CurrentBranch;
 	mutable FString CurrentUser;
+	mutable FString CurrentHeadCommit;
 	mutable FString WorkspacePath;
 	mutable TOptional<bool> bHasChangesToSync;
 

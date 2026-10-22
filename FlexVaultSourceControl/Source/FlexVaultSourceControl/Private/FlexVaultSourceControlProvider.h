@@ -92,6 +92,8 @@ public:
 	const FString& GetCurrentUser() const { return CurrentUser; }
 	void SetCurrentBranch(const FString& InBranch) { CurrentBranch = InBranch; }
 	void SetCurrentUser(const FString& InUser) { CurrentUser = InUser; }
+	const FString& GetCurrentHeadCommit() const { return CurrentHeadCommit; }
+	void SetCurrentHeadCommit(const FString& InHeadCommit) { CurrentHeadCommit = InHeadCommit; }
 
 	const TArray<FString>& GetLastSyncedFiles() const { return LastSyncedFiles; }
 	void SetLastSyncedFiles(const TArray<FString>& InFiles) { LastSyncedFiles = InFiles; }
@@ -149,6 +151,9 @@ private:
 
 	/** Current logged-in user in workspace */
 	FString CurrentUser;
+
+	/** Current workspace head commit change ID (e.g. 'main.7') */
+	FString CurrentHeadCommit;
 
 	/** Files updated in the most recent sync operation */
 	TArray<FString> LastSyncedFiles;
