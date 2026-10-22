@@ -1198,12 +1198,26 @@ bool ParseFlexVaultHistory(
 					}
 
 					EntryObj->TryGetStringField(TEXT("description"), Meta.Description);
-					
-					// author_id is the canonical identifier and author_display_name is the display name.
-					// We prefer author_display_name for display, with a fallback to author_id.
-					if (!EntryObj->TryGetStringField(TEXT("author_display_name"), Meta.Author))
+
+					const TSharedPtr<FJsonObject>* AuthorDetailsObj = nullptr;
+					if (EntryObj->TryGetObjectField(TEXT("author_details"), AuthorDetailsObj) && AuthorDetailsObj && (*AuthorDetailsObj).IsValid())
 					{
-						EntryObj->TryGetStringField(TEXT("author_id"), Meta.Author);
+						Meta.Author = FormatFlexVaultAuthorAlias(*AuthorDetailsObj);
+						Meta.AuthorDetails = FormatFlexVaultAuthor(*AuthorDetailsObj);
+					}
+					if (Meta.Author.IsEmpty())
+					{
+						if (!EntryObj->TryGetStringField(TEXT("author_display_name"), Meta.Author) || Meta.Author.IsEmpty())
+						{
+							EntryObj->TryGetStringField(TEXT("author_id"), Meta.Author);
+						}
+					}
+					if (Meta.AuthorDetails.IsEmpty())
+					{
+						if (!EntryObj->TryGetStringField(TEXT("author_display_name"), Meta.AuthorDetails) || Meta.AuthorDetails.IsEmpty())
+						{
+							Meta.AuthorDetails = Meta.Author;
+						}
 					}
 
 					int64 TimestampMillis = 0;
@@ -1366,6 +1380,164 @@ FString BuildFlexVaultChangeId(const FFlexVaultCommitMeta& InCommit)
 	}
 
 	return InCommit.Branch;
+}
+
+FString FormatFlexVaultAuthorAlias(const TSharedPtr<FJsonObject>& InAuthorDetails)
+{
+	if (!InAuthorDetails.IsValid())
+	{
+		return FString();
+	}
+
+	FString Type;
+	InAuthorDetails->TryGetStringField(TEXT("type"), Type);
+
+	if (Type.Equals(TEXT("Local"), ESearchCase::IgnoreCase))
+	{
+		return TEXT("(local user)");
+	}
+	else if (Type.Equals(TEXT("Service"), ESearchCase::IgnoreCase))
+	{
+		return TEXT("(service user)");
+	}
+	else if (Type.Equals(TEXT("FxvUser"), ESearchCase::IgnoreCase))
+	{
+		FString Username;
+		InAuthorDetails->TryGetStringField(TEXT("username"), Username);
+		if (!Username.IsEmpty())
+		{
+			return Username;
+		}
+
+		FString DisplayName;
+		InAuthorDetails->TryGetStringField(TEXT("display_name"), DisplayName);
+		return DisplayName;
+	}
+	else if (Type.Equals(TEXT("P4User"), ESearchCase::IgnoreCase))
+	{
+		FString Username;
+		InAuthorDetails->TryGetStringField(TEXT("username"), Username);
+		if (!Username.IsEmpty())
+		{
+			return Username;
+		}
+
+		FString DisplayName;
+		InAuthorDetails->TryGetStringField(TEXT("display_name"), DisplayName);
+		return DisplayName;
+	}
+	else if (Type.Equals(TEXT("GitUser"), ESearchCase::IgnoreCase))
+	{
+		FString Name;
+		InAuthorDetails->TryGetStringField(TEXT("name"), Name);
+		if (!Name.IsEmpty())
+		{
+			return Name;
+		}
+
+		FString Email;
+		InAuthorDetails->TryGetStringField(TEXT("email"), Email);
+		return Email;
+	}
+	else if (Type.Equals(TEXT("Error"), ESearchCase::IgnoreCase))
+	{
+		return TEXT("(error)");
+	}
+
+	return FString();
+}
+
+FString FormatFlexVaultAuthor(const TSharedPtr<FJsonObject>& InAuthorDetails)
+{
+	if (!InAuthorDetails.IsValid())
+	{
+		return FString();
+	}
+
+	FString Type;
+	InAuthorDetails->TryGetStringField(TEXT("type"), Type);
+
+	if (Type.Equals(TEXT("Local"), ESearchCase::IgnoreCase))
+	{
+		return TEXT("(local user)");
+	}
+	else if (Type.Equals(TEXT("Service"), ESearchCase::IgnoreCase))
+	{
+		return TEXT("(service user)");
+	}
+	else if (Type.Equals(TEXT("FxvUser"), ESearchCase::IgnoreCase))
+	{
+		FString Username;
+		FString DisplayName;
+		InAuthorDetails->TryGetStringField(TEXT("username"), Username);
+		InAuthorDetails->TryGetStringField(TEXT("display_name"), DisplayName);
+
+		if (!DisplayName.IsEmpty() && !Username.IsEmpty())
+		{
+			return FString::Printf(TEXT("%s [%s]"), *DisplayName, *Username);
+		}
+		else if (!DisplayName.IsEmpty())
+		{
+			return DisplayName;
+		}
+		else
+		{
+			return Username;
+		}
+	}
+	else if (Type.Equals(TEXT("GitUser"), ESearchCase::IgnoreCase))
+	{
+		FString Name;
+		FString Email;
+		InAuthorDetails->TryGetStringField(TEXT("name"), Name);
+		InAuthorDetails->TryGetStringField(TEXT("email"), Email);
+
+		if (!Name.IsEmpty() && !Email.IsEmpty())
+		{
+			return FString::Printf(TEXT("%s <%s>"), *Name, *Email);
+		}
+		else if (!Name.IsEmpty())
+		{
+			return Name;
+		}
+		else
+		{
+			return Email;
+		}
+	}
+	else if (Type.Equals(TEXT("P4User"), ESearchCase::IgnoreCase))
+	{
+		FString Username;
+		FString DisplayName;
+		FString Email;
+		InAuthorDetails->TryGetStringField(TEXT("username"), Username);
+		InAuthorDetails->TryGetStringField(TEXT("display_name"), DisplayName);
+		InAuthorDetails->TryGetStringField(TEXT("email"), Email);
+
+		TArray<FString> Parts;
+		if (!DisplayName.IsEmpty())
+		{
+			Parts.Add(DisplayName);
+		}
+		if (!Username.IsEmpty())
+		{
+			Parts.Add(FString::Printf(TEXT("[%s]"), *Username));
+		}
+		if (!Email.IsEmpty())
+		{
+			Parts.Add(FString::Printf(TEXT("<%s>"), *Email));
+		}
+		Parts.Add(TEXT("(p4)"));
+		return FString::Join(Parts, TEXT(" "));
+	}
+	else if (Type.Equals(TEXT("Error"), ESearchCase::IgnoreCase))
+	{
+		FString Message;
+		InAuthorDetails->TryGetStringField(TEXT("message"), Message);
+		return FString::Printf(TEXT("(error: %s)"), *Message);
+	}
+
+	return FString();
 }
 
 TSharedRef<FFlexVaultSourceControlRevision, ESPMode::ThreadSafe> CreateFlexVaultRevision(

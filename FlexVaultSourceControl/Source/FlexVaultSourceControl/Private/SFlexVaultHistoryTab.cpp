@@ -58,8 +58,13 @@ void SFlexVaultHistoryTab::Construct(const FArguments& InArgs)
 {
 	HistoryTabCancelToken = MakeShared<TAtomic<bool>, ESPMode::ThreadSafe>(false);
 
-	SelectedBranchOption = MakeShared<FString>(TEXT("All Branches"));
-	BranchOptions.Add(SelectedBranchOption);
+	FFlexVaultSourceControlModule& Module = FModuleManager::GetModuleChecked<FFlexVaultSourceControlModule>("FlexVaultSourceControl");
+	const FString CurrentBranch = Module.GetProvider().GetCurrentBranch();
+	if (!CurrentBranch.IsEmpty())
+	{
+		SelectedBranchOption = MakeShared<FString>(CurrentBranch);
+		BranchOptions.Add(SelectedBranchOption);
+	}
 
 	ChildSlot
 	[
@@ -152,15 +157,15 @@ void SFlexVaultHistoryTab::Construct(const FArguments& InArgs)
 							SNew(SHeaderRow)
 							+ SHeaderRow::Column(FlexVaultHistoryColumns::CommitRevision)
 							.DefaultLabel(LOCTEXT("ColRevision", "Revision"))
-							.FixedWidth(120.0f)
+							.ManualWidth(130.0f)
 
 							+ SHeaderRow::Column(FlexVaultHistoryColumns::CommitAuthor)
 							.DefaultLabel(LOCTEXT("ColAuthor", "Author"))
-							.FixedWidth(140.0f)
+							.ManualWidth(130.0f)
 
 							+ SHeaderRow::Column(FlexVaultHistoryColumns::CommitDate)
 							.DefaultLabel(LOCTEXT("ColDate", "Date"))
-							.FixedWidth(160.0f)
+							.ManualWidth(160.0f)
 
 							+ SHeaderRow::Column(FlexVaultHistoryColumns::CommitDescription)
 							.DefaultLabel(LOCTEXT("ColDescription", "Description"))
@@ -259,9 +264,14 @@ void SFlexVaultHistoryTab::RequestRefreshHistory()
 	}
 
 	FString BranchFilter;
-	if (SelectedBranchOption.IsValid() && !SelectedBranchOption->Equals(TEXT("All Branches")))
+	if (SelectedBranchOption.IsValid())
 	{
 		BranchFilter = *SelectedBranchOption;
+	}
+	else
+	{
+		FFlexVaultSourceControlModule& Module = FModuleManager::GetModuleChecked<FFlexVaultSourceControlModule>("FlexVaultSourceControl");
+		BranchFilter = Module.GetProvider().GetCurrentBranch();
 	}
 
 	FetchHistoryAsync(BranchFilter);
@@ -379,20 +389,50 @@ void SFlexVaultHistoryTab::RefreshBranchListAsync()
 				return;
 			}
 
+			FFlexVaultSourceControlModule& Module = FModuleManager::GetModuleChecked<FFlexVaultSourceControlModule>("FlexVaultSourceControl");
+			const FString CurrentBranch = Module.GetProvider().GetCurrentBranch();
+
 			Pin->BranchOptions.Empty();
-			Pin->BranchOptions.Add(MakeShared<FString>(TEXT("All Branches")));
+			TSharedPtr<FString> DesiredSelection;
 
 			if (bOk)
 			{
 				for (const FFlexVaultBranchInfo& Branch : Branches)
 				{
-					Pin->BranchOptions.Add(MakeShared<FString>(Branch.Branch));
+					TSharedPtr<FString> Option = MakeShared<FString>(Branch.Branch);
+					Pin->BranchOptions.Add(Option);
+
+					if (Pin->SelectedBranchOption.IsValid() && Option->Equals(*Pin->SelectedBranchOption, ESearchCase::IgnoreCase))
+					{
+						DesiredSelection = Option;
+					}
+					else if (!DesiredSelection.IsValid() && !CurrentBranch.IsEmpty() && Option->Equals(CurrentBranch, ESearchCase::IgnoreCase))
+					{
+						DesiredSelection = Option;
+					}
 				}
 			}
+
+			if (!DesiredSelection.IsValid() && Pin->BranchOptions.Num() > 0)
+			{
+				DesiredSelection = Pin->BranchOptions[0];
+			}
+
+			const bool bSelectionChanged = (Pin->SelectedBranchOption != DesiredSelection);
+			Pin->SelectedBranchOption = DesiredSelection;
 
 			if (Pin->BranchComboBox.IsValid())
 			{
 				Pin->BranchComboBox->RefreshOptions();
+				if (DesiredSelection.IsValid())
+				{
+					Pin->BranchComboBox->SetSelectedItem(DesiredSelection);
+				}
+			}
+
+			if (bSelectionChanged && DesiredSelection.IsValid())
+			{
+				Pin->RequestRefreshHistory();
 			}
 		});
 	});
@@ -424,6 +464,7 @@ void SFlexVaultHistoryTab::FetchHistoryAsync(const FString& InBranchFilter)
 		};
 		if (!InBranchFilter.IsEmpty())
 		{
+			HistoryArgs.Add(TEXT("-b"));
 			HistoryArgs.Add(InBranchFilter);
 		}
 
@@ -611,6 +652,7 @@ void SFlexVaultHistoryTab::ApplyFilters()
 		{
 			bool bMatches = Commit->CommitMeta.Description.Contains(FilterString, ESearchCase::IgnoreCase) ||
 				Commit->CommitMeta.Author.Contains(FilterString, ESearchCase::IgnoreCase) ||
+				Commit->CommitMeta.AuthorDetails.Contains(FilterString, ESearchCase::IgnoreCase) ||
 				Commit->RevisionDisplay.Contains(FilterString, ESearchCase::IgnoreCase);
 
 			if (!bMatches)
@@ -676,7 +718,7 @@ void SFlexVaultHistoryTab::OnBranchSelectionChanged(TSharedPtr<FString> InNewSel
 
 FText SFlexVaultHistoryTab::GetCurrentBranchText() const
 {
-	return SelectedBranchOption.IsValid() ? FText::FromString(*SelectedBranchOption) : LOCTEXT("AllBranches", "All Branches");
+	return SelectedBranchOption.IsValid() ? FText::FromString(*SelectedBranchOption) : LOCTEXT("SelectBranch", "Select Branch...");
 }
 
 class SFlexVaultCommitRow : public SMultiColumnTableRow<TSharedPtr<FFlexVaultHistoryCommitItem>>
@@ -714,6 +756,10 @@ public:
 		}
 		else if (ColumnName == FlexVaultHistoryColumns::CommitAuthor)
 		{
+			const FText AuthorTooltip = !Item->CommitMeta.AuthorDetails.IsEmpty()
+				? FText::FromString(Item->CommitMeta.AuthorDetails)
+				: FText::FromString(Item->CommitMeta.Author);
+
 			return SNew(SHorizontalBox)
 				+ SHorizontalBox::Slot()
 				.AutoWidth()
@@ -722,11 +768,19 @@ public:
 				[
 					SNew(STextBlock)
 					.Text(FText::FromString(Item->CommitMeta.Author))
+					.ToolTipText(AuthorTooltip)
 					.Font(FAppStyle::GetFontStyle("NormalFont"))
 				];
 		}
 		else if (ColumnName == FlexVaultHistoryColumns::CommitDate)
 		{
+			const FText DateText = Item->CommitMeta.Date.GetTicks() > 0
+				? FText::AsDateTime(Item->CommitMeta.Date, EDateTimeStyle::Medium, EDateTimeStyle::Short)
+				: FText::FromString(TEXT("-"));
+			const FText DateTooltip = Item->CommitMeta.Date.GetTicks() > 0
+				? FText::AsDateTime(Item->CommitMeta.Date, EDateTimeStyle::Full, EDateTimeStyle::Full)
+				: FText::GetEmpty();
+
 			return SNew(SHorizontalBox)
 				+ SHorizontalBox::Slot()
 				.AutoWidth()
@@ -734,7 +788,8 @@ public:
 				.Padding(4.0f, 0.0f)
 				[
 					SNew(STextBlock)
-					.Text(FText::FromString(Item->CommitMeta.Date.ToString(TEXT("%Y-%m-%d %H:%M:%S"))))
+					.Text(DateText)
+					.ToolTipText(DateTooltip)
 					.Font(FAppStyle::GetFontStyle("NormalFont"))
 				];
 		}

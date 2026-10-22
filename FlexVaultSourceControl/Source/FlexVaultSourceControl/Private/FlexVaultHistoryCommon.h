@@ -21,20 +21,8 @@ struct FFlexVaultHistoryCommitItem
 		TSharedRef<FFlexVaultHistoryCommitItem> Item = MakeShared<FFlexVaultHistoryCommitItem>();
 		Item->CommitMeta = InMeta;
 		Item->ChangeId = BuildFlexVaultChangeId(InMeta);
+		Item->RevisionDisplay = !Item->ChangeId.IsEmpty() ? Item->ChangeId : TEXT("-");
 		Item->bIsDraft = InMeta.CommitType.Equals(TEXT("draft"), ESearchCase::IgnoreCase);
-
-		if (Item->bIsDraft)
-		{
-			Item->RevisionDisplay = InMeta.DraftRevision.IsSet()
-				? FString::Printf(TEXT("Draft %llu"), InMeta.DraftRevision.GetValue())
-				: TEXT("Draft");
-		}
-		else
-		{
-			Item->RevisionDisplay = InMeta.PublishedRevision.IsSet()
-				? FString::Printf(TEXT("Rev %llu"), InMeta.PublishedRevision.GetValue())
-				: TEXT("-");
-		}
 
 		return Item;
 	}

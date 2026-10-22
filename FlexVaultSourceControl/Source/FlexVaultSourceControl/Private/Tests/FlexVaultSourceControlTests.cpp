@@ -1588,7 +1588,7 @@ bool FFlexVaultHistoryModelTest::RunTest(const FString& Parameters)
 #if SOURCE_CONTROL_WITH_SLATE
 	TSharedRef<FFlexVaultHistoryCommitItem> PubItem = FFlexVaultHistoryCommitItem::FromMeta(PublishedMeta);
 	TestFalse(TEXT("Published commit is not draft"), PubItem->bIsDraft);
-	TestEqual(TEXT("Revision display formatted for published"), PubItem->RevisionDisplay, TEXT("Rev 42"));
+	TestEqual(TEXT("Revision display formatted for published"), PubItem->RevisionDisplay, TEXT("main.42"));
 	TestEqual(TEXT("ChangeId matches in commit item"), PubItem->ChangeId, TEXT("main.42"));
 #endif
 
@@ -1608,7 +1608,7 @@ bool FFlexVaultHistoryModelTest::RunTest(const FString& Parameters)
 #if SOURCE_CONTROL_WITH_SLATE
 	TSharedRef<FFlexVaultHistoryCommitItem> DraftItem = FFlexVaultHistoryCommitItem::FromMeta(DraftMeta);
 	TestTrue(TEXT("Draft commit identified as draft"), DraftItem->bIsDraft);
-	TestEqual(TEXT("Revision display formatted for draft"), DraftItem->RevisionDisplay, TEXT("Draft 3"));
+	TestEqual(TEXT("Revision display formatted for draft"), DraftItem->RevisionDisplay, TEXT("feature.10.3"));
 	TestEqual(TEXT("ChangeId matches in draft item"), DraftItem->ChangeId, TEXT("feature.10.3"));
 #endif
 
@@ -1620,6 +1620,10 @@ bool FFlexVaultHistoryModelTest::RunTest(const FString& Parameters)
 
 	const FString ChangeIdUnparented = BuildFlexVaultChangeId(UnparentedDraft);
 	TestEqual(TEXT("ChangeId for unparented draft uses hyphen"), ChangeIdUnparented, TEXT("feature.-.1"));
+#if SOURCE_CONTROL_WITH_SLATE
+	TSharedRef<FFlexVaultHistoryCommitItem> UnparentedItem = FFlexVaultHistoryCommitItem::FromMeta(UnparentedDraft);
+	TestEqual(TEXT("Revision display formatted for unparented draft"), UnparentedItem->RevisionDisplay, TEXT("feature.-.1"));
+#endif
 
 	// 4. Parse changeinfo JSON
 	const TArray<FString> ChangeInfoJsonLines = {
@@ -1659,6 +1663,126 @@ bool FFlexVaultHistoryModelTest::RunTest(const FString& Parameters)
 	{
 		TestEqual(TEXT("Hero.uasset action mapped to Edit"), (*HeroAssetRevs)[0].Action, TEXT("Edit"));
 		TestEqual(TEXT("Hero.uasset size matches"), (*HeroAssetRevs)[0].FileSize, (int64)2048);
+	}
+
+	return true;
+}
+
+// ── Test 35: Author Formatting & Parsing ────────────────────────────────
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultAuthorFormattingTest, "FlexVault.SourceControl.AuthorFormatting", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FFlexVaultAuthorFormattingTest::RunTest(const FString& Parameters)
+{
+	// 1. FxvUser formatting: alias vs full details
+	{
+		TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+		Obj->SetStringField(TEXT("type"), TEXT("FxvUser"));
+		Obj->SetStringField(TEXT("display_name"), TEXT("Matthew Church"));
+		Obj->SetStringField(TEXT("username"), TEXT("churchmf"));
+		TestEqual(TEXT("FxvUser alias is username"), FormatFlexVaultAuthorAlias(Obj), TEXT("churchmf"));
+		TestEqual(TEXT("FxvUser full format"), FormatFlexVaultAuthor(Obj), TEXT("Matthew Church [churchmf]"));
+	}
+
+	// 2. FxvUser formatting with only display_name
+	{
+		TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+		Obj->SetStringField(TEXT("type"), TEXT("FxvUser"));
+		Obj->SetStringField(TEXT("display_name"), TEXT("Matthew Church"));
+		TestEqual(TEXT("FxvUser alias fallback to display_name"), FormatFlexVaultAuthorAlias(Obj), TEXT("Matthew Church"));
+		TestEqual(TEXT("FxvUser display_name only"), FormatFlexVaultAuthor(Obj), TEXT("Matthew Church"));
+	}
+
+	// 3. FxvUser formatting with only username
+	{
+		TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+		Obj->SetStringField(TEXT("type"), TEXT("FxvUser"));
+		Obj->SetStringField(TEXT("username"), TEXT("churchmf"));
+		TestEqual(TEXT("FxvUser username only alias"), FormatFlexVaultAuthorAlias(Obj), TEXT("churchmf"));
+		TestEqual(TEXT("FxvUser username only"), FormatFlexVaultAuthor(Obj), TEXT("churchmf"));
+	}
+
+	// 4. Local user
+	{
+		TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+		Obj->SetStringField(TEXT("type"), TEXT("Local"));
+		TestEqual(TEXT("Local user alias"), FormatFlexVaultAuthorAlias(Obj), TEXT("(local user)"));
+		TestEqual(TEXT("Local user format"), FormatFlexVaultAuthor(Obj), TEXT("(local user)"));
+	}
+
+	// 5. Service user
+	{
+		TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+		Obj->SetStringField(TEXT("type"), TEXT("Service"));
+		TestEqual(TEXT("Service user alias"), FormatFlexVaultAuthorAlias(Obj), TEXT("(service user)"));
+		TestEqual(TEXT("Service user format"), FormatFlexVaultAuthor(Obj), TEXT("(service user)"));
+	}
+
+	// 6. GitUser
+	{
+		TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+		Obj->SetStringField(TEXT("type"), TEXT("GitUser"));
+		Obj->SetStringField(TEXT("name"), TEXT("Jane Doe"));
+		Obj->SetStringField(TEXT("email"), TEXT("jane@example.com"));
+		TestEqual(TEXT("GitUser alias is name"), FormatFlexVaultAuthorAlias(Obj), TEXT("Jane Doe"));
+		TestEqual(TEXT("GitUser format"), FormatFlexVaultAuthor(Obj), TEXT("Jane Doe <jane@example.com>"));
+	}
+
+	// 7. P4User
+	{
+		TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+		Obj->SetStringField(TEXT("type"), TEXT("P4User"));
+		Obj->SetStringField(TEXT("display_name"), TEXT("John Doe"));
+		Obj->SetStringField(TEXT("username"), TEXT("jdoe"));
+		Obj->SetStringField(TEXT("email"), TEXT("jdoe@perforce.com"));
+		TestEqual(TEXT("P4User alias is username"), FormatFlexVaultAuthorAlias(Obj), TEXT("jdoe"));
+		TestEqual(TEXT("P4User format"), FormatFlexVaultAuthor(Obj), TEXT("John Doe [jdoe] <jdoe@perforce.com> (p4)"));
+	}
+
+	// 8. Error
+	{
+		TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+		Obj->SetStringField(TEXT("type"), TEXT("Error"));
+		Obj->SetStringField(TEXT("message"), TEXT("user id not found"));
+		TestEqual(TEXT("Error alias format"), FormatFlexVaultAuthorAlias(Obj), TEXT("(error)"));
+		TestEqual(TEXT("Error author format"), FormatFlexVaultAuthor(Obj), TEXT("(error: user id not found)"));
+	}
+
+	// 9. ParseFlexVaultHistory with author_details
+	{
+		const TArray<FString> HistoryLines = {
+			TEXT("{"),
+			TEXT("  \"program\": { \"name\": \"fxv\", \"version\": \"0.12.1\" },"),
+			TEXT("  \"message\": {"),
+			TEXT("    \"kind\": \"history\","),
+			TEXT("    \"version\": \"1.0\","),
+			TEXT("    \"payload\": {"),
+			TEXT("      \"entries\": ["),
+			TEXT("        {"),
+			TEXT("          \"commit\": { \"branch\": \"main\", \"revision\": 6, \"type\": \"published\" },"),
+			TEXT("          \"description\": \"test\","),
+			TEXT("          \"author_id\": \"user:0\","),
+			TEXT("          \"author_display_name\": \"Matthew Church\","),
+			TEXT("          \"author_details\": {"),
+			TEXT("            \"type\": \"FxvUser\","),
+			TEXT("            \"id\": 0,"),
+			TEXT("            \"username\": \"churchmf\","),
+			TEXT("            \"display_name\": \"Matthew Church\""),
+			TEXT("          }"),
+			TEXT("        }"),
+			TEXT("      ]"),
+			TEXT("    }"),
+			TEXT("  }"),
+			TEXT("}")
+		};
+
+		TArray<FFlexVaultCommitMeta> Commits;
+		FSourceControlResultInfo ResultInfo;
+		TestTrue(TEXT("Successfully parsed history with author_details"), ParseFlexVaultHistory(HistoryLines, Commits, ResultInfo));
+		if (Commits.Num() == 1)
+		{
+			TestEqual(TEXT("Author parsed as alias"), Commits[0].Author, TEXT("churchmf"));
+			TestEqual(TEXT("AuthorDetails parsed with full format"), Commits[0].AuthorDetails, TEXT("Matthew Church [churchmf]"));
+		}
 	}
 
 	return true;

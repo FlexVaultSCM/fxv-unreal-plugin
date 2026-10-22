@@ -18,6 +18,7 @@ struct FFlexVaultCommitMeta
 	TOptional<uint64> DraftRevision;
 	FString Description;
 	FString Author;
+	FString AuthorDetails;
 	FDateTime Date;
 };
 
@@ -303,6 +304,16 @@ bool ParseFlexVaultHistory(
  * string for a draft commit with no DraftRevision set (nothing to query).
  */
 FString BuildFlexVaultChangeId(const FFlexVaultCommitMeta& InCommit);
+
+/**
+ * Formats an author alias (username) from the structured author_details JSON object.
+ */
+FString FormatFlexVaultAuthorAlias(const TSharedPtr<FJsonObject>& InAuthorDetails);
+
+/**
+ * Formats an author string matching 'fxv history' output from the structured author_details JSON object.
+ */
+FString FormatFlexVaultAuthor(const TSharedPtr<FJsonObject>& InAuthorDetails);
 
 /**
  * Parses the JSON output lines of 'fxv changeinfo --format json' for a specific commit and groups them by file path.
