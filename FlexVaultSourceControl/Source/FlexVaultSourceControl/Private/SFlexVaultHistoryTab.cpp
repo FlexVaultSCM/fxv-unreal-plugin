@@ -525,15 +525,14 @@ void SFlexVaultHistoryTab::FetchHistoryAsync(const FString& InBranchFilter)
 
 bool SFlexVaultHistoryTab::CanCompileLocally() const
 {
-	bool bCanLiveCompile = false;
 #if WITH_LIVE_CODING
 	ILiveCodingModule* LiveCoding = FModuleManager::GetModulePtr<ILiveCodingModule>(LIVE_CODING_MODULE_NAME);
-	if (LiveCoding != nullptr && (LiveCoding->IsEnabledForSession() || LiveCoding->CanEnableForSession()))
+	if (LiveCoding != nullptr && LiveCoding->IsEnabledForSession())
 	{
-		bCanLiveCompile = true;
+		return true;
 	}
 #endif
-	return bCanLiveCompile || FSourceCodeNavigation::IsCompilerAvailable();
+	return FSourceCodeNavigation::IsCompilerAvailable();
 }
 
 void SFlexVaultHistoryTab::UpdateCommitDisabledStates()
@@ -546,7 +545,7 @@ void SFlexVaultHistoryTab::UpdateCommitDisabledStates()
 void SFlexVaultHistoryTab::ScanCommitsForCodeChangesAsync()
 {
 	// Check cached states first
-	TArray<TSharedPtr<FFlexVaultHistoryCommitItem>> CommitsToCheck;
+	TArray<FString> ChangeIdsToCheck;
 	for (const TSharedPtr<FFlexVaultHistoryCommitItem>& Commit : AllCommits)
 	{
 		if (Commit.IsValid() && !Commit->ChangeId.IsEmpty())
@@ -558,14 +557,14 @@ void SFlexVaultHistoryTab::ScanCommitsForCodeChangesAsync()
 			}
 			else
 			{
-				CommitsToCheck.Add(Commit);
+				ChangeIdsToCheck.Add(Commit->ChangeId);
 			}
 		}
 	}
 
 	UpdateCommitDisabledStates();
 
-	if (CommitsToCheck.Num() == 0)
+	if (ChangeIdsToCheck.Num() == 0)
 	{
 		return;
 	}
@@ -575,24 +574,23 @@ void SFlexVaultHistoryTab::ScanCommitsForCodeChangesAsync()
 
 	TWeakPtr<SFlexVaultHistoryTab> WeakSelf = SharedThis(this);
 	TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> LocalCancelToken = HistoryTabCancelToken;
+	const uint32 CurrentGeneration = ++CodeScanGeneration;
 
-	Async(EAsyncExecution::ThreadPool, [WeakSelf, BinaryPath, WorkspacePath, CommitsToCheck, LocalCancelToken]()
+	Async(EAsyncExecution::ThreadPool, [WeakSelf, BinaryPath, WorkspacePath, ChangeIdsToCheck, LocalCancelToken, CurrentGeneration]()
 	{
 		TMap<FString, bool> NewResults;
 
-		for (const TSharedPtr<FFlexVaultHistoryCommitItem>& Commit : CommitsToCheck)
+		for (const FString& ChangeId : ChangeIdsToCheck)
 		{
 			if (LocalCancelToken.IsValid() && LocalCancelToken->Load())
 			{
 				return;
 			}
 
-			if (!Commit.IsValid() || Commit->ChangeId.IsEmpty())
+			if (ChangeId.IsEmpty())
 			{
 				continue;
 			}
-
-			const FString ChangeId = Commit->ChangeId;
 
 			TArray<FString> ChangeInfoArgs = {
 				TEXT("changeinfo"),
@@ -610,15 +608,27 @@ void SFlexVaultHistoryTab::ScanCommitsForCodeChangesAsync()
 			bool bHasCode = false;
 			if (bOk)
 			{
-				TMap<FString, TArray<FFlexVaultRevisionDetail>> RevisionMap;
-				if (ParseFlexVaultChangeInfo(OutputLines, Commit->CommitMeta, ChangeId, RevisionMap))
+				FString RawJson = FString::Join(OutputLines, TEXT("\n"));
+				TSharedPtr<FJsonObject> JsonEnvelope;
+				TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(RawJson);
+				TSharedPtr<FJsonObject> PayloadObj;
+				if (FJsonSerializer::Deserialize(Reader, JsonEnvelope) && TryGetFlexVaultEnvelopePayload(JsonEnvelope, PayloadObj))
 				{
-					for (const auto& Pair : RevisionMap)
+					const TArray<TSharedPtr<FJsonValue>>* ChangesArray = nullptr;
+					if (PayloadObj->TryGetArrayField(TEXT("changes"), ChangesArray) && ChangesArray != nullptr)
 					{
-						if (IsFlexVaultSourceCodeFile(Pair.Key))
+						for (const TSharedPtr<FJsonValue>& ChangeVal : *ChangesArray)
 						{
-							bHasCode = true;
-							break;
+							TSharedPtr<FJsonObject> ChangeObj = ChangeVal->AsObject();
+							FString RelPath;
+							if (ChangeObj.IsValid() && ChangeObj->TryGetStringField(TEXT("path"), RelPath))
+							{
+								if (IsFlexVaultSourceCodeFile(RelPath))
+								{
+									bHasCode = true;
+									break;
+								}
+							}
 						}
 					}
 				}
@@ -627,7 +637,7 @@ void SFlexVaultHistoryTab::ScanCommitsForCodeChangesAsync()
 			NewResults.Add(ChangeId, bHasCode);
 		}
 
-		Async(EAsyncExecution::TaskGraphMainThread, [WeakSelf, NewResults, LocalCancelToken]()
+		Async(EAsyncExecution::TaskGraphMainThread, [WeakSelf, NewResults, LocalCancelToken, CurrentGeneration]()
 		{
 			if (LocalCancelToken.IsValid() && LocalCancelToken->Load())
 			{
@@ -636,6 +646,11 @@ void SFlexVaultHistoryTab::ScanCommitsForCodeChangesAsync()
 
 			TSharedPtr<SFlexVaultHistoryTab> Pin = WeakSelf.Pin();
 			if (!Pin.IsValid())
+			{
+				return;
+			}
+
+			if (Pin->CodeScanGeneration != CurrentGeneration)
 			{
 				return;
 			}
@@ -893,7 +908,7 @@ public:
 
 		const bool bDisabled = Item->bSyncDisabled;
 		const FSlateColor TextColor = bDisabled
-			? FSlateColor(FLinearColor(0.5f, 0.5f, 0.5f, 0.55f))
+			? FSlateColor::UseSubduedForeground()
 			: (Item->bIsDraft ? FLinearColor(0.85f, 0.65f, 0.2f, 1.0f) : FSlateColor::UseForeground());
 
 		if (ColumnName == FlexVaultHistoryColumns::CommitRevision)
@@ -931,16 +946,33 @@ public:
 						]
 					];
 			}
+			else if (bDisabled)
+			{
+				RevBox->AddSlot()
+					.AutoWidth()
+					.VAlign(VAlign_Center)
+					.Padding(2.0f, 0.0f)
+					[
+						SNew(SBorder)
+						.BorderImage(FAppStyle::Get().GetBrush("Brushes.Panel"))
+						.Padding(FMargin(4.0f, 1.0f))
+						[
+							SNew(STextBlock)
+							.Text(LOCTEXT("ExternalSyncBadge", "External Sync"))
+							.ColorAndOpacity(FLinearColor(0.8f, 0.6f, 0.3f, 0.8f))
+							.Font(FAppStyle::GetFontStyle("NormalFont.SmallerBold"))
+							.ToolTipText(FText::FromString(Item->DisabledReason))
+						]
+					];
+			}
 
 			return RevBox;
 		}
 		else if (ColumnName == FlexVaultHistoryColumns::CommitAuthor)
 		{
-			const FText AuthorTooltip = bDisabled && !Item->DisabledReason.IsEmpty()
-				? FText::FromString(Item->DisabledReason)
-				: (!Item->CommitMeta.AuthorDetails.IsEmpty()
-					? FText::FromString(Item->CommitMeta.AuthorDetails)
-					: FText::FromString(Item->CommitMeta.Author));
+			const FText AuthorTooltip = !Item->CommitMeta.AuthorDetails.IsEmpty()
+				? FText::FromString(Item->CommitMeta.AuthorDetails)
+				: FText::FromString(Item->CommitMeta.Author);
 
 			return SNew(SHorizontalBox)
 				+ SHorizontalBox::Slot()
@@ -960,11 +992,9 @@ public:
 			const FText DateText = Item->CommitMeta.Date.GetTicks() > 0
 				? FText::AsDateTime(Item->CommitMeta.Date, EDateTimeStyle::Medium, EDateTimeStyle::Short)
 				: FText::FromString(TEXT("-"));
-			const FText DateTooltip = bDisabled && !Item->DisabledReason.IsEmpty()
-				? FText::FromString(Item->DisabledReason)
-				: (Item->CommitMeta.Date.GetTicks() > 0
-					? FText::AsDateTime(Item->CommitMeta.Date, EDateTimeStyle::Full, EDateTimeStyle::Full)
-					: FText::GetEmpty());
+			const FText DateTooltip = Item->CommitMeta.Date.GetTicks() > 0
+				? FText::AsDateTime(Item->CommitMeta.Date, EDateTimeStyle::Full, EDateTimeStyle::Full)
+				: FText::GetEmpty();
 
 			return SNew(SHorizontalBox)
 				+ SHorizontalBox::Slot()
@@ -985,6 +1015,10 @@ public:
 			Summary.ReplaceInline(TEXT("\r\n"), TEXT(" "));
 			Summary.ReplaceInline(TEXT("\n"), TEXT(" "));
 
+			const FText DescTooltip = bDisabled && !Item->DisabledReason.IsEmpty()
+				? FText::Format(LOCTEXT("DescTooltipDisabled", "{0}\n\nNote: {1}"), FText::FromString(Item->CommitMeta.Description), FText::FromString(Item->DisabledReason))
+				: FText::FromString(Item->CommitMeta.Description);
+
 			return SNew(SHorizontalBox)
 				+ SHorizontalBox::Slot()
 				.FillWidth(1.0f)
@@ -994,7 +1028,7 @@ public:
 					SNew(STextBlock)
 					.Text(FText::FromString(Summary))
 					.ColorAndOpacity(TextColor)
-					.ToolTipText(bDisabled ? FText::FromString(Item->DisabledReason) : FText::GetEmpty())
+					.ToolTipText(DescTooltip)
 					.Font(FAppStyle::GetFontStyle("NormalFont"))
 				];
 		}
@@ -1229,11 +1263,22 @@ void SFlexVaultHistoryTab::SyncToCommit(TSharedPtr<FFlexVaultHistoryCommitItem> 
 			}
 		}
 
-		Async(EAsyncExecution::TaskGraphMainThread, [WeakSelf, InCommit, TargetRevision, RevisionDisplay, CodeFiles]()
+		Async(EAsyncExecution::TaskGraphMainThread, [WeakSelf, InCommit, TargetRevision, RevisionDisplay, CodeFiles, bOk]()
 		{
 			TSharedPtr<SFlexVaultHistoryTab> Pin = WeakSelf.Pin();
 			if (!Pin.IsValid())
 			{
+				return;
+			}
+
+			if (!bOk)
+			{
+				FNotificationInfo FailInfo(FText::Format(
+					LOCTEXT("SyncDiffFailed", "Cannot sync to '{0}': Failed to calculate revision delta. Aborting for safety."),
+					FText::FromString(RevisionDisplay)
+				));
+				FailInfo.ExpireDuration = 5.0f;
+				FSlateNotificationManager::Get().AddNotification(FailInfo);
 				return;
 			}
 
@@ -1361,20 +1406,23 @@ void SFlexVaultHistoryTab::OnSyncOperationComplete(const FSourceControlOperation
 
 		for (const FString& File : SyncedFiles)
 		{
-			const FString Ext = FPaths::GetExtension(File).ToLower();
-			if (Ext == TEXT("h") || Ext == TEXT("cpp") || Ext == TEXT("cs") || Ext == TEXT("uproject") || Ext == TEXT("uplugin"))
+			if (IsFlexVaultSourceCodeFile(File))
 			{
 				bCodeFilesModified = true;
 			}
-			else if (Ext == TEXT("uasset") || Ext == TEXT("umap"))
+			else
 			{
-				FString PackageName;
-				if (FPackageName::TryConvertFilenameToLongPackageName(File, PackageName))
+				const FString Ext = FPaths::GetExtension(File).ToLower();
+				if (Ext == TEXT("uasset") || Ext == TEXT("umap"))
 				{
-					UPackage* Package = FindPackage(nullptr, *PackageName);
-					if (Package != nullptr)
+					FString PackageName;
+					if (FPackageName::TryConvertFilenameToLongPackageName(File, PackageName))
 					{
-						PackagesToReload.Add(Package);
+						UPackage* Package = FindPackage(nullptr, *PackageName);
+						if (Package != nullptr)
+						{
+							PackagesToReload.Add(Package);
+						}
 					}
 				}
 			}

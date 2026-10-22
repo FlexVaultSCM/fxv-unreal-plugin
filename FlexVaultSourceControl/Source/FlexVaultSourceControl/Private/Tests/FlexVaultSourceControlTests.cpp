@@ -1879,8 +1879,67 @@ bool FFlexVaultAuthorFormattingTest::RunTest(const FString& Parameters)
 		TestTrue(TEXT("main.2 should be sync disabled (reverting past code change)"), TestCommits[2]->bSyncDisabled);
 		TestTrue(TEXT("main.1 should be sync disabled (reverting past code change)"), TestCommits[3]->bSyncDisabled);
 		TestTrue(TEXT("main.0 should be sync disabled (reverting past code change)"), TestCommits[4]->bSyncDisabled);
+
+		// Scenario 4: Head not found in commit list (e.g. filtered to another branch)
+		// In a branch history with code change at main.3, all newer commits (main.4) should also be disabled
+		UpdateFlexVaultHistorySyncDisabledStates(TestCommits, TEXT("other_branch.1"), /*bCanCompileLocally=*/false);
+		TestTrue(TEXT("main.4 should be disabled (descendant of code commit main.3)"), TestCommits[0]->bSyncDisabled);
+		TestTrue(TEXT("main.3 should be disabled (code commit)"), TestCommits[1]->bSyncDisabled);
+		TestFalse(TEXT("main.2 should NOT be disabled (precedes code commit)"), TestCommits[2]->bSyncDisabled);
+		TestFalse(TEXT("main.1 should NOT be disabled (precedes code commit)"), TestCommits[3]->bSyncDisabled);
+		TestFalse(TEXT("main.0 should NOT be disabled (precedes code commit)"), TestCommits[4]->bSyncDisabled);
 	}
 #endif
+
+	// Test ParseFlexVaultHeadCommitId with published and draft formats
+	{
+		// 1. Published head
+		const FString PublishedJson = TEXT("{\n")
+			TEXT("  \"message\": {\n")
+			TEXT("    \"kind\": \"status\",\n")
+			TEXT("    \"payload\": {\n")
+			TEXT("      \"current_branch\": \"main\",\n")
+			TEXT("      \"head_commit\": {\n")
+			TEXT("        \"published_head\": {\n")
+			TEXT("          \"commit\": { \"branch\": \"main\", \"revision\": 6, \"type\": \"published\" }\n")
+			TEXT("        }\n")
+			TEXT("      }\n")
+			TEXT("    }\n")
+			TEXT("  }\n")
+			TEXT("}");
+
+		TSharedPtr<FJsonObject> PubEnvelope;
+		TSharedRef<TJsonReader<>> PubReader = TJsonReaderFactory<>::Create(PublishedJson);
+		TestTrue(TEXT("Deserialize published status JSON"), FJsonSerializer::Deserialize(PubReader, PubEnvelope));
+		FString PubHeadId;
+		TestTrue(TEXT("ParseFlexVaultHeadCommitId for published head"), ParseFlexVaultHeadCommitId(PubEnvelope, PubHeadId));
+		TestEqual(TEXT("Head commit ID matches BuildFlexVaultChangeId format"), PubHeadId, TEXT("main.6"));
+
+		// 2. Draft snapshot with draft_revision > 0
+		const FString DraftJson = TEXT("{\n")
+			TEXT("  \"message\": {\n")
+			TEXT("    \"kind\": \"status\",\n")
+			TEXT("    \"payload\": {\n")
+			TEXT("      \"current_branch\": \"main\",\n")
+			TEXT("      \"head_commit\": {\n")
+			TEXT("        \"local_snapshot\": {\n")
+			TEXT("          \"commit\": { \"branch\": \"main\", \"revision\": 6, \"type\": \"draft\", \"draft_revision\": 2 }\n")
+			TEXT("        },\n")
+			TEXT("        \"published_head\": {\n")
+			TEXT("          \"commit\": { \"branch\": \"main\", \"revision\": 6, \"type\": \"published\" }\n")
+			TEXT("        }\n")
+			TEXT("      }\n")
+			TEXT("    }\n")
+			TEXT("  }\n")
+			TEXT("}");
+
+		TSharedPtr<FJsonObject> DraftEnvelope;
+		TSharedRef<TJsonReader<>> DraftReader = TJsonReaderFactory<>::Create(DraftJson);
+		TestTrue(TEXT("Deserialize draft status JSON"), FJsonSerializer::Deserialize(DraftReader, DraftEnvelope));
+		FString DraftHeadId;
+		TestTrue(TEXT("ParseFlexVaultHeadCommitId for draft head"), ParseFlexVaultHeadCommitId(DraftEnvelope, DraftHeadId));
+		TestEqual(TEXT("Draft head commit ID matches BuildFlexVaultChangeId format"), DraftHeadId, TEXT("main.6.2"));
+	}
 
 	return true;
 }

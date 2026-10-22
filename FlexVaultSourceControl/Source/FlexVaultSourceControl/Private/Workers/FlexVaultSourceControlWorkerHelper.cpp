@@ -785,7 +785,7 @@ void CheckForRemotePluginUpdateAsync(
 /**
  * Unwraps the `message.payload` object shared by all FlexVault CLI JSON envelopes.
  */
-static bool TryGetFlexVaultEnvelopePayload(
+bool TryGetFlexVaultEnvelopePayload(
 	const TSharedPtr<FJsonObject>& InEnvelope,
 	TSharedPtr<FJsonObject>& OutPayload
 )
@@ -856,36 +856,58 @@ bool ParseFlexVaultHeadCommitId(
 	}
 
 	const TSharedPtr<FJsonObject>* HeadCommitObj = nullptr;
-	if (PayloadObj->TryGetObjectField(TEXT("head_commit"), HeadCommitObj) && HeadCommitObj && HeadCommitObj->IsValid())
+	if (!PayloadObj->TryGetObjectField(TEXT("head_commit"), HeadCommitObj) || !HeadCommitObj || !(*HeadCommitObj).IsValid())
 	{
-		// 1. Check local draft snapshot first
-		const TSharedPtr<FJsonObject>* LocalSnapshotObj = nullptr;
-		if ((*HeadCommitObj)->TryGetObjectField(TEXT("local_snapshot"), LocalSnapshotObj) && LocalSnapshotObj && LocalSnapshotObj->IsValid())
-		{
-			if ((*LocalSnapshotObj)->TryGetStringField(TEXT("id"), OutHeadCommitId) && !OutHeadCommitId.IsEmpty())
-			{
-				return true;
-			}
-		}
+		return false;
+	}
 
-		// 2. Fall back to published head
-		const TSharedPtr<FJsonObject>* PublishedHeadObj = nullptr;
-		if ((*HeadCommitObj)->TryGetObjectField(TEXT("published_head"), PublishedHeadObj) && PublishedHeadObj && PublishedHeadObj->IsValid())
+	// 1. Check local draft snapshot if it has an actual draft revision (> 0)
+	const TSharedPtr<FJsonObject>* LocalSnapshotObj = nullptr;
+	if ((*HeadCommitObj)->TryGetObjectField(TEXT("local_snapshot"), LocalSnapshotObj) && LocalSnapshotObj && LocalSnapshotObj->IsValid())
+	{
+		const TSharedPtr<FJsonObject>* CommitObj = nullptr;
+		if ((*LocalSnapshotObj)->TryGetObjectField(TEXT("commit"), CommitObj) && CommitObj && (*CommitObj).IsValid())
 		{
-			if ((*PublishedHeadObj)->TryGetStringField(TEXT("id"), OutHeadCommitId) && !OutHeadCommitId.IsEmpty())
+			uint64 DraftRev = 0;
+			if ((*CommitObj)->TryGetNumberField(TEXT("draft_revision"), DraftRev) && DraftRev > 0)
 			{
-				return true;
-			}
-
-			const TSharedPtr<FJsonObject>* CommitObj = nullptr;
-			if ((*PublishedHeadObj)->TryGetObjectField(TEXT("commit"), CommitObj) && CommitObj && CommitObj->IsValid())
-			{
-				uint64 RevNumber = 0;
-				if ((*CommitObj)->TryGetNumberField(TEXT("revision"), RevNumber))
+				FFlexVaultCommitMeta Meta;
+				(*CommitObj)->TryGetStringField(TEXT("branch"), Meta.Branch);
+				(*CommitObj)->TryGetStringField(TEXT("type"), Meta.CommitType);
+				Meta.DraftRevision = DraftRev;
+				uint64 PubRev = 0;
+				if ((*CommitObj)->TryGetNumberField(TEXT("revision"), PubRev))
 				{
-					OutHeadCommitId = FString::Printf(TEXT("rev_%llu"), RevNumber);
+					Meta.PublishedRevision = PubRev;
+				}
+				OutHeadCommitId = BuildFlexVaultChangeId(Meta);
+				if (!OutHeadCommitId.IsEmpty())
+				{
 					return true;
 				}
+			}
+		}
+	}
+
+	// 2. Otherwise use published head
+	const TSharedPtr<FJsonObject>* PublishedHeadObj = nullptr;
+	if ((*HeadCommitObj)->TryGetObjectField(TEXT("published_head"), PublishedHeadObj) && PublishedHeadObj && PublishedHeadObj->IsValid())
+	{
+		const TSharedPtr<FJsonObject>* CommitObj = nullptr;
+		if ((*PublishedHeadObj)->TryGetObjectField(TEXT("commit"), CommitObj) && CommitObj && (*CommitObj).IsValid())
+		{
+			FFlexVaultCommitMeta Meta;
+			(*CommitObj)->TryGetStringField(TEXT("branch"), Meta.Branch);
+			(*CommitObj)->TryGetStringField(TEXT("type"), Meta.CommitType);
+			uint64 PubRev = 0;
+			if ((*CommitObj)->TryGetNumberField(TEXT("revision"), PubRev))
+			{
+				Meta.PublishedRevision = PubRev;
+			}
+			OutHeadCommitId = BuildFlexVaultChangeId(Meta);
+			if (!OutHeadCommitId.IsEmpty())
+			{
+				return true;
 			}
 		}
 	}
@@ -1950,13 +1972,28 @@ void UpdateFlexVaultHistorySyncDisabledStates(
 	}
 	else
 	{
-		// Fallback when Head is unknown: disable any commit that has code changes
-		for (TSharedPtr<FFlexVaultHistoryCommitItem>& Commit : InCommits)
+		// Fallback when Head is not in the displayed list (e.g. viewing another branch or pagination limit):
+		// In a branch history (sorted newest at index 0 to oldest at index N-1),
+		// if an older commit introduces code changes, all newer commits built upon it also contain those code changes.
+		bool bEncounteredCode = false;
+		for (int32 i = InCommits.Num() - 1; i >= 0; --i)
 		{
-			if (Commit.IsValid() && Commit->bHasCodeChanges)
+			TSharedPtr<FFlexVaultHistoryCommitItem>& Commit = InCommits[i];
+			if (!Commit.IsValid())
 			{
+				continue;
+			}
+
+			if (Commit->bHasCodeChanges)
+			{
+				bEncounteredCode = true;
 				Commit->bSyncDisabled = true;
 				Commit->DisabledReason = TEXT("Contains C++ source code changes. In-editor sync is disabled without a local compiler. Please sync outside the editor (e.g. UGS or CLI).");
+			}
+			else if (bEncounteredCode)
+			{
+				Commit->bSyncDisabled = true;
+				Commit->DisabledReason = TEXT("Incorporates earlier C++ source code changes from this branch. Please sync outside the editor (e.g. UGS or CLI).");
 			}
 		}
 	}

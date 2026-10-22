@@ -218,6 +218,14 @@ bool ParseFlexVaultCurrentBranch(
 );
 
 /**
+ * Extracts payload object from standard FlexVault JSON envelope.
+ */
+bool TryGetFlexVaultEnvelopePayload(
+	const TSharedPtr<class FJsonObject>& InEnvelope,
+	TSharedPtr<class FJsonObject>& OutPayload
+);
+
+/**
  * Extracts head commit snapshot ID from status json envelope.
  */
 bool ParseFlexVaultHeadCommitId(

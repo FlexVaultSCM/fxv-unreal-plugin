@@ -103,6 +103,7 @@ private:
 	bool bIsLoadingHistory = false;
 	bool bIsLoadingDetails = false;
 	bool bIsStatusCheckInFlight = false;
+	uint32 CodeScanGeneration = 0;
 
 	// Last head commit tracker for automatic refresh detection
 	FString LastKnownHeadCommit;
