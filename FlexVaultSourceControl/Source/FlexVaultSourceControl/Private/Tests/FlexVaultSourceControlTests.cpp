@@ -27,6 +27,9 @@
 #include "HAL/PlatformFileManager.h"
 #include "Misc/Paths.h"
 #include "Misc/FileHelper.h"
+#if SOURCE_CONTROL_WITH_SLATE
+#include "FlexVaultHistoryCommon.h"
+#endif
 
 #if WITH_DEV_AUTOMATION_TESTS
 
@@ -459,6 +462,7 @@ bool FFlexVaultWorkerUpdateStatusTest::RunTest(const FString& Parameters)
 	Worker.LocalRevision = 14;
 	Worker.DepotRevision = 15;
 	Worker.bHasChangesToSync = true;
+	Worker.OutdatedFiles.Add(ModFileRelative.ToLower());
 	Worker.ModifiedFiles.Add(ModFileRelative, EFlexVaultState::CheckedOut);
 	Worker.ModifiedFiles.Add(AddFileRelative, EFlexVaultState::OpenForAdd);
 	Worker.ConflictedFiles.Add(ModFileRelative, TEXT("content"));
@@ -476,6 +480,9 @@ bool FFlexVaultWorkerUpdateStatusTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Modified file conflict reason kind matches"), ModCached->ConflictReasonKind, TEXT("content"));
 
 	TestEqual(TEXT("Added file SCM state set to OpenForAdd"), AddCached->GetState(), EFlexVaultState::OpenForAdd);
+	TestEqual(TEXT("Added file not in OutdatedFiles has DepotRevision matching LocalRevision"), AddCached->DepotRevNumber, 14);
+	TestTrue(TEXT("Added file not in OutdatedFiles is current"), AddCached->IsCurrent());
+	TestFalse(TEXT("Modified file in OutdatedFiles is not current"), ModCached->IsCurrent());
 
 	TestTrue(TEXT("SCM provider flags changes to sync correctly"), Provider.HasChangesToSync().Get(false));
 
@@ -500,6 +507,7 @@ bool FFlexVaultWorkerSyncTest::RunTest(const FString& Parameters)
 
 	// Verify sync resets repository state
 	TestFalse(TEXT("bHasChangesToSync was cleared"), Provider.HasChangesToSync().Get(true));
+	TestEqual(TEXT("Last synced files tracked on provider"), Provider.GetLastSyncedFiles().Num(), 0);
 
 	return true;
 }
@@ -1485,11 +1493,25 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultFetchTest, "FlexVault.SourceControl.F
 
 bool FFlexVaultFetchTest::RunTest(const FString& Parameters)
 {
-	// 1. Verify default developer settings
-	const UFlexVaultSourceControlDeveloperSettings* Settings = GetDefault<UFlexVaultSourceControlDeveloperSettings>();
-	if (Settings)
+	// 1. Verify default developer settings and RoleMode
+	UFlexVaultSourceControlDeveloperSettings* MutableSettings = GetMutableDefault<UFlexVaultSourceControlDeveloperSettings>();
+	if (MutableSettings)
 	{
-		TestEqual(TEXT("Default FetchPeriodSeconds is 120"), Settings->FetchPeriodSeconds, 120);
+		TestEqual(TEXT("Default FetchPeriodSeconds is 120"), MutableSettings->FetchPeriodSeconds, 120);
+		TestEqual(TEXT("Default RoleMode is Auto"), (uint8)MutableSettings->RoleMode, (uint8)EFlexVaultRoleMode::Auto);
+
+		const EFlexVaultRoleMode OriginalMode = MutableSettings->RoleMode;
+
+		MutableSettings->RoleMode = EFlexVaultRoleMode::Engineer;
+		TestTrue(TEXT("RoleMode::Engineer forces IsEngineerMode to true"), MutableSettings->IsEngineerMode());
+
+		MutableSettings->RoleMode = EFlexVaultRoleMode::PrecompiledBinaries;
+		TestFalse(TEXT("RoleMode::PrecompiledBinaries forces IsEngineerMode to false"), MutableSettings->IsEngineerMode());
+
+		MutableSettings->RoleMode = EFlexVaultRoleMode::Auto;
+		TestEqual(TEXT("RoleMode::Auto matches compiler availability"), MutableSettings->IsEngineerMode(), FSourceCodeNavigation::IsCompilerAvailable());
+
+		MutableSettings->RoleMode = OriginalMode;
 	}
 
 	// 2. Verify BuildFlexVaultFetchArgs without repair
@@ -1561,6 +1583,413 @@ bool FFlexVaultFetchTest::RunTest(const FString& Parameters)
 	FFlexVaultFetchResult NoPayloadResult;
 	FSourceControlResultInfo NoPayloadInfo;
 	TestFalse(TEXT("ParseFlexVaultFetch fails on missing payload"), ParseFlexVaultFetch(NoPayloadJson, NoPayloadResult, NoPayloadInfo));
+
+	return true;
+}
+
+// ── Test 34: History Commit & File Model ──────────────────────────────────────
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultHistoryModelTest, "FlexVault.SourceControl.HistoryModel", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FFlexVaultHistoryModelTest::RunTest(const FString& Parameters)
+{
+	// 1. Published commit item creation
+	FFlexVaultCommitMeta PublishedMeta;
+	PublishedMeta.Branch = TEXT("main");
+	PublishedMeta.PublishedRevision = 42;
+	PublishedMeta.CommitType = TEXT("published");
+	PublishedMeta.Author = TEXT("church");
+	PublishedMeta.Description = TEXT("Initial import of assets");
+	PublishedMeta.Date = FDateTime(2026, 10, 22, 10, 0, 0);
+
+	const FString ChangeIdPub = BuildFlexVaultChangeId(PublishedMeta);
+	TestEqual(TEXT("ChangeId for published commit matches"), ChangeIdPub, TEXT("main.42"));
+
+#if SOURCE_CONTROL_WITH_SLATE
+	TSharedRef<FFlexVaultHistoryCommitItem> PubItem = FFlexVaultHistoryCommitItem::FromMeta(PublishedMeta);
+	TestFalse(TEXT("Published commit is not draft"), PubItem->bIsDraft);
+	TestEqual(TEXT("Revision display formatted for published"), PubItem->RevisionDisplay, TEXT("main.42"));
+	TestEqual(TEXT("ChangeId matches in commit item"), PubItem->ChangeId, TEXT("main.42"));
+#endif
+
+	// 2. Draft commit item creation parented on published revision
+	FFlexVaultCommitMeta DraftMeta;
+	DraftMeta.Branch = TEXT("feature");
+	DraftMeta.PublishedRevision = 10;
+	DraftMeta.DraftRevision = 3;
+	DraftMeta.CommitType = TEXT("draft");
+	DraftMeta.Author = TEXT("church");
+	DraftMeta.Description = TEXT("WIP character tuning");
+	DraftMeta.Date = FDateTime(2026, 10, 22, 12, 0, 0);
+
+	const FString ChangeIdDraft = BuildFlexVaultChangeId(DraftMeta);
+	TestEqual(TEXT("ChangeId for draft commit matches"), ChangeIdDraft, TEXT("feature.10.3"));
+
+#if SOURCE_CONTROL_WITH_SLATE
+	TSharedRef<FFlexVaultHistoryCommitItem> DraftItem = FFlexVaultHistoryCommitItem::FromMeta(DraftMeta);
+	TestTrue(TEXT("Draft commit identified as draft"), DraftItem->bIsDraft);
+	TestEqual(TEXT("Revision display formatted for draft"), DraftItem->RevisionDisplay, TEXT("feature.10.3"));
+	TestEqual(TEXT("ChangeId matches in draft item"), DraftItem->ChangeId, TEXT("feature.10.3"));
+#endif
+
+	// 3. Draft with no published parent ("feature.-.1")
+	FFlexVaultCommitMeta UnparentedDraft;
+	UnparentedDraft.Branch = TEXT("feature");
+	UnparentedDraft.DraftRevision = 1;
+	UnparentedDraft.CommitType = TEXT("draft");
+
+	const FString ChangeIdUnparented = BuildFlexVaultChangeId(UnparentedDraft);
+	TestEqual(TEXT("ChangeId for unparented draft uses hyphen"), ChangeIdUnparented, TEXT("feature.-.1"));
+
+	// 3b. Verify draft revision spec detection (for routing to goto vs sync)
+	TestFalse(TEXT("Published spec main.42 is not draft"), IsFlexVaultDraftRevisionSpec(TEXT("main.42")));
+	TestTrue(TEXT("Parented draft spec feature.10.3 is draft"), IsFlexVaultDraftRevisionSpec(TEXT("feature.10.3")));
+	TestTrue(TEXT("Unparented draft spec feature.-.1 is draft"), IsFlexVaultDraftRevisionSpec(TEXT("feature.-.1")));
+	TestFalse(TEXT("Empty spec is not draft"), IsFlexVaultDraftRevisionSpec(TEXT("")));
+#if SOURCE_CONTROL_WITH_SLATE
+	TSharedRef<FFlexVaultHistoryCommitItem> UnparentedItem = FFlexVaultHistoryCommitItem::FromMeta(UnparentedDraft);
+	TestEqual(TEXT("Revision display formatted for unparented draft"), UnparentedItem->RevisionDisplay, TEXT("feature.-.1"));
+#endif
+
+	// 4. Parse changeinfo JSON
+	const TArray<FString> ChangeInfoJsonLines = {
+		TEXT("{"),
+		FString::Printf(TEXT("  \"program\": { \"name\": \"fxv\", \"version\": \"%s\" },"), *FlexVaultCliCompatibility::GetMinVersionString()),
+		TEXT("  \"message\": {"),
+		TEXT("    \"kind\": \"changeinfo\","),
+		TEXT("    \"version\": \"1.0\","),
+		TEXT("    \"payload\": {"),
+		TEXT("      \"changes\": ["),
+		TEXT("        {"),
+		TEXT("          \"path\": \"Content/Characters/Hero.uasset\","),
+		TEXT("          \"action\": \"Modified\","),
+		TEXT("          \"size\": 2048,"),
+		TEXT("          \"content_address\": \"BLOB:abcdef123456\""),
+		TEXT("        },"),
+		TEXT("        {"),
+		TEXT("          \"path\": \"Source/MyGame/Hero.cpp\","),
+		TEXT("          \"action\": \"Added\","),
+		TEXT("          \"size\": 512,"),
+		TEXT("          \"content_address\": \"BLOB:123456abcdef\""),
+		TEXT("        }"),
+		TEXT("      ]"),
+		TEXT("    }"),
+		TEXT("  }"),
+		TEXT("}")
+	};
+
+	TMap<FString, TArray<FFlexVaultRevisionDetail>> RevisionMap;
+	const bool bParsedChanges = ParseFlexVaultChangeInfo(ChangeInfoJsonLines, PublishedMeta, ChangeIdPub, RevisionMap);
+	TestTrue(TEXT("ParseFlexVaultChangeInfo succeeded"), bParsedChanges);
+	TestEqual(TEXT("Parsed 2 file paths in changeinfo"), RevisionMap.Num(), 2);
+
+	const TArray<FFlexVaultRevisionDetail>* HeroAssetRevs = RevisionMap.Find(TEXT("content/characters/hero.uasset"));
+	TestNotNull(TEXT("Hero.uasset found in revision map"), HeroAssetRevs);
+	if (HeroAssetRevs && HeroAssetRevs->Num() > 0)
+	{
+		TestEqual(TEXT("Hero.uasset action mapped to Edit"), (*HeroAssetRevs)[0].Action, TEXT("Edit"));
+		TestEqual(TEXT("Hero.uasset size matches"), (*HeroAssetRevs)[0].FileSize, (int64)2048);
+		TestEqual(TEXT("Hero.uasset preserved original casing"), (*HeroAssetRevs)[0].RelativePath, TEXT("Content/Characters/Hero.uasset"));
+	}
+
+	return true;
+}
+
+// ── Test 35: Author Formatting & Parsing ────────────────────────────────
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultAuthorFormattingTest, "FlexVault.SourceControl.AuthorFormatting", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FFlexVaultAuthorFormattingTest::RunTest(const FString& Parameters)
+{
+	// 1. FxvUser formatting: alias vs full details
+	{
+		TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+		Obj->SetStringField(TEXT("type"), TEXT("FxvUser"));
+		Obj->SetStringField(TEXT("display_name"), TEXT("Matthew Church"));
+		Obj->SetStringField(TEXT("username"), TEXT("churchmf"));
+		TestEqual(TEXT("FxvUser alias is username"), FormatFlexVaultAuthorAlias(Obj), TEXT("churchmf"));
+		TestEqual(TEXT("FxvUser full format"), FormatFlexVaultAuthor(Obj), TEXT("Matthew Church [churchmf]"));
+	}
+
+	// 2. FxvUser formatting with only display_name
+	{
+		TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+		Obj->SetStringField(TEXT("type"), TEXT("FxvUser"));
+		Obj->SetStringField(TEXT("display_name"), TEXT("Matthew Church"));
+		TestEqual(TEXT("FxvUser alias fallback to display_name"), FormatFlexVaultAuthorAlias(Obj), TEXT("Matthew Church"));
+		TestEqual(TEXT("FxvUser display_name only"), FormatFlexVaultAuthor(Obj), TEXT("Matthew Church"));
+	}
+
+	// 3. FxvUser formatting with only username
+	{
+		TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+		Obj->SetStringField(TEXT("type"), TEXT("FxvUser"));
+		Obj->SetStringField(TEXT("username"), TEXT("churchmf"));
+		TestEqual(TEXT("FxvUser username only alias"), FormatFlexVaultAuthorAlias(Obj), TEXT("churchmf"));
+		TestEqual(TEXT("FxvUser username only"), FormatFlexVaultAuthor(Obj), TEXT("churchmf"));
+	}
+
+	// 4. Local user
+	{
+		TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+		Obj->SetStringField(TEXT("type"), TEXT("Local"));
+		TestEqual(TEXT("Local user alias"), FormatFlexVaultAuthorAlias(Obj), TEXT("(local user)"));
+		TestEqual(TEXT("Local user format"), FormatFlexVaultAuthor(Obj), TEXT("(local user)"));
+	}
+
+	// 5. Service user
+	{
+		TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+		Obj->SetStringField(TEXT("type"), TEXT("Service"));
+		TestEqual(TEXT("Service user alias"), FormatFlexVaultAuthorAlias(Obj), TEXT("(service user)"));
+		TestEqual(TEXT("Service user format"), FormatFlexVaultAuthor(Obj), TEXT("(service user)"));
+	}
+
+	// 6. GitUser
+	{
+		TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+		Obj->SetStringField(TEXT("type"), TEXT("GitUser"));
+		Obj->SetStringField(TEXT("name"), TEXT("Jane Doe"));
+		Obj->SetStringField(TEXT("email"), TEXT("jane@example.com"));
+		TestEqual(TEXT("GitUser alias is name"), FormatFlexVaultAuthorAlias(Obj), TEXT("Jane Doe"));
+		TestEqual(TEXT("GitUser format"), FormatFlexVaultAuthor(Obj), TEXT("Jane Doe <jane@example.com>"));
+	}
+
+	// 7. P4User
+	{
+		TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+		Obj->SetStringField(TEXT("type"), TEXT("P4User"));
+		Obj->SetStringField(TEXT("display_name"), TEXT("John Doe"));
+		Obj->SetStringField(TEXT("username"), TEXT("jdoe"));
+		Obj->SetStringField(TEXT("email"), TEXT("jdoe@perforce.com"));
+		TestEqual(TEXT("P4User alias is username"), FormatFlexVaultAuthorAlias(Obj), TEXT("jdoe"));
+		TestEqual(TEXT("P4User format"), FormatFlexVaultAuthor(Obj), TEXT("John Doe [jdoe] <jdoe@perforce.com> (p4)"));
+	}
+
+	// 8. Error
+	{
+		TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+		Obj->SetStringField(TEXT("type"), TEXT("Error"));
+		Obj->SetStringField(TEXT("message"), TEXT("user id not found"));
+		TestEqual(TEXT("Error alias format"), FormatFlexVaultAuthorAlias(Obj), TEXT("(error)"));
+		TestEqual(TEXT("Error author format"), FormatFlexVaultAuthor(Obj), TEXT("(error: user id not found)"));
+	}
+
+	// 9. ParseFlexVaultHistory with author_details
+	{
+		const TArray<FString> HistoryLines = {
+			TEXT("{"),
+			TEXT("  \"program\": { \"name\": \"fxv\", \"version\": \"0.12.1\" },"),
+			TEXT("  \"message\": {"),
+			TEXT("    \"kind\": \"history\","),
+			TEXT("    \"version\": \"1.0\","),
+			TEXT("    \"payload\": {"),
+			TEXT("      \"entries\": ["),
+			TEXT("        {"),
+			TEXT("          \"commit\": { \"branch\": \"main\", \"revision\": 6, \"type\": \"published\" },"),
+			TEXT("          \"description\": \"test\","),
+			TEXT("          \"author_id\": \"user:0\","),
+			TEXT("          \"author_display_name\": \"Matthew Church\","),
+			TEXT("          \"author_details\": {"),
+			TEXT("            \"type\": \"FxvUser\","),
+			TEXT("            \"id\": 0,"),
+			TEXT("            \"username\": \"churchmf\","),
+			TEXT("            \"display_name\": \"Matthew Church\""),
+			TEXT("          }"),
+			TEXT("        }"),
+			TEXT("      ]"),
+			TEXT("    }"),
+			TEXT("  }"),
+			TEXT("}")
+		};
+
+		TArray<FFlexVaultCommitMeta> Commits;
+		FSourceControlResultInfo ResultInfo;
+		TestTrue(TEXT("Successfully parsed history with author_details"), ParseFlexVaultHistory(HistoryLines, Commits, ResultInfo));
+		if (Commits.Num() == 1)
+		{
+			TestEqual(TEXT("Author parsed as alias"), Commits[0].Author, TEXT("churchmf"));
+			TestEqual(TEXT("AuthorDetails parsed with full format"), Commits[0].AuthorDetails, TEXT("Matthew Church [churchmf]"));
+		}
+	}
+
+	// Test BuildFlexVaultDiffArgs, ParseFlexVaultDiffChangedFiles, and IsFlexVaultSourceCodeFile
+	{
+		const TArray<FString> DiffArgs = BuildFlexVaultDiffArgs(TEXT("main.6"));
+		TestTrue(TEXT("Diff args include diff command"), DiffArgs.Contains(TEXT("diff")));
+		TestTrue(TEXT("Diff args include target revision"), DiffArgs.Contains(TEXT("main.6")));
+
+		const TArray<FString> SampleDiffOutput = {
+			TEXT("Comparing main.2 and main.6"),
+			TEXT("Changed files:"),
+			TEXT("  Changed   Content\\Audio\\menu.uasset"),
+			TEXT("  Changed   Source\\RoboArena\\Public\\Core\\RoboTypes.h"),
+			TEXT("  Changed   Source\\RoboArena\\Private\\Core\\RoboTypes.cpp"),
+			TEXT(""),
+			TEXT("### Diffing Content/Audio/menu.uasset"),
+			TEXT("Binary files differ")
+		};
+
+		TArray<FString> ChangedFiles;
+		TestTrue(TEXT("ParseFlexVaultDiffChangedFiles returns true"), ParseFlexVaultDiffChangedFiles(SampleDiffOutput, ChangedFiles));
+		TestEqual(TEXT("Parsed 3 changed files"), ChangedFiles.Num(), 3);
+		if (ChangedFiles.Num() == 3)
+		{
+			TestEqual(TEXT("Normalized uasset path"), ChangedFiles[0], TEXT("Content/Audio/menu.uasset"));
+			TestEqual(TEXT("Normalized header path"), ChangedFiles[1], TEXT("Source/RoboArena/Public/Core/RoboTypes.h"));
+			TestEqual(TEXT("Normalized cpp path"), ChangedFiles[2], TEXT("Source/RoboArena/Private/Core/RoboTypes.cpp"));
+		}
+
+		TestFalse(TEXT(".uasset is not source code"), IsFlexVaultSourceCodeFile(TEXT("Content/Audio/menu.uasset")));
+		TestTrue(TEXT(".h is source code"), IsFlexVaultSourceCodeFile(TEXT("Source/RoboArena/Public/Core/RoboTypes.h")));
+		TestTrue(TEXT(".cpp is source code"), IsFlexVaultSourceCodeFile(TEXT("Source/RoboArena/Private/Core/RoboTypes.cpp")));
+		TestTrue(TEXT(".cs is source code"), IsFlexVaultSourceCodeFile(TEXT("Source/RoboArena.Target.cs")));
+		TestTrue(TEXT(".uproject is source code"), IsFlexVaultSourceCodeFile(TEXT("RoboArena.uproject")));
+	}
+
+#if SOURCE_CONTROL_WITH_SLATE
+	// Test UpdateFlexVaultHistorySyncDisabledStates
+	{
+		// Create 5 commits (sorted newest to oldest: main.4 to main.0)
+		// main.4: Content only
+		// main.3: C++ code changes (bHasCodeChanges = true)
+		// main.2: Content only
+		// main.1: Content only (current workspace head)
+		// main.0: Content only
+		TArray<TSharedPtr<FFlexVaultHistoryCommitItem>> TestCommits;
+
+		for (int32 i = 4; i >= 0; --i)
+		{
+			FFlexVaultCommitMeta Meta;
+			Meta.Branch = TEXT("main");
+			Meta.PublishedRevision = i;
+			Meta.CommitType = TEXT("published");
+			TSharedRef<FFlexVaultHistoryCommitItem> Item = FFlexVaultHistoryCommitItem::FromMeta(Meta);
+			if (i == 3)
+			{
+				Item->bHasCodeChanges = true;
+			}
+			TestCommits.Add(Item);
+		}
+
+		// Scenario 1: Programmer mode (bCanCompileLocally = true)
+		UpdateFlexVaultHistorySyncDisabledStates(TestCommits, TEXT("main.1"), /*bCanCompileLocally=*/true);
+		for (const TSharedPtr<FFlexVaultHistoryCommitItem>& Commit : TestCommits)
+		{
+			TestFalse(TEXT("Programmers should never have sync disabled"), Commit->bSyncDisabled);
+		}
+
+		// Scenario 2: Precompiled binaries mode (bCanCompileLocally = false) with Head at main.1
+		UpdateFlexVaultHistorySyncDisabledStates(TestCommits, TEXT("main.1"), /*bCanCompileLocally=*/false);
+		// main.4: Future commit beyond code commit main.3 -> should be disabled
+		TestTrue(TEXT("main.4 should be sync disabled (beyond code change)"), TestCommits[0]->bSyncDisabled);
+		// main.3: Code commit itself -> should be disabled
+		TestTrue(TEXT("main.3 should be sync disabled (has code change)"), TestCommits[1]->bSyncDisabled);
+		// main.2: Content only between main.1 and main.3 -> should be allowed
+		TestFalse(TEXT("main.2 should NOT be sync disabled"), TestCommits[2]->bSyncDisabled);
+		// main.1: Current head -> should NOT be sync disabled
+		TestFalse(TEXT("main.1 should NOT be sync disabled"), TestCommits[3]->bSyncDisabled);
+		// main.0: Past commit, no code changes between main.1 and main.0 -> should NOT be sync disabled
+		TestFalse(TEXT("main.0 should NOT be sync disabled"), TestCommits[4]->bSyncDisabled);
+
+		// Scenario 3: Head moved to main.4 (workspace at top)
+		// Now reverting back to main.2, main.1, main.0 crosses main.3 (code change) in reverse
+		UpdateFlexVaultHistorySyncDisabledStates(TestCommits, TEXT("main.4"), /*bCanCompileLocally=*/false);
+		TestFalse(TEXT("main.4 should NOT be sync disabled (at head)"), TestCommits[0]->bSyncDisabled);
+		TestTrue(TEXT("main.3 should be sync disabled (code commit)"), TestCommits[1]->bSyncDisabled);
+		TestTrue(TEXT("main.2 should be sync disabled (reverting past code change)"), TestCommits[2]->bSyncDisabled);
+		TestTrue(TEXT("main.1 should be sync disabled (reverting past code change)"), TestCommits[3]->bSyncDisabled);
+		TestTrue(TEXT("main.0 should be sync disabled (reverting past code change)"), TestCommits[4]->bSyncDisabled);
+
+		// Scenario 4: Head not found in commit list (e.g. filtered to another branch)
+		// In a branch history with code change at main.3, all newer commits (main.4) should also be disabled
+		UpdateFlexVaultHistorySyncDisabledStates(TestCommits, TEXT("other_branch.1"), /*bCanCompileLocally=*/false);
+		TestTrue(TEXT("main.4 should be disabled (descendant of code commit main.3)"), TestCommits[0]->bSyncDisabled);
+		TestTrue(TEXT("main.3 should be disabled (code commit)"), TestCommits[1]->bSyncDisabled);
+		TestFalse(TEXT("main.2 should NOT be disabled (precedes code commit)"), TestCommits[2]->bSyncDisabled);
+		TestFalse(TEXT("main.1 should NOT be disabled (precedes code commit)"), TestCommits[3]->bSyncDisabled);
+		TestFalse(TEXT("main.0 should NOT be disabled (precedes code commit)"), TestCommits[4]->bSyncDisabled);
+	}
+#endif
+
+	// Test ParseFlexVaultHeadCommitId with published and draft formats
+	{
+		// 1. Published head
+		const FString PublishedJson = TEXT("{\n")
+			TEXT("  \"message\": {\n")
+			TEXT("    \"kind\": \"status\",\n")
+			TEXT("    \"payload\": {\n")
+			TEXT("      \"current_branch\": \"main\",\n")
+			TEXT("      \"head_commit\": {\n")
+			TEXT("        \"published_head\": {\n")
+			TEXT("          \"commit\": { \"branch\": \"main\", \"revision\": 6, \"type\": \"published\" }\n")
+			TEXT("        }\n")
+			TEXT("      }\n")
+			TEXT("    }\n")
+			TEXT("  }\n")
+			TEXT("}");
+
+		TSharedPtr<FJsonObject> PubEnvelope;
+		TSharedRef<TJsonReader<>> PubReader = TJsonReaderFactory<>::Create(PublishedJson);
+		TestTrue(TEXT("Deserialize published status JSON"), FJsonSerializer::Deserialize(PubReader, PubEnvelope));
+		FString PubHeadId;
+		TestTrue(TEXT("ParseFlexVaultHeadCommitId for published head"), ParseFlexVaultHeadCommitId(PubEnvelope, PubHeadId));
+		TestEqual(TEXT("Head commit ID matches BuildFlexVaultChangeId format"), PubHeadId, TEXT("main.6"));
+
+		// 2. Draft snapshot with draft_revision > 0
+		const FString DraftJson = TEXT("{\n")
+			TEXT("  \"message\": {\n")
+			TEXT("    \"kind\": \"status\",\n")
+			TEXT("    \"payload\": {\n")
+			TEXT("      \"current_branch\": \"main\",\n")
+			TEXT("      \"head_commit\": {\n")
+			TEXT("        \"local_snapshot\": {\n")
+			TEXT("          \"commit\": { \"branch\": \"main\", \"revision\": 6, \"type\": \"draft\", \"draft_revision\": 2 }\n")
+			TEXT("        },\n")
+			TEXT("        \"published_head\": {\n")
+			TEXT("          \"commit\": { \"branch\": \"main\", \"revision\": 6, \"type\": \"published\" }\n")
+			TEXT("        }\n")
+			TEXT("      }\n")
+			TEXT("    }\n")
+			TEXT("  }\n")
+			TEXT("}");
+
+		TSharedPtr<FJsonObject> DraftEnvelope;
+		TSharedRef<TJsonReader<>> DraftReader = TJsonReaderFactory<>::Create(DraftJson);
+		TestTrue(TEXT("Deserialize draft status JSON"), FJsonSerializer::Deserialize(DraftReader, DraftEnvelope));
+		FString DraftHeadId;
+		TestTrue(TEXT("ParseFlexVaultHeadCommitId for draft head"), ParseFlexVaultHeadCommitId(DraftEnvelope, DraftHeadId));
+		TestEqual(TEXT("Draft head commit ID matches BuildFlexVaultChangeId format"), DraftHeadId, TEXT("main.6.2"));
+
+		// 3. Synced back to older published revision (published_head is 9, but synced_revision is 7)
+		const FString SyncedOlderJson = TEXT("{\n")
+			TEXT("  \"message\": {\n")
+			TEXT("    \"kind\": \"status\",\n")
+			TEXT("    \"payload\": {\n")
+			TEXT("      \"current_branch\": \"main\",\n")
+			TEXT("      \"head_commit\": {\n")
+			TEXT("        \"local_snapshot\": {\n")
+			TEXT("          \"commit\": { \"branch\": \"main\", \"revision\": 7, \"type\": \"draft\", \"draft_revision\": 0 }\n")
+			TEXT("        },\n")
+			TEXT("        \"published_head\": {\n")
+			TEXT("          \"commit\": { \"branch\": \"main\", \"revision\": 9, \"type\": \"published\" }\n")
+			TEXT("        }\n")
+			TEXT("      },\n")
+			TEXT("      \"sync_status\": {\n")
+			TEXT("        \"up_to_date\": false,\n")
+			TEXT("        \"revisions_behind\": 2,\n")
+			TEXT("        \"published_head_revision\": 9,\n")
+			TEXT("        \"synced_revision\": 7\n")
+			TEXT("      }\n")
+			TEXT("    }\n")
+			TEXT("  }\n")
+			TEXT("}");
+
+		TSharedPtr<FJsonObject> OlderEnvelope;
+		TSharedRef<TJsonReader<>> OlderReader = TJsonReaderFactory<>::Create(SyncedOlderJson);
+		TestTrue(TEXT("Deserialize older synced status JSON"), FJsonSerializer::Deserialize(OlderReader, OlderEnvelope));
+		FString OlderHeadId;
+		TestTrue(TEXT("ParseFlexVaultHeadCommitId for older synced version"), ParseFlexVaultHeadCommitId(OlderEnvelope, OlderHeadId));
+		TestEqual(TEXT("Head commit ID reflects older synced revision"), OlderHeadId, TEXT("main.7"));
+	}
 
 	return true;
 }

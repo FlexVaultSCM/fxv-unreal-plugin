@@ -6,6 +6,10 @@
 #include "Modules/ModuleInterface.h"
 #include "Modules/ModuleManager.h"
 #include "FlexVaultSourceControlProvider.h"
+#if SOURCE_CONTROL_WITH_SLATE
+#include "Framework/Docking/TabManager.h"
+#include "Widgets/Docking/SDockTab.h"
+#endif
 
 class FFlexVaultSourceControlModule : public IModuleInterface
 {
@@ -20,7 +24,26 @@ public:
 		return FlexVaultSourceControlProvider;
 	}
 
+#if SOURCE_CONTROL_WITH_SLATE
+	/** Spawns or brings into focus the FlexVault history tab */
+	void ShowHistoryTab();
+#endif
+
+private:
+#if SOURCE_CONTROL_WITH_SLATE
+	void InitializeUI();
+	void UnregisterUI();
+	TSharedRef<SDockTab> CreateHistoryTab(const FSpawnTabArgs& Args);
+	void RegisterMenus();
+#endif
+
 private:
 	/** Core SCM provider instance registered with Unreal Engine */
 	FFlexVaultSourceControlProvider FlexVaultSourceControlProvider;
+
+#if SOURCE_CONTROL_WITH_SLATE
+	TWeakPtr<SDockTab> HistoryTab;
+	FDelegateHandle PostEngineInitHandle;
+	bool bTabSpawnerRegistered = false;
+#endif
 };

@@ -61,7 +61,7 @@ void FFlexVaultAutoSnapshot::Register(FFlexVaultSourceControlProvider& InProvide
 	// This module loads at EarliestPossible, before the object system's default objects are ready.
 	// FReimportManager::Instance() constructs UFactory CDOs on first use, which crashes here.
 	// Defer delegate registration until the engine finishes starting up.
-	PostEngineInitHandle = FCoreDelegates::OnPostEngineInit.AddStatic(&FFlexVaultAutoSnapshot::OnPostEngineInit);
+	PostEngineInitHandle = FCoreDelegates::GetOnPostEngineInit().AddStatic(&FFlexVaultAutoSnapshot::OnPostEngineInit);
 }
 
 void FFlexVaultAutoSnapshot::OnPostEngineInit()
@@ -88,7 +88,7 @@ void FFlexVaultAutoSnapshot::CancelFetch()
 
 void FFlexVaultAutoSnapshot::Unregister()
 {
-	FCoreDelegates::OnPostEngineInit.Remove(PostEngineInitHandle);
+	FCoreDelegates::GetOnPostEngineInit().Remove(PostEngineInitHandle);
 	PostEngineInitHandle.Reset();
 
 	// Signal cancellation to any in-flight background tasks

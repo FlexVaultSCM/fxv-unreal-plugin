@@ -56,8 +56,11 @@ bool FFlexVaultUpdateStatusWorker::Execute(FFlexVaultSourceControlCommand& InCom
 	DepotRevision = 0;
 	CurrentBranch.Empty();
 	CurrentUser.Empty();
+	CurrentHeadCommit.Empty();
 	ModifiedFiles.Empty();
 	ConflictedFiles.Empty();
+	OutdatedFiles.Empty();
+	bOutdatedFilesKnown = true;
 	FileHistories.Empty();
 	bHasChangesToSync.Reset();
 
@@ -113,6 +116,7 @@ bool FFlexVaultUpdateStatusWorker::Execute(FFlexVaultSourceControlCommand& InCom
 
 	Payload->TryGetStringField(TEXT("current_branch"), CurrentBranch);
 	Payload->TryGetStringField(TEXT("current_user"), CurrentUser);
+	ParseFlexVaultHeadCommitId(Envelope, CurrentHeadCommit);
 
 	// ── Revision numbers from head_commit ──────────────────────────────────────────────────────────
 	const TSharedPtr<FJsonObject>* HeadCommitObj = nullptr;
@@ -146,6 +150,8 @@ bool FFlexVaultUpdateStatusWorker::Execute(FFlexVaultSourceControlCommand& InCom
 		}
 	}
 	
+	int32 SyncedRevision = 0;
+	int32 PublishedHeadRevision = 0;
 	const TSharedPtr<FJsonObject>* SyncStatusObj = nullptr;
 	if (Payload->TryGetObjectField(TEXT("sync_status"), SyncStatusObj) && SyncStatusObj != nullptr && (*SyncStatusObj).IsValid())
 	{
@@ -158,6 +164,9 @@ bool FFlexVaultUpdateStatusWorker::Execute(FFlexVaultSourceControlCommand& InCom
 		{
 			bHasChangesToSync = false;
 		}
+
+		(*SyncStatusObj)->TryGetNumberField(TEXT("synced_revision"), SyncedRevision);
+		(*SyncStatusObj)->TryGetNumberField(TEXT("published_head_revision"), PublishedHeadRevision);
 	}
 	else
 	{
@@ -167,6 +176,56 @@ bool FFlexVaultUpdateStatusWorker::Execute(FFlexVaultSourceControlCommand& InCom
 	}
 
 	UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault: Parsed head_commit metadata. LocalRevision: %d, DepotRevision: %d, bHasChangesToSync: %d"), LocalRevision, DepotRevision, bHasChangesToSync.IsSet() ? (bHasChangesToSync.GetValue() ? 1 : 0) : -1);
+
+	// ── Upstream diff to identify files modified ahead of current local revision ───────────────────
+	if (bHasChangesToSync.IsSet() && bHasChangesToSync.GetValue())
+	{
+		const int32 StartRev = (SyncedRevision > 0) ? SyncedRevision : LocalRevision;
+		const int32 EndRev = (PublishedHeadRevision > 0) ? PublishedHeadRevision : DepotRevision;
+
+		if (StartRev > 0 && EndRev > StartRev && !CurrentBranch.IsEmpty())
+		{
+			const FString CompareSpec = FString::Printf(TEXT("%s.%d,%s.%d"), *CurrentBranch, StartRev, *CurrentBranch, EndRev);
+			TArray<FString> DiffArgs = BuildFlexVaultDiffArgs(CompareSpec);
+
+			TArray<FString> DiffOutputLines;
+			FSourceControlResultInfo DiffResultInfo;
+			const bool bDiffOk = RunFlexVaultCommand(
+				InCommand.BinaryPath,
+				InCommand.WorkspacePath,
+				DiffArgs,
+				DiffOutputLines,
+				DiffResultInfo,
+				false,
+				&InCommand
+			);
+
+			if (bDiffOk)
+			{
+				TArray<FString> ChangedFilePaths;
+				if (ParseFlexVaultDiffChangedFiles(DiffOutputLines, ChangedFilePaths))
+				{
+					for (FString& Path : ChangedFilePaths)
+					{
+						Path.ReplaceInline(TEXT("\\"), TEXT("/"));
+						OutdatedFiles.Add(Path.ToLower());
+					}
+					bOutdatedFilesKnown = true;
+					UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault: Upstream diff between %s.%d and %s.%d found %d outdated files."),
+						*CurrentBranch, StartRev, *CurrentBranch, EndRev, OutdatedFiles.Num());
+				}
+				else
+				{
+					bOutdatedFilesKnown = false;
+				}
+			}
+			else
+			{
+				bOutdatedFilesKnown = false;
+				UE_LOG(LogFlexVault, Warning, TEXT("FlexVault: Failed to diff upstream revisions (%s) to determine outdated files."), *CompareSpec);
+			}
+		}
+	}
 
 	// ── File state list ────────────────────────────────────────────────────────────────────────────
 	const TArray<TSharedPtr<FJsonValue>>* FilesArray = nullptr;
@@ -262,8 +321,10 @@ bool FFlexVaultUpdateStatusWorker::UpdateStates() const
 	Provider.SetHasChangesToSync(bHasChangesToSync);
 
 	const bool bUserOrBranchChanged = (Provider.GetCurrentBranch() != CurrentBranch) || (Provider.GetCurrentUser() != CurrentUser);
+	const bool bHeadChanged = (Provider.GetCurrentHeadCommit() != CurrentHeadCommit);
 	Provider.SetCurrentBranch(CurrentBranch);
 	Provider.SetCurrentUser(CurrentUser);
+	Provider.SetCurrentHeadCommit(CurrentHeadCommit);
 
 	// Ensure all modified/added/deleted files discovered by SCM status are present in the cache
 	for (const auto& Entry : ModifiedFiles)
@@ -292,8 +353,20 @@ bool FFlexVaultUpdateStatusWorker::UpdateStates() const
 		const bool bIsUnderWorkspace = FPaths::IsUnderDirectory(File, WorkspacePath);
 		if (bIsUnderWorkspace)
 		{
-			NewState.DepotRevNumber = DepotRevision;
-			NewState.LocalRevNumber = LocalRevision;
+			const bool bIsOutdated = bOutdatedFilesKnown
+				? OutdatedFiles.Contains(RelativePath.ToLower())
+				: (DepotRevision > LocalRevision);
+
+			if (bIsOutdated)
+			{
+				NewState.DepotRevNumber = DepotRevision;
+				NewState.LocalRevNumber = LocalRevision;
+			}
+			else
+			{
+				NewState.DepotRevNumber = LocalRevision;
+				NewState.LocalRevNumber = LocalRevision;
+			}
 
 			if (const FString* FoundConflictKind = ConflictedFiles.Find(RelativePath))
 			{
@@ -351,10 +424,10 @@ bool FFlexVaultUpdateStatusWorker::UpdateStates() const
 		}
 	}
 
-	if (bStatesUpdated || bUserOrBranchChanged)
+	if (bStatesUpdated || bUserOrBranchChanged || bHeadChanged)
 	{
 		Provider.OutputStateChangedEvent();
 	}
 
-	return bStatesUpdated || bUserOrBranchChanged;
+	return bStatesUpdated || bUserOrBranchChanged || bHeadChanged;
 }
