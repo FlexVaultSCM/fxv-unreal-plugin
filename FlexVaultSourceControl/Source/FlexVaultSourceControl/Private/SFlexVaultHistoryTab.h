@@ -65,6 +65,9 @@ private:
 	void FetchHistoryAsync(const FString& InBranchFilter);
 	void FetchCommitDetailsAsync(const TSharedPtr<FFlexVaultHistoryCommitItem>& InCommit);
 	void CheckWorkspaceStatusAsync();
+	void ScanCommitsForCodeChangesAsync();
+	void UpdateCommitDisabledStates();
+	bool CanCompileLocally() const;
 
 	FFlexVaultSourceControlProvider* GetProvider() const;
 	FString GetEffectiveBinaryPath() const;
@@ -89,6 +92,9 @@ private:
 	// File data & details cache
 	TArray<TSharedPtr<FFlexVaultHistoryFileItem>> CurrentCommitFiles;
 	TMap<FString, TArray<TSharedPtr<FFlexVaultHistoryFileItem>>> ChangeDetailsCache;
+
+	// Commit code change detection cache
+	TMap<FString, bool> CommitCodeCache;
 
 	// Filter state
 	FString FilterString;

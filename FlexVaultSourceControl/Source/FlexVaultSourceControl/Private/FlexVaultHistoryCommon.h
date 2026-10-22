@@ -15,6 +15,10 @@ struct FFlexVaultHistoryCommitItem
 	FString ChangeId;
 	FString RevisionDisplay;
 	bool bIsDraft = false;
+	bool bHasCodeChanges = false;
+	bool bIsCodeChecked = false;
+	bool bSyncDisabled = false;
+	FString DisabledReason;
 
 	static TSharedRef<FFlexVaultHistoryCommitItem> FromMeta(const FFlexVaultCommitMeta& InMeta)
 	{

@@ -22,6 +22,7 @@
 #include "Framework/Notifications/NotificationManager.h"
 #include "Widgets/Notifications/SNotificationList.h"
 #include "Framework/Application/SlateApplication.h"
+#include "FlexVaultHistoryCommon.h"
 #endif
 
 #define LOCTEXT_NAMESPACE "FlexVaultSourceControl"
@@ -1845,5 +1846,121 @@ bool IsFlexVaultSourceCodeFile(const FString& InFilePath)
 		|| Ext == TEXT("uproject")
 		|| Ext == TEXT("uplugin");
 }
+
+#if SOURCE_CONTROL_WITH_SLATE
+void UpdateFlexVaultHistorySyncDisabledStates(
+	TArray<TSharedPtr<FFlexVaultHistoryCommitItem>>& InCommits,
+	const FString& InCurrentHeadChangeId,
+	bool bCanCompileLocally
+)
+{
+	// Programmers with local compiler can sync to any revision
+	if (bCanCompileLocally)
+	{
+		for (TSharedPtr<FFlexVaultHistoryCommitItem>& Commit : InCommits)
+		{
+			if (Commit.IsValid())
+			{
+				Commit->bSyncDisabled = false;
+				Commit->DisabledReason.Empty();
+			}
+		}
+		return;
+	}
+
+	// Non-local compilers (artists/designers without compiler):
+	// Find index of current workspace head in the list
+	int32 HeadIndex = INDEX_NONE;
+	if (!InCurrentHeadChangeId.IsEmpty())
+	{
+		for (int32 i = 0; i < InCommits.Num(); ++i)
+		{
+			if (InCommits[i].IsValid() && InCommits[i]->ChangeId == InCurrentHeadChangeId)
+			{
+				HeadIndex = i;
+				break;
+			}
+		}
+	}
+
+	// First reset all commits
+	for (TSharedPtr<FFlexVaultHistoryCommitItem>& Commit : InCommits)
+	{
+		if (Commit.IsValid())
+		{
+			Commit->bSyncDisabled = false;
+			Commit->DisabledReason.Empty();
+		}
+	}
+
+	// If Head is found:
+	// InCommits is sorted newest (index 0) to oldest (index N-1).
+	// Future commits relative to Head are indices 0 to HeadIndex - 1.
+	// Past commits relative to Head are indices HeadIndex + 1 to InCommits.Num() - 1.
+	if (HeadIndex != INDEX_NONE)
+	{
+		// Check future commits (from Head towards index 0):
+		// As soon as any commit along this path has code changes, that commit and all subsequent future commits are disabled.
+		bool bEncounteredCodeFuture = false;
+		for (int32 i = HeadIndex - 1; i >= 0; --i)
+		{
+			TSharedPtr<FFlexVaultHistoryCommitItem>& Commit = InCommits[i];
+			if (!Commit.IsValid())
+			{
+				continue;
+			}
+
+			if (Commit->bHasCodeChanges)
+			{
+				bEncounteredCodeFuture = true;
+				Commit->bSyncDisabled = true;
+				Commit->DisabledReason = TEXT("Contains C++ source code changes. In-editor sync is disabled without a local compiler. Please sync outside the editor (e.g. UGS or CLI).");
+			}
+			else if (bEncounteredCodeFuture)
+			{
+				Commit->bSyncDisabled = true;
+				Commit->DisabledReason = TEXT("Syncing to this revision incorporates intermediate C++ source code changes. Please sync outside the editor (e.g. UGS or CLI).");
+			}
+		}
+
+		// Check past commits (from Head towards older commits):
+		// As soon as any commit along this path has code changes, syncing past it would revert code changes without local build.
+		bool bEncounteredCodePast = false;
+		for (int32 i = HeadIndex + 1; i < InCommits.Num(); ++i)
+		{
+			TSharedPtr<FFlexVaultHistoryCommitItem>& Commit = InCommits[i];
+			if (!Commit.IsValid())
+			{
+				continue;
+			}
+
+			if (InCommits[i - 1].IsValid() && InCommits[i - 1]->bHasCodeChanges)
+			{
+				bEncounteredCodePast = true;
+			}
+
+			if (bEncounteredCodePast || Commit->bHasCodeChanges)
+			{
+				Commit->bSyncDisabled = true;
+				Commit->DisabledReason = Commit->bHasCodeChanges
+					? TEXT("Contains C++ source code changes. In-editor sync is disabled without a local compiler. Please sync outside the editor (e.g. UGS or CLI).")
+					: TEXT("Syncing back to this revision reverts intermediate C++ source code changes. Please sync outside the editor (e.g. UGS or CLI).");
+			}
+		}
+	}
+	else
+	{
+		// Fallback when Head is unknown: disable any commit that has code changes
+		for (TSharedPtr<FFlexVaultHistoryCommitItem>& Commit : InCommits)
+		{
+			if (Commit.IsValid() && Commit->bHasCodeChanges)
+			{
+				Commit->bSyncDisabled = true;
+				Commit->DisabledReason = TEXT("Contains C++ source code changes. In-editor sync is disabled without a local compiler. Please sync outside the editor (e.g. UGS or CLI).");
+			}
+		}
+	}
+}
+#endif
 
 #undef LOCTEXT_NAMESPACE

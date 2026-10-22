@@ -45,6 +45,7 @@
 #include "Widgets/Notifications/SNotificationList.h"
 #include "UnrealEdMisc.h"
 #include "Misc/App.h"
+#include "SourceCodeNavigation.h"
 #if WITH_LIVE_CODING
 #include "ILiveCodingModule.h"
 #endif
@@ -373,6 +374,7 @@ void SFlexVaultHistoryTab::CheckWorkspaceStatusAsync()
 					Pin->RequestRefreshHistory();
 				}
 				Pin->LastKnownHeadCommit = NewHeadCommit;
+				Pin->UpdateCommitDisabledStates();
 			}
 		});
 	});
@@ -516,7 +518,146 @@ void SFlexVaultHistoryTab::FetchHistoryAsync(const FString& InBranchFilter)
 				}
 			}
 
-			Pin->ApplyFilters();
+			Pin->ScanCommitsForCodeChangesAsync();
+		});
+	});
+}
+
+bool SFlexVaultHistoryTab::CanCompileLocally() const
+{
+	bool bCanLiveCompile = false;
+#if WITH_LIVE_CODING
+	ILiveCodingModule* LiveCoding = FModuleManager::GetModulePtr<ILiveCodingModule>(LIVE_CODING_MODULE_NAME);
+	if (LiveCoding != nullptr && (LiveCoding->IsEnabledForSession() || LiveCoding->CanEnableForSession()))
+	{
+		bCanLiveCompile = true;
+	}
+#endif
+	return bCanLiveCompile || FSourceCodeNavigation::IsCompilerAvailable();
+}
+
+void SFlexVaultHistoryTab::UpdateCommitDisabledStates()
+{
+	const bool bCanCompile = CanCompileLocally();
+	UpdateFlexVaultHistorySyncDisabledStates(AllCommits, LastKnownHeadCommit, bCanCompile);
+	ApplyFilters();
+}
+
+void SFlexVaultHistoryTab::ScanCommitsForCodeChangesAsync()
+{
+	// Check cached states first
+	TArray<TSharedPtr<FFlexVaultHistoryCommitItem>> CommitsToCheck;
+	for (const TSharedPtr<FFlexVaultHistoryCommitItem>& Commit : AllCommits)
+	{
+		if (Commit.IsValid() && !Commit->ChangeId.IsEmpty())
+		{
+			if (const bool* Cached = CommitCodeCache.Find(Commit->ChangeId))
+			{
+				Commit->bHasCodeChanges = *Cached;
+				Commit->bIsCodeChecked = true;
+			}
+			else
+			{
+				CommitsToCheck.Add(Commit);
+			}
+		}
+	}
+
+	UpdateCommitDisabledStates();
+
+	if (CommitsToCheck.Num() == 0)
+	{
+		return;
+	}
+
+	const FString BinaryPath = GetEffectiveBinaryPath();
+	const FString WorkspacePath = GetWorkspacePath();
+
+	TWeakPtr<SFlexVaultHistoryTab> WeakSelf = SharedThis(this);
+	TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> LocalCancelToken = HistoryTabCancelToken;
+
+	Async(EAsyncExecution::ThreadPool, [WeakSelf, BinaryPath, WorkspacePath, CommitsToCheck, LocalCancelToken]()
+	{
+		TMap<FString, bool> NewResults;
+
+		for (const TSharedPtr<FFlexVaultHistoryCommitItem>& Commit : CommitsToCheck)
+		{
+			if (LocalCancelToken.IsValid() && LocalCancelToken->Load())
+			{
+				return;
+			}
+
+			if (!Commit.IsValid() || Commit->ChangeId.IsEmpty())
+			{
+				continue;
+			}
+
+			const FString ChangeId = Commit->ChangeId;
+
+			TArray<FString> ChangeInfoArgs = {
+				TEXT("changeinfo"),
+				ChangeId,
+				TEXT("--format"),
+				TEXT("json"),
+				TEXT("--unattended"),
+				TEXT("--no-color")
+			};
+
+			TArray<FString> OutputLines;
+			FSourceControlResultInfo ResultInfo;
+			bool bOk = RunFlexVaultCommand(BinaryPath, WorkspacePath, ChangeInfoArgs, OutputLines, ResultInfo, true, nullptr, 15.0, LocalCancelToken);
+
+			bool bHasCode = false;
+			if (bOk)
+			{
+				TMap<FString, TArray<FFlexVaultRevisionDetail>> RevisionMap;
+				if (ParseFlexVaultChangeInfo(OutputLines, Commit->CommitMeta, ChangeId, RevisionMap))
+				{
+					for (const auto& Pair : RevisionMap)
+					{
+						if (IsFlexVaultSourceCodeFile(Pair.Key))
+						{
+							bHasCode = true;
+							break;
+						}
+					}
+				}
+			}
+
+			NewResults.Add(ChangeId, bHasCode);
+		}
+
+		Async(EAsyncExecution::TaskGraphMainThread, [WeakSelf, NewResults, LocalCancelToken]()
+		{
+			if (LocalCancelToken.IsValid() && LocalCancelToken->Load())
+			{
+				return;
+			}
+
+			TSharedPtr<SFlexVaultHistoryTab> Pin = WeakSelf.Pin();
+			if (!Pin.IsValid())
+			{
+				return;
+			}
+
+			for (const auto& Pair : NewResults)
+			{
+				Pin->CommitCodeCache.Add(Pair.Key, Pair.Value);
+			}
+
+			for (TSharedPtr<FFlexVaultHistoryCommitItem>& Commit : Pin->AllCommits)
+			{
+				if (Commit.IsValid() && !Commit->ChangeId.IsEmpty())
+				{
+					if (const bool* Found = Pin->CommitCodeCache.Find(Commit->ChangeId))
+					{
+						Commit->bHasCodeChanges = *Found;
+						Commit->bIsCodeChecked = true;
+					}
+				}
+			}
+
+			Pin->UpdateCommitDisabledStates();
 		});
 	});
 }
@@ -750,25 +891,56 @@ public:
 			return SNullWidget::NullWidget;
 		}
 
+		const bool bDisabled = Item->bSyncDisabled;
+		const FSlateColor TextColor = bDisabled
+			? FSlateColor(FLinearColor(0.5f, 0.5f, 0.5f, 0.55f))
+			: (Item->bIsDraft ? FLinearColor(0.85f, 0.65f, 0.2f, 1.0f) : FSlateColor::UseForeground());
+
 		if (ColumnName == FlexVaultHistoryColumns::CommitRevision)
 		{
-			return SNew(SHorizontalBox)
-				+ SHorizontalBox::Slot()
+			TSharedRef<SHorizontalBox> RevBox = SNew(SHorizontalBox);
+
+			RevBox->AddSlot()
 				.AutoWidth()
 				.VAlign(VAlign_Center)
 				.Padding(4.0f, 0.0f)
 				[
 					SNew(STextBlock)
 					.Text(FText::FromString(Item->RevisionDisplay))
-					.ColorAndOpacity(Item->bIsDraft ? FLinearColor(0.85f, 0.65f, 0.2f, 1.0f) : FSlateColor::UseForeground())
+					.ColorAndOpacity(TextColor)
 					.Font(FAppStyle::GetFontStyle(Item->bIsDraft ? "NormalFont" : "NormalFont.Bold"))
+					.ToolTipText(bDisabled ? FText::FromString(Item->DisabledReason) : FText::GetEmpty())
 				];
+
+			if (Item->bHasCodeChanges)
+			{
+				RevBox->AddSlot()
+					.AutoWidth()
+					.VAlign(VAlign_Center)
+					.Padding(2.0f, 0.0f)
+					[
+						SNew(SBorder)
+						.BorderImage(FAppStyle::Get().GetBrush("Brushes.Panel"))
+						.Padding(FMargin(4.0f, 1.0f))
+						[
+							SNew(STextBlock)
+							.Text(bDisabled ? LOCTEXT("CodeBadgeDisabled", "Code (External)") : LOCTEXT("CodeBadge", "Code"))
+							.ColorAndOpacity(bDisabled ? FLinearColor(0.75f, 0.45f, 0.45f, 0.8f) : FLinearColor(0.3f, 0.7f, 1.0f, 1.0f))
+							.Font(FAppStyle::GetFontStyle("NormalFont.SmallerBold"))
+							.ToolTipText(bDisabled ? FText::FromString(Item->DisabledReason) : LOCTEXT("CodeBadgeTooltip", "This revision modifies C++ source code files."))
+						]
+					];
+			}
+
+			return RevBox;
 		}
 		else if (ColumnName == FlexVaultHistoryColumns::CommitAuthor)
 		{
-			const FText AuthorTooltip = !Item->CommitMeta.AuthorDetails.IsEmpty()
-				? FText::FromString(Item->CommitMeta.AuthorDetails)
-				: FText::FromString(Item->CommitMeta.Author);
+			const FText AuthorTooltip = bDisabled && !Item->DisabledReason.IsEmpty()
+				? FText::FromString(Item->DisabledReason)
+				: (!Item->CommitMeta.AuthorDetails.IsEmpty()
+					? FText::FromString(Item->CommitMeta.AuthorDetails)
+					: FText::FromString(Item->CommitMeta.Author));
 
 			return SNew(SHorizontalBox)
 				+ SHorizontalBox::Slot()
@@ -778,6 +950,7 @@ public:
 				[
 					SNew(STextBlock)
 					.Text(FText::FromString(Item->CommitMeta.Author))
+					.ColorAndOpacity(TextColor)
 					.ToolTipText(AuthorTooltip)
 					.Font(FAppStyle::GetFontStyle("NormalFont"))
 				];
@@ -787,9 +960,11 @@ public:
 			const FText DateText = Item->CommitMeta.Date.GetTicks() > 0
 				? FText::AsDateTime(Item->CommitMeta.Date, EDateTimeStyle::Medium, EDateTimeStyle::Short)
 				: FText::FromString(TEXT("-"));
-			const FText DateTooltip = Item->CommitMeta.Date.GetTicks() > 0
-				? FText::AsDateTime(Item->CommitMeta.Date, EDateTimeStyle::Full, EDateTimeStyle::Full)
-				: FText::GetEmpty();
+			const FText DateTooltip = bDisabled && !Item->DisabledReason.IsEmpty()
+				? FText::FromString(Item->DisabledReason)
+				: (Item->CommitMeta.Date.GetTicks() > 0
+					? FText::AsDateTime(Item->CommitMeta.Date, EDateTimeStyle::Full, EDateTimeStyle::Full)
+					: FText::GetEmpty());
 
 			return SNew(SHorizontalBox)
 				+ SHorizontalBox::Slot()
@@ -799,6 +974,7 @@ public:
 				[
 					SNew(STextBlock)
 					.Text(DateText)
+					.ColorAndOpacity(TextColor)
 					.ToolTipText(DateTooltip)
 					.Font(FAppStyle::GetFontStyle("NormalFont"))
 				];
@@ -817,6 +993,8 @@ public:
 				[
 					SNew(STextBlock)
 					.Text(FText::FromString(Summary))
+					.ColorAndOpacity(TextColor)
+					.ToolTipText(bDisabled ? FText::FromString(Item->DisabledReason) : FText::GetEmpty())
 					.Font(FAppStyle::GetFontStyle("NormalFont"))
 				];
 		}
@@ -972,11 +1150,23 @@ TSharedPtr<SWidget> SFlexVaultHistoryTab::OnCommitContextMenu()
 		FText::FromString(SelectedCommit->RevisionDisplay)
 	);
 
+	const bool bCanCompile = CanCompileLocally();
+	const bool bCanSync = bCanCompile || !SelectedCommit->bSyncDisabled;
+
+	const FText SyncTooltip = bCanSync
+		? LOCTEXT("SyncToCommitTooltip", "Sync the workspace to this revision. Uncommitted changes will be automatically snapshotted.")
+		: FText::FromString(!SelectedCommit->DisabledReason.IsEmpty()
+			? SelectedCommit->DisabledReason
+			: TEXT("In-editor sync is disabled: This revision contains C++ source code changes. Please sync outside the editor (e.g. UGS or CLI)."));
+
 	MenuBuilder.AddMenuEntry(
 		SyncLabel,
-		LOCTEXT("SyncToCommitTooltip", "Sync the workspace to this revision. Uncommitted changes will be automatically snapshotted."),
+		SyncTooltip,
 		FSlateIcon(FAppStyle::GetAppStyleSetName(), "SourceControl.Actions.Sync"),
-		FUIAction(FExecuteAction::CreateSP(this, &SFlexVaultHistoryTab::SyncToCommit, SelectedCommit))
+		FUIAction(
+			FExecuteAction::CreateSP(this, &SFlexVaultHistoryTab::SyncToCommit, SelectedCommit),
+			FCanExecuteAction::CreateLambda([bCanSync]() { return bCanSync; })
+		)
 	);
 
 	MenuBuilder.AddMenuSeparator();
@@ -1047,23 +1237,14 @@ void SFlexVaultHistoryTab::SyncToCommit(TSharedPtr<FFlexVaultHistoryCommitItem> 
 				return;
 			}
 
-			// Detect if local in-editor compilation is supported and active
-			bool bCanLiveCompile = false;
-#if WITH_LIVE_CODING
-			ILiveCodingModule* LiveCoding = FModuleManager::GetModulePtr<ILiveCodingModule>(LIVE_CODING_MODULE_NAME);
-			if (LiveCoding != nullptr && LiveCoding->IsEnabledForSession())
-			{
-				bCanLiveCompile = true;
-			}
-#endif
-
+			const bool bCanCompileLocally = Pin->CanCompileLocally();
 			const bool bHasCodeChanges = (CodeFiles.Num() > 0);
 
 			if (bHasCodeChanges)
 			{
-				if (bCanLiveCompile)
+				if (bCanCompileLocally)
 				{
-					// Programmer workflow with Live Coding active
+					// Programmer workflow with local compiler / Live Coding active
 					FString CodeFileListSummary;
 					const int32 MaxDisplay = 5;
 					for (int32 i = 0; i < FMath::Min(CodeFiles.Num(), MaxDisplay); ++i)
@@ -1076,7 +1257,7 @@ void SFlexVaultHistoryTab::SyncToCommit(TSharedPtr<FFlexVaultHistoryCommitItem> 
 					}
 
 					const FText Prompt = FText::Format(
-						LOCTEXT("SyncCodeWithLiveCodingPrompt", "Syncing to revision '{0}' modifies C++ source files:\n\n{1}\nLive Coding is active. You will be able to compile changes after sync completes.\n\nProceed with sync?"),
+						LOCTEXT("SyncCodeWithLiveCodingPrompt", "Syncing to revision '{0}' modifies C++ source files:\n\n{1}\nA local C++ compiler is available. You will be able to compile changes after sync completes.\n\nProceed with sync?"),
 						FText::FromString(RevisionDisplay),
 						FText::FromString(CodeFileListSummary)
 					);
@@ -1088,18 +1269,36 @@ void SFlexVaultHistoryTab::SyncToCommit(TSharedPtr<FFlexVaultHistoryCommitItem> 
 				}
 				else
 				{
-					// Artist / Non-programmer / Precompiled binary workflow (UGS / CI)
-					// Warn BEFORE sync: restarting or syncing content alone will not load or compile new code!
-					const FText WarningPrompt = FText::Format(
-						LOCTEXT("SyncCodeWithoutCompilerPrompt", "WARNING: Revision '{0}' modifies {1} C++ source file(s), but local in-editor compilation is not active!\n\nIn Unreal Engine, syncing source files without precompiled binaries will cause assets and binaries to become misaligned, leading to missing classes or editor crashes.\n\n• If your studio uses UnrealGameSync (UGS) or precompiled builds, please close the editor and sync through UGS to pull matching binaries.\n• If you are a programmer, enable Live Coding or compile from your IDE.\n\nDo you still want to proceed with syncing content at your own risk?"),
+					// Non-local compiler (artist / designer without compiler)
+					// Hard-block in-editor sync: syncing without precompiled binaries will corrupt or desync project
+					FString CodeFileListSummary;
+					const int32 MaxDisplay = 5;
+					for (int32 i = 0; i < FMath::Min(CodeFiles.Num(), MaxDisplay); ++i)
+					{
+						CodeFileListSummary += FString::Printf(TEXT("  • %s\n"), *CodeFiles[i]);
+					}
+					if (CodeFiles.Num() > MaxDisplay)
+					{
+						CodeFileListSummary += FString::Printf(TEXT("  ... and %d more C++ file(s)\n"), CodeFiles.Num() - MaxDisplay);
+					}
+
+					const FText BlockedPrompt = FText::Format(
+						LOCTEXT("SyncCodeBlockedPrompt", "Sync to revision '{0}' is blocked.\n\nThis revision modifies {1} C++ source file(s) across the delta from your current workspace:\n\n{2}\nLocal C++ compilation is not available in this editor environment. Syncing code changes inside the running editor without matching precompiled binaries causes binaries and assets to desynchronize, leading to missing classes or editor crashes.\n\nPlease close Unreal Editor and sync outside the editor (e.g. via UnrealGameSync or the CLI) so matching binaries can be updated before opening the project."),
 						FText::FromString(RevisionDisplay),
-						FText::AsNumber(CodeFiles.Num())
+						FText::AsNumber(CodeFiles.Num()),
+						FText::FromString(CodeFileListSummary)
 					);
 
-					if (FMessageDialog::Open(EAppMsgType::OkCancel, WarningPrompt, LOCTEXT("SyncCodeWarningPreTitle", "Warning: C++ Changes Require Matching Binaries")) != EAppReturnType::Ok)
-					{
-						return;
-					}
+					FMessageDialog::Open(EAppMsgType::Ok, BlockedPrompt, LOCTEXT("SyncCodeBlockedTitle", "Sync Blocked: C++ Code Changes Detected"));
+
+					FNotificationInfo BlockedInfo(FText::Format(
+						LOCTEXT("SyncBlockedNotification", "Sync to '{0}' blocked: C++ code changes require syncing outside the editor."),
+						FText::FromString(RevisionDisplay)
+					));
+					BlockedInfo.ExpireDuration = 5.0f;
+					FSlateNotificationManager::Get().AddNotification(BlockedInfo);
+
+					return;
 				}
 			}
 			else

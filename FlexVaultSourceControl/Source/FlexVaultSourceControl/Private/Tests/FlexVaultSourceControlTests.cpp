@@ -1826,6 +1826,62 @@ bool FFlexVaultAuthorFormattingTest::RunTest(const FString& Parameters)
 		TestTrue(TEXT(".uproject is source code"), IsFlexVaultSourceCodeFile(TEXT("RoboArena.uproject")));
 	}
 
+#if SOURCE_CONTROL_WITH_SLATE
+	// Test UpdateFlexVaultHistorySyncDisabledStates
+	{
+		// Create 5 commits (sorted newest to oldest: main.4 to main.0)
+		// main.4: Content only
+		// main.3: C++ code changes (bHasCodeChanges = true)
+		// main.2: Content only
+		// main.1: Content only (current workspace head)
+		// main.0: Content only
+		TArray<TSharedPtr<FFlexVaultHistoryCommitItem>> TestCommits;
+
+		for (int32 i = 4; i >= 0; --i)
+		{
+			FFlexVaultCommitMeta Meta;
+			Meta.Branch = TEXT("main");
+			Meta.PublishedRevision = i;
+			Meta.CommitType = TEXT("published");
+			TSharedRef<FFlexVaultHistoryCommitItem> Item = FFlexVaultHistoryCommitItem::FromMeta(Meta);
+			if (i == 3)
+			{
+				Item->bHasCodeChanges = true;
+			}
+			TestCommits.Add(Item);
+		}
+
+		// Scenario 1: Programmer mode (bCanCompileLocally = true)
+		UpdateFlexVaultHistorySyncDisabledStates(TestCommits, TEXT("main.1"), /*bCanCompileLocally=*/true);
+		for (const TSharedPtr<FFlexVaultHistoryCommitItem>& Commit : TestCommits)
+		{
+			TestFalse(TEXT("Programmers should never have sync disabled"), Commit->bSyncDisabled);
+		}
+
+		// Scenario 2: Artist/non-programmer mode (bCanCompileLocally = false) with Head at main.1
+		UpdateFlexVaultHistorySyncDisabledStates(TestCommits, TEXT("main.1"), /*bCanCompileLocally=*/false);
+		// main.4: Future commit beyond code commit main.3 -> should be disabled
+		TestTrue(TEXT("main.4 should be sync disabled (beyond code change)"), TestCommits[0]->bSyncDisabled);
+		// main.3: Code commit itself -> should be disabled
+		TestTrue(TEXT("main.3 should be sync disabled (has code change)"), TestCommits[1]->bSyncDisabled);
+		// main.2: Content only between main.1 and main.3 -> should be allowed
+		TestFalse(TEXT("main.2 should NOT be sync disabled"), TestCommits[2]->bSyncDisabled);
+		// main.1: Current head -> should NOT be sync disabled
+		TestFalse(TEXT("main.1 should NOT be sync disabled"), TestCommits[3]->bSyncDisabled);
+		// main.0: Past commit, no code changes between main.1 and main.0 -> should NOT be sync disabled
+		TestFalse(TEXT("main.0 should NOT be sync disabled"), TestCommits[4]->bSyncDisabled);
+
+		// Scenario 3: Head moved to main.4 (workspace at top)
+		// Now reverting back to main.2, main.1, main.0 crosses main.3 (code change) in reverse
+		UpdateFlexVaultHistorySyncDisabledStates(TestCommits, TEXT("main.4"), /*bCanCompileLocally=*/false);
+		TestFalse(TEXT("main.4 should NOT be sync disabled (at head)"), TestCommits[0]->bSyncDisabled);
+		TestTrue(TEXT("main.3 should be sync disabled (code commit)"), TestCommits[1]->bSyncDisabled);
+		TestTrue(TEXT("main.2 should be sync disabled (reverting past code change)"), TestCommits[2]->bSyncDisabled);
+		TestTrue(TEXT("main.1 should be sync disabled (reverting past code change)"), TestCommits[3]->bSyncDisabled);
+		TestTrue(TEXT("main.0 should be sync disabled (reverting past code change)"), TestCommits[4]->bSyncDisabled);
+	}
+#endif
+
 	return true;
 }
 

@@ -420,3 +420,21 @@ bool ParseFlexVaultDiffChangedFiles(const TArray<FString>& InDiffOutputLines, TA
  * Checks if a given file path is a C++ source or project file (.h, .hpp, .inl, .cpp, .c, .cc, .cxx, .cs, .uproject, .uplugin).
  */
 bool IsFlexVaultSourceCodeFile(const FString& InFilePath);
+
+#if SOURCE_CONTROL_WITH_SLATE
+struct FFlexVaultHistoryCommitItem;
+
+/**
+ * Updates the bSyncDisabled and DisabledReason flags for a list of commit items based on
+ * code changes and the current workspace head revision.
+ *
+ * @param InCommits Array of commit items (sorted newest to oldest as displayed in History).
+ * @param InCurrentHeadChangeId Change ID of the current workspace head (e.g. "main.6").
+ * @param bCanCompileLocally True if local compiler or Live Coding is available, false for non-programmers/artists.
+ */
+void UpdateFlexVaultHistorySyncDisabledStates(
+	TArray<TSharedPtr<FFlexVaultHistoryCommitItem>>& InCommits,
+	const FString& InCurrentHeadChangeId,
+	bool bCanCompileLocally
+);
+#endif
