@@ -39,6 +39,10 @@
 #include "Dom/JsonObject.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
+#include "PackageTools.h"
+#include "Misc/MessageDialog.h"
+#include "Framework/Notifications/NotificationManager.h"
+#include "Widgets/Notifications/SNotificationList.h"
 
 #define LOCTEXT_NAMESPACE "FlexVaultSourceControl"
 
@@ -152,6 +156,7 @@ void SFlexVaultHistoryTab::Construct(const FArguments& InArgs)
 						.ListItemsSource(&FilteredCommits)
 						.OnGenerateRow(this, &SFlexVaultHistoryTab::OnGenerateCommitRow)
 						.OnSelectionChanged(this, &SFlexVaultHistoryTab::OnCommitSelectionChanged)
+						.OnContextMenuOpening(this, &SFlexVaultHistoryTab::OnCommitContextMenu)
 						.HeaderRow
 						(
 							SNew(SHeaderRow)
@@ -943,6 +948,154 @@ void SFlexVaultHistoryTab::OnFileDoubleClicked(TSharedPtr<FFlexVaultHistoryFileI
 	else
 	{
 		OpenInExternalEditor(InItem);
+	}
+}
+
+TSharedPtr<SWidget> SFlexVaultHistoryTab::OnCommitContextMenu()
+{
+	TArray<TSharedPtr<FFlexVaultHistoryCommitItem>> SelectedItems = CommitListView->GetSelectedItems();
+	if (SelectedItems.Num() == 0 || !SelectedItems[0].IsValid())
+	{
+		return nullptr;
+	}
+
+	TSharedPtr<FFlexVaultHistoryCommitItem> SelectedCommit = SelectedItems[0];
+	FMenuBuilder MenuBuilder(/*bInShouldCloseWindowAfterMenuSelection=*/true, nullptr);
+
+	const FText SyncLabel = FText::Format(
+		LOCTEXT("SyncToCommitLabel", "Sync Workspace to Revision '{0}'"),
+		FText::FromString(SelectedCommit->RevisionDisplay)
+	);
+
+	MenuBuilder.AddMenuEntry(
+		SyncLabel,
+		LOCTEXT("SyncToCommitTooltip", "Sync the workspace to this revision. Uncommitted changes will be automatically snapshotted."),
+		FSlateIcon(FAppStyle::GetAppStyleSetName(), "SourceControl.Actions.Sync"),
+		FUIAction(FExecuteAction::CreateSP(this, &SFlexVaultHistoryTab::SyncToCommit, SelectedCommit))
+	);
+
+	MenuBuilder.AddMenuSeparator();
+
+	MenuBuilder.AddMenuEntry(
+		LOCTEXT("CopyRevisionSpec", "Copy Revision Spec"),
+		LOCTEXT("CopyRevisionSpecTooltip", "Copy the revision spec to the clipboard."),
+		FSlateIcon(FAppStyle::GetAppStyleSetName(), "GenericCommands.Copy"),
+		FUIAction(FExecuteAction::CreateLambda([SelectedCommit]()
+		{
+			if (SelectedCommit.IsValid())
+			{
+				FPlatformApplicationMisc::ClipboardCopy(*SelectedCommit->ChangeId);
+			}
+		}))
+	);
+
+	return MenuBuilder.MakeWidget();
+}
+
+void SFlexVaultHistoryTab::SyncToCommit(TSharedPtr<FFlexVaultHistoryCommitItem> InCommit)
+{
+	if (!InCommit.IsValid() || InCommit->ChangeId.IsEmpty())
+	{
+		return;
+	}
+
+	const FText ConfirmTitle = LOCTEXT("ConfirmSyncTitle", "Sync Workspace");
+	const FText ConfirmMessage = FText::Format(
+		LOCTEXT("ConfirmSyncMsg", "Are you sure you want to sync the workspace to revision '{0}'?\n\nAny uncommitted changes in your workspace will be automatically snapshotted before syncing."),
+		FText::FromString(InCommit->RevisionDisplay)
+	);
+
+	if (FMessageDialog::Open(EAppMsgType::OkCancel, ConfirmMessage, ConfirmTitle) != EAppReturnType::Ok)
+	{
+		return;
+	}
+
+	FFlexVaultSourceControlModule& Module = FModuleManager::GetModuleChecked<FFlexVaultSourceControlModule>("FlexVaultSourceControl");
+	FFlexVaultSourceControlProvider& Provider = Module.GetProvider();
+
+	TSharedRef<FSync, ESPMode::ThreadSafe> SyncOp = ISourceControlOperation::Create<FSync>();
+	SyncOp->SetRevision(InCommit->ChangeId);
+
+	FNotificationInfo StartingInfo(FText::Format(
+		LOCTEXT("SyncStarting", "Syncing workspace to '{0}'..."),
+		FText::FromString(InCommit->RevisionDisplay)
+	));
+	StartingInfo.ExpireDuration = 3.0f;
+	FSlateNotificationManager::Get().AddNotification(StartingInfo);
+
+	FSourceControlOperationComplete OnComplete = FSourceControlOperationComplete::CreateSP(
+		this, &SFlexVaultHistoryTab::OnSyncOperationComplete, InCommit->RevisionDisplay
+	);
+
+	Provider.Execute(SyncOp, TArray<FString>(), EConcurrency::Asynchronous, OnComplete);
+}
+
+void SFlexVaultHistoryTab::OnSyncOperationComplete(const FSourceControlOperationRef& InOperation, ECommandResult::Type InResult, FString InTargetRevision)
+{
+	if (InResult == ECommandResult::Succeeded)
+	{
+		FFlexVaultSourceControlModule& Module = FModuleManager::GetModuleChecked<FFlexVaultSourceControlModule>("FlexVaultSourceControl");
+		FFlexVaultSourceControlProvider& Provider = Module.GetProvider();
+		const TArray<FString>& SyncedFiles = Provider.GetLastSyncedFiles();
+
+		TArray<UPackage*> PackagesToReload;
+		bool bCodeFilesModified = false;
+
+		for (const FString& File : SyncedFiles)
+		{
+			const FString Ext = FPaths::GetExtension(File).ToLower();
+			if (Ext == TEXT("h") || Ext == TEXT("cpp") || Ext == TEXT("cs") || Ext == TEXT("uproject") || Ext == TEXT("uplugin"))
+			{
+				bCodeFilesModified = true;
+			}
+			else if (Ext == TEXT("uasset") || Ext == TEXT("umap"))
+			{
+				FString PackageName;
+				if (FPackageName::TryConvertFilenameToLongPackageName(File, PackageName))
+				{
+					UPackage* Package = FindPackage(nullptr, *PackageName);
+					if (Package != nullptr)
+					{
+						PackagesToReload.Add(Package);
+					}
+				}
+			}
+		}
+
+		if (PackagesToReload.Num() > 0)
+		{
+			FText ReloadError;
+			UPackageTools::ReloadPackages(PackagesToReload, ReloadError, EReloadPackagesInteractionMode::Interactive);
+		}
+
+		if (bCodeFilesModified)
+		{
+			FNotificationInfo CodeInfo(LOCTEXT("SyncCodeModifiedTitle", "Source Code Updated"));
+			CodeInfo.SubText = LOCTEXT("SyncCodeModifiedSub", "C++ files were modified by this sync. Trigger Live Coding (Ctrl+Alt+F11) or rebuild and restart the editor if class layouts changed.");
+			CodeInfo.ExpireDuration = 8.0f;
+			CodeInfo.bUseSuccessFailIcons = true;
+			CodeInfo.Image = FAppStyle::Get().GetBrush("Icons.Warning");
+			FSlateNotificationManager::Get().AddNotification(CodeInfo);
+		}
+
+		FNotificationInfo SuccessInfo(FText::Format(
+			LOCTEXT("SyncSuccess", "Successfully synced workspace to '{0}'."),
+			FText::FromString(InTargetRevision)
+		));
+		SuccessInfo.ExpireDuration = 4.0f;
+		FSlateNotificationManager::Get().AddNotification(SuccessInfo);
+
+		RequestRefreshHistory();
+	}
+	else
+	{
+		FNotificationInfo FailInfo(FText::Format(
+			LOCTEXT("SyncFailed", "Failed to sync workspace to '{0}'."),
+			FText::FromString(InTargetRevision)
+		));
+		FailInfo.ExpireDuration = 5.0f;
+		FailInfo.bUseSuccessFailIcons = true;
+		FSlateNotificationManager::Get().AddNotification(FailInfo);
 	}
 }
 

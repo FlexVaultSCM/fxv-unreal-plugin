@@ -37,6 +37,9 @@ private:
 	// ── Commit List Row & Column Generation ─────────────────────────
 	TSharedRef<ITableRow> OnGenerateCommitRow(TSharedPtr<FFlexVaultHistoryCommitItem> InItem, const TSharedRef<STableViewBase>& InOwnerTable);
 	void OnCommitSelectionChanged(TSharedPtr<FFlexVaultHistoryCommitItem> InSelectedItem, ESelectInfo::Type InSelectInfo);
+	TSharedPtr<SWidget> OnCommitContextMenu();
+	void SyncToCommit(TSharedPtr<FFlexVaultHistoryCommitItem> InCommit);
+	void OnSyncOperationComplete(const FSourceControlOperationRef& InOperation, ECommandResult::Type InResult, FString InTargetRevision);
 
 	// ── File List Row & Column Generation ───────────────────────────
 	TSharedRef<ITableRow> OnGenerateFileRow(TSharedPtr<FFlexVaultHistoryFileItem> InItem, const TSharedRef<STableViewBase>& InOwnerTable);

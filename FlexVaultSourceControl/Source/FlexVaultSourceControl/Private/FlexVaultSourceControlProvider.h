@@ -93,6 +93,9 @@ public:
 	void SetCurrentBranch(const FString& InBranch) { CurrentBranch = InBranch; }
 	void SetCurrentUser(const FString& InUser) { CurrentUser = InUser; }
 
+	const TArray<FString>& GetLastSyncedFiles() const { return LastSyncedFiles; }
+	void SetLastSyncedFiles(const TArray<FString>& InFiles) { LastSyncedFiles = InFiles; }
+
 	/** Returns the most recent connection error message, if any. */
 	const FText& GetLastConnectionError() const { return LastConnectionError; }
 
@@ -146,6 +149,9 @@ private:
 
 	/** Current logged-in user in workspace */
 	FString CurrentUser;
+
+	/** Files updated in the most recent sync operation */
+	TArray<FString> LastSyncedFiles;
 
 	/** Most recent connection error detail for tooltip / status text */
 	FText LastConnectionError;

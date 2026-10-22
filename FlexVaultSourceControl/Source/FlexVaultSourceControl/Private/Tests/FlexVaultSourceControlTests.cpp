@@ -503,6 +503,7 @@ bool FFlexVaultWorkerSyncTest::RunTest(const FString& Parameters)
 
 	// Verify sync resets repository state
 	TestFalse(TEXT("bHasChangesToSync was cleared"), Provider.HasChangesToSync().Get(true));
+	TestEqual(TEXT("Last synced files tracked on provider"), Provider.GetLastSyncedFiles().Num(), 0);
 
 	return true;
 }
@@ -1620,6 +1621,12 @@ bool FFlexVaultHistoryModelTest::RunTest(const FString& Parameters)
 
 	const FString ChangeIdUnparented = BuildFlexVaultChangeId(UnparentedDraft);
 	TestEqual(TEXT("ChangeId for unparented draft uses hyphen"), ChangeIdUnparented, TEXT("feature.-.1"));
+
+	// 3b. Verify draft revision spec detection (for routing to goto vs sync)
+	TestFalse(TEXT("Published spec main.42 is not draft"), IsFlexVaultDraftRevisionSpec(TEXT("main.42")));
+	TestTrue(TEXT("Parented draft spec feature.10.3 is draft"), IsFlexVaultDraftRevisionSpec(TEXT("feature.10.3")));
+	TestTrue(TEXT("Unparented draft spec feature.-.1 is draft"), IsFlexVaultDraftRevisionSpec(TEXT("feature.-.1")));
+	TestFalse(TEXT("Empty spec is not draft"), IsFlexVaultDraftRevisionSpec(TEXT("")));
 #if SOURCE_CONTROL_WITH_SLATE
 	TSharedRef<FFlexVaultHistoryCommitItem> UnparentedItem = FFlexVaultHistoryCommitItem::FromMeta(UnparentedDraft);
 	TestEqual(TEXT("Revision display formatted for unparented draft"), UnparentedItem->RevisionDisplay, TEXT("feature.-.1"));

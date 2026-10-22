@@ -306,6 +306,11 @@ bool ParseFlexVaultHistory(
 FString BuildFlexVaultChangeId(const FFlexVaultCommitMeta& InCommit);
 
 /**
+ * Returns true if the revision spec represents a draft revision (e.g. "main.5.1" or "main.-.1").
+ */
+bool IsFlexVaultDraftRevisionSpec(const FString& InRevisionSpec);
+
+/**
  * Formats an author alias (username) from the structured author_details JSON object.
  */
 FString FormatFlexVaultAuthorAlias(const TSharedPtr<FJsonObject>& InAuthorDetails);

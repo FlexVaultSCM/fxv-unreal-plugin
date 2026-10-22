@@ -40,16 +40,34 @@ bool FFlexVaultSyncWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 	SyncedFiles.Empty();
 	ConflictedFiles.Empty();
 
-	TArray<FString> SyncArgs = {
-		TEXT("sync"),
-		TEXT("--unattended"),
-		TEXT("--no-color"),
-		TEXT("--format"),
-		TEXT("json")
-	};
-	if (Operation->GetRevision().Len() > 0)
+	const FString TargetRev = Operation->GetRevision();
+	const bool bIsDraftRev = IsFlexVaultDraftRevisionSpec(TargetRev);
+
+	TArray<FString> SyncArgs;
+	if (bIsDraftRev)
 	{
-		SyncArgs.Add(Operation->GetRevision());
+		SyncArgs = {
+			TEXT("goto"),
+			TargetRev,
+			TEXT("--unattended"),
+			TEXT("--no-color"),
+			TEXT("--format"),
+			TEXT("json")
+		};
+	}
+	else
+	{
+		SyncArgs = {
+			TEXT("sync"),
+			TEXT("--unattended"),
+			TEXT("--no-color"),
+			TEXT("--format"),
+			TEXT("json")
+		};
+		if (!TargetRev.IsEmpty())
+		{
+			SyncArgs.Add(TargetRev);
+		}
 	}
 
 	UE_LOG(LogFlexVault, Display, TEXT("FlexVault SCM: Syncing workspace with remote..."));
@@ -87,6 +105,13 @@ bool FFlexVaultSyncWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 									SyncedFiles.Add(FullPath);
 								}
 							}
+							else if (FileVal.IsValid() && FileVal->Type == EJson::String)
+							{
+								FString RelativePath = FileVal->AsString();
+								FString FullPath = FPaths::Combine(InCommand.WorkspacePath, RelativePath);
+								FPaths::NormalizeFilename(FullPath);
+								SyncedFiles.Add(FullPath);
+							}
 						}
 					}
 
@@ -118,6 +143,7 @@ bool FFlexVaultSyncWorker::UpdateStates() const
 {
 	FFlexVaultSourceControlProvider& Provider = GetSCCProvider();
 	Provider.SetHasChangesToSync(false);
+	Provider.SetLastSyncedFiles(SyncedFiles);
 
 	// Immediately mark any conflicted files reported by workspace_sync
 	for (const FString& File : ConflictedFiles)

@@ -1382,6 +1382,19 @@ FString BuildFlexVaultChangeId(const FFlexVaultCommitMeta& InCommit)
 	return InCommit.Branch;
 }
 
+bool IsFlexVaultDraftRevisionSpec(const FString& InRevisionSpec)
+{
+	int32 DotCount = 0;
+	for (const TCHAR Ch : InRevisionSpec)
+	{
+		if (Ch == TEXT('.'))
+		{
+			++DotCount;
+		}
+	}
+	return InRevisionSpec.Contains(TEXT(".-.")) || DotCount >= 2;
+}
+
 FString FormatFlexVaultAuthorAlias(const TSharedPtr<FJsonObject>& InAuthorDetails)
 {
 	if (!InAuthorDetails.IsValid())
