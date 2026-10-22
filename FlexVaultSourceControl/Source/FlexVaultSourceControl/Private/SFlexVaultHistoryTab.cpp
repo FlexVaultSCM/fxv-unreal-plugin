@@ -30,6 +30,7 @@
 #include "Misc/PackageName.h"
 #include "Misc/Paths.h"
 #include "Async/Async.h"
+#include "Containers/Ticker.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetToolsModule.h"
 #include "IAssetTools.h"
@@ -496,12 +497,21 @@ bool SFlexVaultHistoryTab::CanCompileLocally() const
 
 void SFlexVaultHistoryTab::UpdateCommitDisabledStates()
 {
-	if (LastKnownHeadCommit.IsEmpty())
+	FFlexVaultSourceControlProvider* Provider = GetProvider();
+	if (Provider != nullptr)
 	{
-		FFlexVaultSourceControlProvider* Provider = GetProvider();
-		if (Provider != nullptr)
+		const FString CurrentHead = Provider->GetCurrentHeadCommit();
+		if (!CurrentHead.IsEmpty())
 		{
-			LastKnownHeadCommit = Provider->GetCurrentHeadCommit();
+			LastKnownHeadCommit = CurrentHead;
+		}
+	}
+
+	for (TSharedPtr<FFlexVaultHistoryCommitItem>& Commit : AllCommits)
+	{
+		if (Commit.IsValid())
+		{
+			Commit->bIsCurrentHead = (!LastKnownHeadCommit.IsEmpty() && Commit->ChangeId == LastKnownHeadCommit);
 		}
 	}
 
@@ -875,15 +885,41 @@ public:
 		}
 
 		const bool bDisabled = Item->bSyncDisabled;
-		const FSlateColor TextColor = (bDisabled || Item->bIsDraft)
-			? FSlateColor::UseSubduedForeground()
-			: FSlateColor::UseForeground();
+		const bool bIsCurrent = Item->bIsCurrentHead;
+		const bool bIsDraft = Item->bIsDraft;
+
+		FSlateColor TextColor;
+		if (bIsCurrent)
+		{
+			// Distinct soft mint green for current workspace head
+			TextColor = FLinearColor(0.35f, 0.85f, 0.55f, 1.0f);
+		}
+		else if (bDisabled || bIsDraft)
+		{
+			TextColor = FSlateColor::UseSubduedForeground();
+		}
+		else
+		{
+			TextColor = FSlateColor::UseForeground();
+		}
+
+		const FName RowFont = (bIsCurrent || (!bIsDraft && !bDisabled)) ? "NormalFont.Bold" : "NormalFont";
 
 		if (ColumnName == FlexVaultHistoryColumns::CommitRevision)
 		{
-			const FText RevTooltip = bDisabled
-				? FText::FromString(Item->DisabledReason)
-				: (Item->bIsDraft ? LOCTEXT("DraftRevTooltip", "Unpublished local changes (Draft)") : FText::GetEmpty());
+			FText RevTooltip;
+			if (bIsCurrent)
+			{
+				RevTooltip = LOCTEXT("CurrentHeadTooltip", "Current workspace version (HEAD)");
+			}
+			else if (bDisabled)
+			{
+				RevTooltip = FText::FromString(Item->DisabledReason);
+			}
+			else if (bIsDraft)
+			{
+				RevTooltip = LOCTEXT("DraftRevTooltip", "Unpublished local changes (Draft)");
+			}
 
 			return SNew(SHorizontalBox)
 				+ SHorizontalBox::Slot()
@@ -894,7 +930,7 @@ public:
 					SNew(STextBlock)
 					.Text(FText::FromString(Item->RevisionDisplay))
 					.ColorAndOpacity(TextColor)
-					.Font(FAppStyle::GetFontStyle(Item->bIsDraft ? "NormalFont" : "NormalFont.Bold"))
+					.Font(FAppStyle::GetFontStyle(RowFont))
 					.ToolTipText(RevTooltip)
 				];
 		}
@@ -914,7 +950,7 @@ public:
 					.Text(FText::FromString(Item->CommitMeta.Author))
 					.ColorAndOpacity(TextColor)
 					.ToolTipText(AuthorTooltip)
-					.Font(FAppStyle::GetFontStyle("NormalFont"))
+					.Font(FAppStyle::GetFontStyle(bIsCurrent ? "NormalFont.Bold" : "NormalFont"))
 				];
 		}
 		else if (ColumnName == FlexVaultHistoryColumns::CommitDate)
@@ -936,7 +972,7 @@ public:
 					.Text(DateText)
 					.ColorAndOpacity(TextColor)
 					.ToolTipText(DateTooltip)
-					.Font(FAppStyle::GetFontStyle("NormalFont"))
+					.Font(FAppStyle::GetFontStyle(bIsCurrent ? "NormalFont.Bold" : "NormalFont"))
 				];
 		}
 		else if (ColumnName == FlexVaultHistoryColumns::CommitDescription)
@@ -945,9 +981,15 @@ public:
 			Summary.ReplaceInline(TEXT("\r\n"), TEXT(" "));
 			Summary.ReplaceInline(TEXT("\n"), TEXT(" "));
 
-			const FText DescTooltip = bDisabled && !Item->DisabledReason.IsEmpty()
-				? FText::Format(LOCTEXT("DescTooltipDisabled", "{0}\n\nNote: {1}"), FText::FromString(Item->CommitMeta.Description), FText::FromString(Item->DisabledReason))
-				: FText::FromString(Item->CommitMeta.Description);
+			FText DescTooltip = FText::FromString(Item->CommitMeta.Description);
+			if (bIsCurrent)
+			{
+				DescTooltip = FText::Format(LOCTEXT("DescTooltipCurrent", "{0}\n\n[Current workspace version]"), DescTooltip);
+			}
+			else if (bDisabled && !Item->DisabledReason.IsEmpty())
+			{
+				DescTooltip = FText::Format(LOCTEXT("DescTooltipDisabled", "{0}\n\nNote: {1}"), DescTooltip, FText::FromString(Item->DisabledReason));
+			}
 
 			return SNew(SHorizontalBox)
 				+ SHorizontalBox::Slot()
@@ -959,7 +1001,7 @@ public:
 					.Text(FText::FromString(Summary))
 					.ColorAndOpacity(TextColor)
 					.ToolTipText(DescTooltip)
-					.Font(FAppStyle::GetFontStyle("NormalFont"))
+					.Font(FAppStyle::GetFontStyle(bIsCurrent ? "NormalFont.Bold" : "NormalFont"))
 				];
 		}
 
@@ -1186,12 +1228,16 @@ void SFlexVaultHistoryTab::SyncToCommit(TSharedPtr<FFlexVaultHistoryCommitItem> 
 			}
 		}
 
-		Async(EAsyncExecution::TaskGraphMainThread, [WeakSelf, InCommit, TargetRevision, RevisionDisplay, CodeFiles, bOk]()
+		// Schedule modal confirmation prompt on game thread frame tick via FTSTicker rather than
+		// blocking inside a TaskGraph task. Transitioning from ThreadPool via TaskGraphMainThread
+		// attaches an empty task context scope, which causes child render tasks spawned during
+		// Slate modal loops to lack inherited FAppTime context in UE 5.8+.
+		FTSTicker::GetCoreTicker().AddTicker(TEXT("FlexVaultSyncPrompt"), 0.0f, [WeakSelf, InCommit, TargetRevision, RevisionDisplay, CodeFiles, bOk](float)
 		{
 			TSharedPtr<SFlexVaultHistoryTab> Pin = WeakSelf.Pin();
 			if (!Pin.IsValid())
 			{
-				return;
+				return false;
 			}
 
 			if (!bOk)
@@ -1202,7 +1248,7 @@ void SFlexVaultHistoryTab::SyncToCommit(TSharedPtr<FFlexVaultHistoryCommitItem> 
 				));
 				FailInfo.ExpireDuration = 5.0f;
 				FSlateNotificationManager::Get().AddNotification(FailInfo);
-				return;
+				return false;
 			}
 
 			const bool bCanCompileLocally = Pin->CanCompileLocally();
@@ -1232,7 +1278,7 @@ void SFlexVaultHistoryTab::SyncToCommit(TSharedPtr<FFlexVaultHistoryCommitItem> 
 
 					if (FMessageDialog::Open(EAppMsgType::OkCancel, Prompt, LOCTEXT("SyncCodeLiveTitle", "C++ Source Changes Detected")) != EAppReturnType::Ok)
 					{
-						return;
+						return false;
 					}
 				}
 				else
@@ -1266,7 +1312,7 @@ void SFlexVaultHistoryTab::SyncToCommit(TSharedPtr<FFlexVaultHistoryCommitItem> 
 					BlockedInfo.ExpireDuration = 5.0f;
 					FSlateNotificationManager::Get().AddNotification(BlockedInfo);
 
-					return;
+					return false;
 				}
 			}
 			else
@@ -1280,11 +1326,12 @@ void SFlexVaultHistoryTab::SyncToCommit(TSharedPtr<FFlexVaultHistoryCommitItem> 
 
 				if (FMessageDialog::Open(EAppMsgType::OkCancel, ConfirmMessage, ConfirmTitle) != EAppReturnType::Ok)
 				{
-					return;
+					return false;
 				}
 			}
 
 			Pin->ExecuteSyncToCommit(InCommit);
+			return false;
 		});
 	});
 }
@@ -1310,7 +1357,7 @@ void SFlexVaultHistoryTab::ExecuteSyncToCommit(TSharedPtr<FFlexVaultHistoryCommi
 	FSlateNotificationManager::Get().AddNotification(StartingInfo);
 
 	FSourceControlOperationComplete OnComplete = FSourceControlOperationComplete::CreateSP(
-		this, &SFlexVaultHistoryTab::OnSyncOperationComplete, InCommit->RevisionDisplay
+		this, &SFlexVaultHistoryTab::OnSyncOperationComplete, InCommit->ChangeId
 	);
 
 	Provider.Execute(SyncOp, TArray<FString>(), EConcurrency::Asynchronous, OnComplete);
@@ -1322,6 +1369,14 @@ void SFlexVaultHistoryTab::OnSyncOperationComplete(const FSourceControlOperation
 	{
 		FFlexVaultSourceControlModule& Module = FModuleManager::GetModuleChecked<FFlexVaultSourceControlModule>("FlexVaultSourceControl");
 		FFlexVaultSourceControlProvider& Provider = Module.GetProvider();
+
+		if (!InTargetRevision.IsEmpty())
+		{
+			Provider.SetCurrentHeadCommit(InTargetRevision);
+			LastKnownHeadCommit = InTargetRevision;
+			UpdateCommitDisabledStates();
+		}
+
 		const TArray<FString>& SyncedFiles = Provider.GetLastSyncedFiles();
 
 		TArray<UPackage*> PackagesToReload;
@@ -1442,6 +1497,16 @@ TSharedPtr<SWidget> SFlexVaultHistoryTab::OnFileContextMenu()
 	if (SelectedItem->bIsAsset)
 	{
 		MenuBuilder.AddMenuEntry(
+			LOCTEXT("DiffAgainstPrevious", "Diff Against Previous Revision"),
+			LOCTEXT("DiffAgainstPreviousTooltip", "Compares this file between this commit and its previous revision"),
+			FSlateIcon(FAppStyle::GetAppStyleSetName(), "SourceControl.Actions.Diff"),
+			FUIAction(
+				FExecuteAction::CreateSP(this, &SFlexVaultHistoryTab::DiffSelectedFileAgainstPrevious, SelectedItem),
+				FCanExecuteAction::CreateSP(this, &SFlexVaultHistoryTab::CanDiffSelectedFileAgainstPrevious, SelectedItem)
+			)
+		);
+
+		MenuBuilder.AddMenuEntry(
 			LOCTEXT("DiffAgainstWorkspace", "Diff Against Workspace Version"),
 			LOCTEXT("DiffAgainstWorkspaceTooltip", "Compares this historical revision against current workspace file"),
 			FSlateIcon(FAppStyle::GetAppStyleSetName(), "SourceControl.Actions.Diff"),
@@ -1457,6 +1522,16 @@ TSharedPtr<SWidget> SFlexVaultHistoryTab::OnFileContextMenu()
 	}
 	else
 	{
+		MenuBuilder.AddMenuEntry(
+			LOCTEXT("DiffAgainstPrevious", "Diff Against Previous Revision"),
+			LOCTEXT("DiffAgainstPreviousTooltip", "Compares this file between this commit and its previous revision using configured diff tool"),
+			FSlateIcon(FAppStyle::GetAppStyleSetName(), "SourceControl.Actions.Diff"),
+			FUIAction(
+				FExecuteAction::CreateSP(this, &SFlexVaultHistoryTab::DiffSelectedFileAgainstPrevious, SelectedItem),
+				FCanExecuteAction::CreateSP(this, &SFlexVaultHistoryTab::CanDiffSelectedFileAgainstPrevious, SelectedItem)
+			)
+		);
+
 		MenuBuilder.AddMenuEntry(
 			LOCTEXT("DiffAgainstWorkspace", "Diff Against Workspace Version"),
 			LOCTEXT("DiffAgainstWorkspaceTooltip", "Compares this historical revision against current workspace file using configured diff tool"),
@@ -1604,6 +1679,176 @@ void SFlexVaultHistoryTab::DiffSelectedFileAgainstWorkspace(TSharedPtr<FFlexVaul
 	const FString DiffCommand = GetDefault<UEditorLoadingSavingSettings>()->TextDiffToolPath.FilePath;
 	FAssetToolsModule& AssetToolsModule = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools"));
 	AssetToolsModule.Get().CreateDiffProcess(DiffCommand, TempHistoricalFile, InItem->FullPath);
+}
+
+TSharedPtr<FFlexVaultHistoryCommitItem> SFlexVaultHistoryTab::GetPreviousCommit(const TSharedPtr<FFlexVaultHistoryCommitItem>& InCommit) const
+{
+	if (!InCommit.IsValid())
+	{
+		return nullptr;
+	}
+
+	for (int32 Index = 0; Index < AllCommits.Num(); ++Index)
+	{
+		if (AllCommits[Index].IsValid() && AllCommits[Index]->ChangeId == InCommit->ChangeId)
+		{
+			if (Index + 1 < AllCommits.Num())
+			{
+				return AllCommits[Index + 1];
+			}
+			break;
+		}
+	}
+
+	return nullptr;
+}
+
+bool SFlexVaultHistoryTab::CanDiffSelectedFileAgainstPrevious(TSharedPtr<FFlexVaultHistoryFileItem> InItem) const
+{
+	if (!InItem.IsValid() || !CurrentlySelectedCommit.IsValid())
+	{
+		return false;
+	}
+
+	if (InItem->Action.Equals(TEXT("Add"), ESearchCase::IgnoreCase) || InItem->Action.Equals(TEXT("Added"), ESearchCase::IgnoreCase))
+	{
+		return false;
+	}
+
+	TSharedPtr<FFlexVaultHistoryCommitItem> PrevCommit = GetPreviousCommit(CurrentlySelectedCommit);
+	return PrevCommit.IsValid() && !PrevCommit->ChangeId.IsEmpty();
+}
+
+void SFlexVaultHistoryTab::DiffSelectedFileAgainstPrevious(TSharedPtr<FFlexVaultHistoryFileItem> InItem)
+{
+	if (!InItem.IsValid() || !CurrentlySelectedCommit.IsValid())
+	{
+		return;
+	}
+
+	TSharedPtr<FFlexVaultHistoryCommitItem> PrevCommit = GetPreviousCommit(CurrentlySelectedCommit);
+	if (!PrevCommit.IsValid() || PrevCommit->ChangeId.IsEmpty())
+	{
+		FNotificationInfo Info(LOCTEXT("NoPreviousCommit", "No previous revision found to compare against."));
+		Info.ExpireDuration = 3.0f;
+		FSlateNotificationManager::Get().AddNotification(Info);
+		return;
+	}
+
+	FFlexVaultSourceControlProvider* Provider = GetProvider();
+	if (!Provider)
+	{
+		return;
+	}
+
+	const FString TargetRevision = InItem->RevisionSpec;
+	const FString PreviousRevision = PrevCommit->ChangeId;
+
+	// 1. Revision detail for current revision
+	FFlexVaultRevisionDetail CurrDetail;
+	CurrDetail.Action = InItem->Action;
+	CurrDetail.Date = CurrentlySelectedCommit->CommitMeta.Date;
+	CurrDetail.Description = CurrentlySelectedCommit->CommitMeta.Description;
+	CurrDetail.FileSize = InItem->FileSize;
+	CurrDetail.RevisionNumber = 0;
+	CurrDetail.RevisionSpec = TargetRevision;
+	CurrDetail.UserName = CurrentlySelectedCommit->CommitMeta.Author;
+	CurrDetail.ContentAddress = InItem->ContentAddress;
+	CurrDetail.RelativePath = InItem->RelativePath;
+
+	TSharedRef<FFlexVaultSourceControlRevision, ESPMode::ThreadSafe> CurrHistRev = CreateFlexVaultRevision(CurrDetail, *Provider, InItem->FullPath);
+
+	// 2. Revision detail for previous revision
+	FFlexVaultRevisionDetail PrevDetail;
+	PrevDetail.Action = TEXT("Edit");
+	PrevDetail.Date = PrevCommit->CommitMeta.Date;
+	PrevDetail.Description = PrevCommit->CommitMeta.Description;
+	PrevDetail.FileSize = 0;
+	PrevDetail.RevisionNumber = 0;
+	PrevDetail.RevisionSpec = PreviousRevision;
+	PrevDetail.UserName = PrevCommit->CommitMeta.Author;
+	PrevDetail.RelativePath = InItem->RelativePath;
+
+	TSharedRef<FFlexVaultSourceControlRevision, ESPMode::ThreadSafe> PrevHistRev = CreateFlexVaultRevision(PrevDetail, *Provider, InItem->FullPath);
+
+	if (InItem->bIsAsset)
+	{
+		UPackage* CurrPackage = DiffUtils::LoadPackageForDiff(CurrHistRev);
+		UPackage* PrevPackage = DiffUtils::LoadPackageForDiff(PrevHistRev);
+
+		if (!CurrPackage || !PrevPackage)
+		{
+			FNotificationInfo Info(LOCTEXT("DiffLoadPackagesFailed", "Failed to load asset packages for comparison."));
+			Info.ExpireDuration = 4.0f;
+			FSlateNotificationManager::Get().AddNotification(Info);
+			return;
+		}
+
+		FString AssetName = FPaths::GetBaseFilename(InItem->FullPath);
+		UObject* CurrAsset = FindObject<UObject>(CurrPackage, *AssetName);
+		if (!CurrAsset)
+		{
+			CurrAsset = CurrPackage->FindAssetInPackage();
+		}
+
+		UObject* PrevAsset = FindObject<UObject>(PrevPackage, *AssetName);
+		if (!PrevAsset)
+		{
+			PrevAsset = PrevPackage->FindAssetInPackage();
+		}
+
+		if (!CurrAsset || !PrevAsset)
+		{
+			FNotificationInfo Info(LOCTEXT("DiffFindAssetFailed", "Failed to locate asset in revision package."));
+			Info.ExpireDuration = 4.0f;
+			FSlateNotificationManager::Get().AddNotification(Info);
+			return;
+		}
+
+		FRevisionInfo OldRevisionInfo;
+		OldRevisionInfo.Revision = PreviousRevision;
+		OldRevisionInfo.Changelist = 0;
+		OldRevisionInfo.Date = PrevCommit->CommitMeta.Date;
+
+		FRevisionInfo NewRevisionInfo;
+		NewRevisionInfo.Revision = TargetRevision;
+		NewRevisionInfo.Changelist = 0;
+		NewRevisionInfo.Date = CurrentlySelectedCommit->CommitMeta.Date;
+
+		FAssetToolsModule& AssetToolsModule = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools"));
+		AssetToolsModule.Get().DiffAssets(PrevAsset, CurrAsset, OldRevisionInfo, NewRevisionInfo);
+		return;
+	}
+
+	// Non-asset / text files: Use Unreal's external text diff tool API
+	FString CurrTempFile;
+	if (!CurrHistRev->Get(CurrTempFile))
+	{
+		FNotificationInfo Info(FText::Format(
+			LOCTEXT("DiffCurrGetFailed", "Failed to retrieve historical file at revision '{0}'."),
+			FText::FromString(TargetRevision)
+		));
+		Info.ExpireDuration = 4.0f;
+		FSlateNotificationManager::Get().AddNotification(Info);
+		return;
+	}
+
+	FString PrevTempFile;
+	if (!PrevHistRev->Get(PrevTempFile))
+	{
+		FNotificationInfo Info(FText::Format(
+			LOCTEXT("DiffPrevGetFailed", "Failed to retrieve previous revision '{0}' for '{1}'."),
+			FText::FromString(PreviousRevision),
+			FText::FromString(FPaths::GetCleanFilename(InItem->FullPath))
+		));
+		Info.ExpireDuration = 4.0f;
+		FSlateNotificationManager::Get().AddNotification(Info);
+		return;
+	}
+
+	const FString DiffCommand = GetDefault<UEditorLoadingSavingSettings>()->TextDiffToolPath.FilePath;
+	FAssetToolsModule& AssetToolsModule = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools"));
+	AssetToolsModule.Get().CreateDiffProcess(DiffCommand, PrevTempFile, CurrTempFile);
 }
 
 void SFlexVaultHistoryTab::LocateInContentBrowser(TSharedPtr<FFlexVaultHistoryFileItem> InItem)

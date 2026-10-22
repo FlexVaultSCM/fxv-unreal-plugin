@@ -855,26 +855,105 @@ bool ParseFlexVaultHeadCommitId(
 		return false;
 	}
 
+	FString CurrentBranch;
+	PayloadObj->TryGetStringField(TEXT("current_branch"), CurrentBranch);
+
 	const TSharedPtr<FJsonObject>* HeadCommitObj = nullptr;
-	if (!PayloadObj->TryGetObjectField(TEXT("head_commit"), HeadCommitObj) || !HeadCommitObj || !(*HeadCommitObj).IsValid())
-	{
-		return false;
-	}
+	const bool bHasHeadCommit = PayloadObj->TryGetObjectField(TEXT("head_commit"), HeadCommitObj) && HeadCommitObj && (*HeadCommitObj).IsValid();
 
 	// 1. Check local draft snapshot if it has an actual draft revision (> 0)
-	const TSharedPtr<FJsonObject>* LocalSnapshotObj = nullptr;
-	if ((*HeadCommitObj)->TryGetObjectField(TEXT("local_snapshot"), LocalSnapshotObj) && LocalSnapshotObj && LocalSnapshotObj->IsValid())
+	if (bHasHeadCommit)
 	{
-		const TSharedPtr<FJsonObject>* CommitObj = nullptr;
-		if ((*LocalSnapshotObj)->TryGetObjectField(TEXT("commit"), CommitObj) && CommitObj && (*CommitObj).IsValid())
+		const TSharedPtr<FJsonObject>* LocalSnapshotObj = nullptr;
+		if ((*HeadCommitObj)->TryGetObjectField(TEXT("local_snapshot"), LocalSnapshotObj) && LocalSnapshotObj && LocalSnapshotObj->IsValid())
 		{
-			uint64 DraftRev = 0;
-			if ((*CommitObj)->TryGetNumberField(TEXT("draft_revision"), DraftRev) && DraftRev > 0)
+			const TSharedPtr<FJsonObject>* CommitObj = nullptr;
+			if ((*LocalSnapshotObj)->TryGetObjectField(TEXT("commit"), CommitObj) && CommitObj && (*CommitObj).IsValid())
+			{
+				uint64 DraftRev = 0;
+				if ((*CommitObj)->TryGetNumberField(TEXT("draft_revision"), DraftRev) && DraftRev > 0)
+				{
+					FFlexVaultCommitMeta Meta;
+					(*CommitObj)->TryGetStringField(TEXT("branch"), Meta.Branch);
+					if (Meta.Branch.IsEmpty())
+					{
+						Meta.Branch = CurrentBranch;
+					}
+					(*CommitObj)->TryGetStringField(TEXT("type"), Meta.CommitType);
+					Meta.DraftRevision = DraftRev;
+					uint64 PubRev = 0;
+					if ((*CommitObj)->TryGetNumberField(TEXT("revision"), PubRev))
+					{
+						Meta.PublishedRevision = PubRev;
+					}
+					OutHeadCommitId = BuildFlexVaultChangeId(Meta);
+					if (!OutHeadCommitId.IsEmpty())
+					{
+						return true;
+					}
+				}
+			}
+		}
+	}
+
+	// 2. Check sync_status for the currently synced published revision (e.g. when synced to an older revision)
+	const TSharedPtr<FJsonObject>* SyncStatusObj = nullptr;
+	if (PayloadObj->TryGetObjectField(TEXT("sync_status"), SyncStatusObj) && SyncStatusObj && (*SyncStatusObj).IsValid())
+	{
+		uint64 SyncedRev = 0;
+		if ((*SyncStatusObj)->TryGetNumberField(TEXT("synced_revision"), SyncedRev))
+		{
+			const FString Branch = !CurrentBranch.IsEmpty() ? CurrentBranch : TEXT("main");
+			OutHeadCommitId = FString::Printf(TEXT("%s.%llu"), *Branch, SyncedRev);
+			return true;
+		}
+	}
+
+	// 3. Check local_snapshot for the base published revision if draft_revision == 0
+	if (bHasHeadCommit)
+	{
+		const TSharedPtr<FJsonObject>* LocalSnapshotObj = nullptr;
+		if ((*HeadCommitObj)->TryGetObjectField(TEXT("local_snapshot"), LocalSnapshotObj) && LocalSnapshotObj && LocalSnapshotObj->IsValid())
+		{
+			const TSharedPtr<FJsonObject>* CommitObj = nullptr;
+			if ((*LocalSnapshotObj)->TryGetObjectField(TEXT("commit"), CommitObj) && CommitObj && (*CommitObj).IsValid())
+			{
+				uint64 PubRev = 0;
+				if ((*CommitObj)->TryGetNumberField(TEXT("revision"), PubRev))
+				{
+					FString Branch;
+					(*CommitObj)->TryGetStringField(TEXT("branch"), Branch);
+					if (Branch.IsEmpty())
+					{
+						Branch = CurrentBranch;
+					}
+					if (Branch.IsEmpty())
+					{
+						Branch = TEXT("main");
+					}
+					OutHeadCommitId = FString::Printf(TEXT("%s.%llu"), *Branch, PubRev);
+					return true;
+				}
+			}
+		}
+	}
+
+	// 4. Otherwise fall back to published_head
+	if (bHasHeadCommit)
+	{
+		const TSharedPtr<FJsonObject>* PublishedHeadObj = nullptr;
+		if ((*HeadCommitObj)->TryGetObjectField(TEXT("published_head"), PublishedHeadObj) && PublishedHeadObj && PublishedHeadObj->IsValid())
+		{
+			const TSharedPtr<FJsonObject>* CommitObj = nullptr;
+			if ((*PublishedHeadObj)->TryGetObjectField(TEXT("commit"), CommitObj) && CommitObj && (*CommitObj).IsValid())
 			{
 				FFlexVaultCommitMeta Meta;
 				(*CommitObj)->TryGetStringField(TEXT("branch"), Meta.Branch);
+				if (Meta.Branch.IsEmpty())
+				{
+					Meta.Branch = CurrentBranch;
+				}
 				(*CommitObj)->TryGetStringField(TEXT("type"), Meta.CommitType);
-				Meta.DraftRevision = DraftRev;
 				uint64 PubRev = 0;
 				if ((*CommitObj)->TryGetNumberField(TEXT("revision"), PubRev))
 				{
@@ -885,29 +964,6 @@ bool ParseFlexVaultHeadCommitId(
 				{
 					return true;
 				}
-			}
-		}
-	}
-
-	// 2. Otherwise use published head
-	const TSharedPtr<FJsonObject>* PublishedHeadObj = nullptr;
-	if ((*HeadCommitObj)->TryGetObjectField(TEXT("published_head"), PublishedHeadObj) && PublishedHeadObj && PublishedHeadObj->IsValid())
-	{
-		const TSharedPtr<FJsonObject>* CommitObj = nullptr;
-		if ((*PublishedHeadObj)->TryGetObjectField(TEXT("commit"), CommitObj) && CommitObj && (*CommitObj).IsValid())
-		{
-			FFlexVaultCommitMeta Meta;
-			(*CommitObj)->TryGetStringField(TEXT("branch"), Meta.Branch);
-			(*CommitObj)->TryGetStringField(TEXT("type"), Meta.CommitType);
-			uint64 PubRev = 0;
-			if ((*CommitObj)->TryGetNumberField(TEXT("revision"), PubRev))
-			{
-				Meta.PublishedRevision = PubRev;
-			}
-			OutHeadCommitId = BuildFlexVaultChangeId(Meta);
-			if (!OutHeadCommitId.IsEmpty())
-			{
-				return true;
 			}
 		}
 	}

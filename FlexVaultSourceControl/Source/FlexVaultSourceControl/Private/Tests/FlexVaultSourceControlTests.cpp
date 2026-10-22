@@ -1940,6 +1940,37 @@ bool FFlexVaultAuthorFormattingTest::RunTest(const FString& Parameters)
 		FString DraftHeadId;
 		TestTrue(TEXT("ParseFlexVaultHeadCommitId for draft head"), ParseFlexVaultHeadCommitId(DraftEnvelope, DraftHeadId));
 		TestEqual(TEXT("Draft head commit ID matches BuildFlexVaultChangeId format"), DraftHeadId, TEXT("main.6.2"));
+
+		// 3. Synced back to older published revision (published_head is 9, but synced_revision is 7)
+		const FString SyncedOlderJson = TEXT("{\n")
+			TEXT("  \"message\": {\n")
+			TEXT("    \"kind\": \"status\",\n")
+			TEXT("    \"payload\": {\n")
+			TEXT("      \"current_branch\": \"main\",\n")
+			TEXT("      \"head_commit\": {\n")
+			TEXT("        \"local_snapshot\": {\n")
+			TEXT("          \"commit\": { \"branch\": \"main\", \"revision\": 7, \"type\": \"draft\", \"draft_revision\": 0 }\n")
+			TEXT("        },\n")
+			TEXT("        \"published_head\": {\n")
+			TEXT("          \"commit\": { \"branch\": \"main\", \"revision\": 9, \"type\": \"published\" }\n")
+			TEXT("        }\n")
+			TEXT("      },\n")
+			TEXT("      \"sync_status\": {\n")
+			TEXT("        \"up_to_date\": false,\n")
+			TEXT("        \"revisions_behind\": 2,\n")
+			TEXT("        \"published_head_revision\": 9,\n")
+			TEXT("        \"synced_revision\": 7\n")
+			TEXT("      }\n")
+			TEXT("    }\n")
+			TEXT("  }\n")
+			TEXT("}");
+
+		TSharedPtr<FJsonObject> OlderEnvelope;
+		TSharedRef<TJsonReader<>> OlderReader = TJsonReaderFactory<>::Create(SyncedOlderJson);
+		TestTrue(TEXT("Deserialize older synced status JSON"), FJsonSerializer::Deserialize(OlderReader, OlderEnvelope));
+		FString OlderHeadId;
+		TestTrue(TEXT("ParseFlexVaultHeadCommitId for older synced version"), ParseFlexVaultHeadCommitId(OlderEnvelope, OlderHeadId));
+		TestEqual(TEXT("Head commit ID reflects older synced revision"), OlderHeadId, TEXT("main.7"));
 	}
 
 	return true;

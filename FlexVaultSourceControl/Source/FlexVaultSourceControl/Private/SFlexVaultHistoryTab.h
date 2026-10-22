@@ -55,6 +55,9 @@ private:
 
 	// ── Actions ─────────────────────────────────────────────────────
 	void DiffSelectedFileAgainstWorkspace(TSharedPtr<FFlexVaultHistoryFileItem> InItem);
+	void DiffSelectedFileAgainstPrevious(TSharedPtr<FFlexVaultHistoryFileItem> InItem);
+	bool CanDiffSelectedFileAgainstPrevious(TSharedPtr<FFlexVaultHistoryFileItem> InItem) const;
+	TSharedPtr<FFlexVaultHistoryCommitItem> GetPreviousCommit(const TSharedPtr<FFlexVaultHistoryCommitItem>& InCommit) const;
 	void LocateInContentBrowser(TSharedPtr<FFlexVaultHistoryFileItem> InItem);
 	void OpenInExternalEditor(TSharedPtr<FFlexVaultHistoryFileItem> InItem);
 	void CopyPathToClipboard(TSharedPtr<FFlexVaultHistoryFileItem> InItem);
