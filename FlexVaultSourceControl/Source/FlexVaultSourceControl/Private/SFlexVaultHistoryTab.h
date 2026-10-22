@@ -39,6 +39,7 @@ private:
 	void OnCommitSelectionChanged(TSharedPtr<FFlexVaultHistoryCommitItem> InSelectedItem, ESelectInfo::Type InSelectInfo);
 	TSharedPtr<SWidget> OnCommitContextMenu();
 	void SyncToCommit(TSharedPtr<FFlexVaultHistoryCommitItem> InCommit);
+	void ExecuteSyncToCommit(TSharedPtr<FFlexVaultHistoryCommitItem> InCommit);
 	void OnSyncOperationComplete(const FSourceControlOperationRef& InOperation, ECommandResult::Type InResult, FString InTargetRevision);
 
 	// ── File List Row & Column Generation ───────────────────────────

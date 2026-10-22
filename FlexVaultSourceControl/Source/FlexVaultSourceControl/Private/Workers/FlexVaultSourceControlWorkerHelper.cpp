@@ -1780,4 +1780,70 @@ bool RunFlexVaultFetch(
 	return ParseFlexVaultFetch(OutputLines, OutFetchResult, OutResultInfo);
 }
 
+TArray<FString> BuildFlexVaultDiffArgs(const FString& InTargetRevision)
+{
+	TArray<FString> Args;
+	Args.Add(TEXT("diff"));
+	Args.Add(TEXT("**"));
+	Args.Add(InTargetRevision);
+	Args.Add(TEXT("--no-pager"));
+	Args.Add(TEXT("--unattended"));
+	Args.Add(TEXT("--no-color"));
+	return Args;
+}
+
+bool ParseFlexVaultDiffChangedFiles(const TArray<FString>& InDiffOutputLines, TArray<FString>& OutChangedFiles)
+{
+	OutChangedFiles.Empty();
+	bool bInChangedFilesSection = false;
+
+	for (const FString& RawLine : InDiffOutputLines)
+	{
+		const FString Line = RawLine.TrimStartAndEnd();
+
+		if (Line.Equals(TEXT("Changed files:"), ESearchCase::IgnoreCase))
+		{
+			bInChangedFilesSection = true;
+			continue;
+		}
+
+		if (bInChangedFilesSection)
+		{
+			if (Line.IsEmpty() || Line.StartsWith(TEXT("###")) || Line.StartsWith(TEXT("Compared ")) || Line.StartsWith(TEXT("No files changed")))
+			{
+				break;
+			}
+
+			FString ActionStr;
+			FString FilePathStr;
+			if (Line.Split(TEXT(" "), &ActionStr, &FilePathStr, ESearchCase::CaseSensitive, ESearchDir::FromStart))
+			{
+				FilePathStr = FilePathStr.TrimStartAndEnd();
+				if (!FilePathStr.IsEmpty())
+				{
+					FilePathStr.ReplaceInline(TEXT("\\"), TEXT("/"));
+					OutChangedFiles.Add(FilePathStr);
+				}
+			}
+		}
+	}
+
+	return true;
+}
+
+bool IsFlexVaultSourceCodeFile(const FString& InFilePath)
+{
+	const FString Ext = FPaths::GetExtension(InFilePath).ToLower();
+	return Ext == TEXT("h")
+		|| Ext == TEXT("hpp")
+		|| Ext == TEXT("inl")
+		|| Ext == TEXT("cpp")
+		|| Ext == TEXT("c")
+		|| Ext == TEXT("cc")
+		|| Ext == TEXT("cxx")
+		|| Ext == TEXT("cs")
+		|| Ext == TEXT("uproject")
+		|| Ext == TEXT("uplugin");
+}
+
 #undef LOCTEXT_NAMESPACE

@@ -406,3 +406,17 @@ bool RunFlexVaultFetch(
 	TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> InCancelToken = nullptr
 );
 
+/**
+ * Builds the CLI args for 'fxv diff' to compare changes between target revision and current workspace.
+ */
+TArray<FString> BuildFlexVaultDiffArgs(const FString& InTargetRevision);
+
+/**
+ * Parses the changed file paths from 'fxv diff' human/summary output.
+ */
+bool ParseFlexVaultDiffChangedFiles(const TArray<FString>& InDiffOutputLines, TArray<FString>& OutChangedFiles);
+
+/**
+ * Checks if a given file path is a C++ source or project file (.h, .hpp, .inl, .cpp, .c, .cc, .cxx, .cs, .uproject, .uplugin).
+ */
+bool IsFlexVaultSourceCodeFile(const FString& InFilePath);

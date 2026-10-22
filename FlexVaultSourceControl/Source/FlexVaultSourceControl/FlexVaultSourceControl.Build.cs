@@ -28,6 +28,11 @@ public class FlexVaultSourceControl : ModuleRules
 			}
 		);
 
+		if (Target.bWithLiveCoding)
+		{
+			PrivateDependencyModuleNames.Add("LiveCoding");
+		}
+
 		if (Target.bUsesSlate)
 		{
 			PrivateDependencyModuleNames.AddRange(

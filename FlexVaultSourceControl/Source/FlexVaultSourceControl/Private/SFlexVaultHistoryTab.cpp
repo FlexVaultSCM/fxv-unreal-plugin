@@ -43,6 +43,11 @@
 #include "Misc/MessageDialog.h"
 #include "Framework/Notifications/NotificationManager.h"
 #include "Widgets/Notifications/SNotificationList.h"
+#include "UnrealEdMisc.h"
+#include "Misc/App.h"
+#if WITH_LIVE_CODING
+#include "ILiveCodingModule.h"
+#endif
 
 #define LOCTEXT_NAMESPACE "FlexVaultSourceControl"
 
@@ -999,13 +1004,127 @@ void SFlexVaultHistoryTab::SyncToCommit(TSharedPtr<FFlexVaultHistoryCommitItem> 
 		return;
 	}
 
-	const FText ConfirmTitle = LOCTEXT("ConfirmSyncTitle", "Sync Workspace");
-	const FText ConfirmMessage = FText::Format(
-		LOCTEXT("ConfirmSyncMsg", "Are you sure you want to sync the workspace to revision '{0}'?\n\nAny uncommitted changes in your workspace will be automatically snapshotted before syncing."),
-		FText::FromString(InCommit->RevisionDisplay)
-	);
+	const FString TargetRevision = InCommit->ChangeId;
+	const FString RevisionDisplay = InCommit->RevisionDisplay;
+	const FString BinaryPath = GetEffectiveBinaryPath();
+	const FString WorkspacePath = GetWorkspacePath();
 
-	if (FMessageDialog::Open(EAppMsgType::OkCancel, ConfirmMessage, ConfirmTitle) != EAppReturnType::Ok)
+	TWeakPtr<SFlexVaultHistoryTab> WeakSelf = SharedThis(this);
+	TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> LocalCancelToken = HistoryTabCancelToken;
+
+	// Check delta between current workspace and target revision in the background before prompting
+	Async(EAsyncExecution::ThreadPool, [WeakSelf, InCommit, TargetRevision, RevisionDisplay, BinaryPath, WorkspacePath, LocalCancelToken]()
+	{
+		if (LocalCancelToken.IsValid() && LocalCancelToken->Load())
+		{
+			return;
+		}
+
+		TArray<FString> DiffArgs = BuildFlexVaultDiffArgs(TargetRevision);
+		TArray<FString> OutputLines;
+		FSourceControlResultInfo ResultInfo;
+		bool bOk = RunFlexVaultCommand(BinaryPath, WorkspacePath, DiffArgs, OutputLines, ResultInfo, true, nullptr, 30.0, LocalCancelToken);
+
+		TArray<FString> ChangedFiles;
+		TArray<FString> CodeFiles;
+		if (bOk)
+		{
+			ParseFlexVaultDiffChangedFiles(OutputLines, ChangedFiles);
+			for (const FString& File : ChangedFiles)
+			{
+				if (IsFlexVaultSourceCodeFile(File))
+				{
+					CodeFiles.Add(File);
+				}
+			}
+		}
+
+		Async(EAsyncExecution::TaskGraphMainThread, [WeakSelf, InCommit, TargetRevision, RevisionDisplay, CodeFiles]()
+		{
+			TSharedPtr<SFlexVaultHistoryTab> Pin = WeakSelf.Pin();
+			if (!Pin.IsValid())
+			{
+				return;
+			}
+
+			// Detect if local in-editor compilation is supported and active
+			bool bCanLiveCompile = false;
+#if WITH_LIVE_CODING
+			ILiveCodingModule* LiveCoding = FModuleManager::GetModulePtr<ILiveCodingModule>(LIVE_CODING_MODULE_NAME);
+			if (LiveCoding != nullptr && LiveCoding->IsEnabledForSession())
+			{
+				bCanLiveCompile = true;
+			}
+#endif
+
+			const bool bHasCodeChanges = (CodeFiles.Num() > 0);
+
+			if (bHasCodeChanges)
+			{
+				if (bCanLiveCompile)
+				{
+					// Programmer workflow with Live Coding active
+					FString CodeFileListSummary;
+					const int32 MaxDisplay = 5;
+					for (int32 i = 0; i < FMath::Min(CodeFiles.Num(), MaxDisplay); ++i)
+					{
+						CodeFileListSummary += FString::Printf(TEXT("  • %s\n"), *CodeFiles[i]);
+					}
+					if (CodeFiles.Num() > MaxDisplay)
+					{
+						CodeFileListSummary += FString::Printf(TEXT("  ... and %d more C++ file(s)\n"), CodeFiles.Num() - MaxDisplay);
+					}
+
+					const FText Prompt = FText::Format(
+						LOCTEXT("SyncCodeWithLiveCodingPrompt", "Syncing to revision '{0}' modifies C++ source files:\n\n{1}\nLive Coding is active. You will be able to compile changes after sync completes.\n\nProceed with sync?"),
+						FText::FromString(RevisionDisplay),
+						FText::FromString(CodeFileListSummary)
+					);
+
+					if (FMessageDialog::Open(EAppMsgType::OkCancel, Prompt, LOCTEXT("SyncCodeLiveTitle", "C++ Source Changes Detected")) != EAppReturnType::Ok)
+					{
+						return;
+					}
+				}
+				else
+				{
+					// Artist / Non-programmer / Precompiled binary workflow (UGS / CI)
+					// Warn BEFORE sync: restarting or syncing content alone will not load or compile new code!
+					const FText WarningPrompt = FText::Format(
+						LOCTEXT("SyncCodeWithoutCompilerPrompt", "WARNING: Revision '{0}' modifies {1} C++ source file(s), but local in-editor compilation is not active!\n\nIn Unreal Engine, syncing source files without precompiled binaries will cause assets and binaries to become misaligned, leading to missing classes or editor crashes.\n\n• If your studio uses UnrealGameSync (UGS) or precompiled builds, please close the editor and sync through UGS to pull matching binaries.\n• If you are a programmer, enable Live Coding or compile from your IDE.\n\nDo you still want to proceed with syncing content at your own risk?"),
+						FText::FromString(RevisionDisplay),
+						FText::AsNumber(CodeFiles.Num())
+					);
+
+					if (FMessageDialog::Open(EAppMsgType::OkCancel, WarningPrompt, LOCTEXT("SyncCodeWarningPreTitle", "Warning: C++ Changes Require Matching Binaries")) != EAppReturnType::Ok)
+					{
+						return;
+					}
+				}
+			}
+			else
+			{
+				// Clean content-only sync confirmation
+				const FText ConfirmTitle = LOCTEXT("ConfirmSyncTitle", "Sync Workspace");
+				const FText ConfirmMessage = FText::Format(
+					LOCTEXT("ConfirmSyncMsg", "Are you sure you want to sync the workspace to revision '{0}'?\n\nAny uncommitted changes in your workspace will be automatically snapshotted before syncing."),
+					FText::FromString(RevisionDisplay)
+				);
+
+				if (FMessageDialog::Open(EAppMsgType::OkCancel, ConfirmMessage, ConfirmTitle) != EAppReturnType::Ok)
+				{
+					return;
+				}
+			}
+
+			Pin->ExecuteSyncToCommit(InCommit);
+		});
+	});
+}
+
+void SFlexVaultHistoryTab::ExecuteSyncToCommit(TSharedPtr<FFlexVaultHistoryCommitItem> InCommit)
+{
+	if (!InCommit.IsValid() || InCommit->ChangeId.IsEmpty())
 	{
 		return;
 	}
@@ -1070,12 +1189,51 @@ void SFlexVaultHistoryTab::OnSyncOperationComplete(const FSourceControlOperation
 
 		if (bCodeFilesModified)
 		{
-			FNotificationInfo CodeInfo(LOCTEXT("SyncCodeModifiedTitle", "Source Code Updated"));
-			CodeInfo.SubText = LOCTEXT("SyncCodeModifiedSub", "C++ files were modified by this sync. Trigger Live Coding (Ctrl+Alt+F11) or rebuild and restart the editor if class layouts changed.");
-			CodeInfo.ExpireDuration = 8.0f;
-			CodeInfo.bUseSuccessFailIcons = true;
-			CodeInfo.Image = FAppStyle::Get().GetBrush("Icons.Warning");
-			FSlateNotificationManager::Get().AddNotification(CodeInfo);
+			bool bCanLiveCompile = false;
+#if WITH_LIVE_CODING
+			ILiveCodingModule* LiveCoding = FModuleManager::GetModulePtr<ILiveCodingModule>(LIVE_CODING_MODULE_NAME);
+			if (LiveCoding != nullptr && LiveCoding->IsEnabledForSession())
+			{
+				bCanLiveCompile = true;
+			}
+#endif
+
+			if (bCanLiveCompile)
+			{
+				FNotificationInfo CodeInfo(LOCTEXT("SyncCodeModifiedTitle", "Source Code Updated"));
+				CodeInfo.SubText = LOCTEXT("SyncCodeModifiedLiveCodingSub", "C++ source files were updated. Compile now with Live Coding to patch into the editor.");
+				CodeInfo.ExpireDuration = 10.0f;
+				CodeInfo.bUseSuccessFailIcons = true;
+				CodeInfo.Image = FAppStyle::Get().GetBrush("Icons.Warning");
+
+#if WITH_LIVE_CODING
+				CodeInfo.ButtonDetails.Add(
+					FNotificationButtonInfo(
+						LOCTEXT("LiveCodingCompileBtn", "Live Compile"),
+						LOCTEXT("LiveCodingCompileBtnTooltip", "Triggers Live Coding compile and patches the running editor"),
+						FSimpleDelegate::CreateLambda([]()
+						{
+							ILiveCodingModule* LiveCodingMod = FModuleManager::GetModulePtr<ILiveCodingModule>(LIVE_CODING_MODULE_NAME);
+							if (LiveCodingMod != nullptr)
+							{
+								LiveCodingMod->Compile();
+							}
+						}),
+						SNotificationItem::CS_None
+					)
+				);
+#endif
+				FSlateNotificationManager::Get().AddNotification(CodeInfo);
+			}
+			else
+			{
+				FNotificationInfo WarningInfo(LOCTEXT("SyncCodeNoCompilerTitle", "C++ Files Updated (No Compiler)"));
+				WarningInfo.SubText = LOCTEXT("SyncCodeNoCompilerSub", "C++ files changed. If crashes or missing class errors occur, close the editor and pull matching binaries via UGS.");
+				WarningInfo.ExpireDuration = 10.0f;
+				WarningInfo.bUseSuccessFailIcons = true;
+				WarningInfo.Image = FAppStyle::Get().GetBrush("Icons.Warning");
+				FSlateNotificationManager::Get().AddNotification(WarningInfo);
+			}
 		}
 
 		FNotificationInfo SuccessInfo(FText::Format(

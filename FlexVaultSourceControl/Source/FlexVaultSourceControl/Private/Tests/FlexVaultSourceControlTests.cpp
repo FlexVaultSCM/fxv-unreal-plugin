@@ -1792,6 +1792,40 @@ bool FFlexVaultAuthorFormattingTest::RunTest(const FString& Parameters)
 		}
 	}
 
+	// Test BuildFlexVaultDiffArgs, ParseFlexVaultDiffChangedFiles, and IsFlexVaultSourceCodeFile
+	{
+		const TArray<FString> DiffArgs = BuildFlexVaultDiffArgs(TEXT("main.6"));
+		TestTrue(TEXT("Diff args include diff command"), DiffArgs.Contains(TEXT("diff")));
+		TestTrue(TEXT("Diff args include target revision"), DiffArgs.Contains(TEXT("main.6")));
+
+		const TArray<FString> SampleDiffOutput = {
+			TEXT("Comparing main.2 and main.6"),
+			TEXT("Changed files:"),
+			TEXT("  Changed   Content\\Audio\\menu.uasset"),
+			TEXT("  Changed   Source\\RoboArena\\Public\\Core\\RoboTypes.h"),
+			TEXT("  Changed   Source\\RoboArena\\Private\\Core\\RoboTypes.cpp"),
+			TEXT(""),
+			TEXT("### Diffing Content/Audio/menu.uasset"),
+			TEXT("Binary files differ")
+		};
+
+		TArray<FString> ChangedFiles;
+		TestTrue(TEXT("ParseFlexVaultDiffChangedFiles returns true"), ParseFlexVaultDiffChangedFiles(SampleDiffOutput, ChangedFiles));
+		TestEqual(TEXT("Parsed 3 changed files"), ChangedFiles.Num(), 3);
+		if (ChangedFiles.Num() == 3)
+		{
+			TestEqual(TEXT("Normalized uasset path"), ChangedFiles[0], TEXT("Content/Audio/menu.uasset"));
+			TestEqual(TEXT("Normalized header path"), ChangedFiles[1], TEXT("Source/RoboArena/Public/Core/RoboTypes.h"));
+			TestEqual(TEXT("Normalized cpp path"), ChangedFiles[2], TEXT("Source/RoboArena/Private/Core/RoboTypes.cpp"));
+		}
+
+		TestFalse(TEXT(".uasset is not source code"), IsFlexVaultSourceCodeFile(TEXT("Content/Audio/menu.uasset")));
+		TestTrue(TEXT(".h is source code"), IsFlexVaultSourceCodeFile(TEXT("Source/RoboArena/Public/Core/RoboTypes.h")));
+		TestTrue(TEXT(".cpp is source code"), IsFlexVaultSourceCodeFile(TEXT("Source/RoboArena/Private/Core/RoboTypes.cpp")));
+		TestTrue(TEXT(".cs is source code"), IsFlexVaultSourceCodeFile(TEXT("Source/RoboArena.Target.cs")));
+		TestTrue(TEXT(".uproject is source code"), IsFlexVaultSourceCodeFile(TEXT("RoboArena.uproject")));
+	}
+
 	return true;
 }
 
