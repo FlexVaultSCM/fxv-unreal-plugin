@@ -1493,11 +1493,25 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultFetchTest, "FlexVault.SourceControl.F
 
 bool FFlexVaultFetchTest::RunTest(const FString& Parameters)
 {
-	// 1. Verify default developer settings
-	const UFlexVaultSourceControlDeveloperSettings* Settings = GetDefault<UFlexVaultSourceControlDeveloperSettings>();
-	if (Settings)
+	// 1. Verify default developer settings and RoleMode
+	UFlexVaultSourceControlDeveloperSettings* MutableSettings = GetMutableDefault<UFlexVaultSourceControlDeveloperSettings>();
+	if (MutableSettings)
 	{
-		TestEqual(TEXT("Default FetchPeriodSeconds is 120"), Settings->FetchPeriodSeconds, 120);
+		TestEqual(TEXT("Default FetchPeriodSeconds is 120"), MutableSettings->FetchPeriodSeconds, 120);
+		TestEqual(TEXT("Default RoleMode is Auto"), (uint8)MutableSettings->RoleMode, (uint8)EFlexVaultRoleMode::Auto);
+
+		const EFlexVaultRoleMode OriginalMode = MutableSettings->RoleMode;
+
+		MutableSettings->RoleMode = EFlexVaultRoleMode::Engineer;
+		TestTrue(TEXT("RoleMode::Engineer forces IsEngineerMode to true"), MutableSettings->IsEngineerMode());
+
+		MutableSettings->RoleMode = EFlexVaultRoleMode::PrecompiledBinaries;
+		TestFalse(TEXT("RoleMode::PrecompiledBinaries forces IsEngineerMode to false"), MutableSettings->IsEngineerMode());
+
+		MutableSettings->RoleMode = EFlexVaultRoleMode::Auto;
+		TestEqual(TEXT("RoleMode::Auto matches compiler availability"), MutableSettings->IsEngineerMode(), FSourceCodeNavigation::IsCompilerAvailable());
+
+		MutableSettings->RoleMode = OriginalMode;
 	}
 
 	// 2. Verify BuildFlexVaultFetchArgs without repair
@@ -1863,7 +1877,7 @@ bool FFlexVaultAuthorFormattingTest::RunTest(const FString& Parameters)
 			TestFalse(TEXT("Programmers should never have sync disabled"), Commit->bSyncDisabled);
 		}
 
-		// Scenario 2: Artist/non-programmer mode (bCanCompileLocally = false) with Head at main.1
+		// Scenario 2: Precompiled binaries mode (bCanCompileLocally = false) with Head at main.1
 		UpdateFlexVaultHistorySyncDisabledStates(TestCommits, TEXT("main.1"), /*bCanCompileLocally=*/false);
 		// main.4: Future commit beyond code commit main.3 -> should be disabled
 		TestTrue(TEXT("main.4 should be sync disabled (beyond code change)"), TestCommits[0]->bSyncDisabled);

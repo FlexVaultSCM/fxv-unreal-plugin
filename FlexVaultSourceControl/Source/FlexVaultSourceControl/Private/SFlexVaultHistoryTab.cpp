@@ -126,26 +126,6 @@ void SFlexVaultHistoryTab::Construct(const FArguments& InArgs)
 					.OnTextChanged(this, &SFlexVaultHistoryTab::OnFilterTextChanged)
 				]
 
-				// Simulate Artist Mode Checkbox
-				+ SHorizontalBox::Slot()
-				.AutoWidth()
-				.VAlign(VAlign_Center)
-				.Padding(0.0f, 0.0f, 8.0f, 0.0f)
-				[
-					SNew(SCheckBox)
-					.IsChecked_Lambda([this]() { return bSimulateArtistMode ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
-					.OnCheckStateChanged_Lambda([this](ECheckBoxState NewState)
-					{
-						bSimulateArtistMode = (NewState == ECheckBoxState::Checked);
-						UpdateCommitDisabledStates();
-					})
-					.ToolTipText(LOCTEXT("SimulateArtistModeTooltip", "Simulate non-compiler (artist/designer) mode to test disabled/external sync protection for C++ code changes."))
-					[
-						SNew(STextBlock)
-						.Text(LOCTEXT("SimulateArtistModeLabel", "Simulate Artist Mode"))
-					]
-				]
-
 				// Refresh Button
 				+ SHorizontalBox::Slot()
 				.AutoWidth()
@@ -411,11 +391,14 @@ void SFlexVaultHistoryTab::FetchHistoryAsync(const FString& InBranchFilter)
 
 	const FString BinaryPath = GetEffectiveBinaryPath();
 	const FString WorkspacePath = GetWorkspacePath();
+	const UFlexVaultSourceControlDeveloperSettings* Settings = GetDefault<UFlexVaultSourceControlDeveloperSettings>();
+	const double TimeoutSeconds = (Settings && Settings->CommandTimeoutSeconds > 0.0) ? Settings->CommandTimeoutSeconds : 60.0;
+	const int32 CommitLimit = Settings ? Settings->HistoryCommitLimit : 100;
 
 	TWeakPtr<SFlexVaultHistoryTab> WeakSelf = SharedThis(this);
 	TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> LocalCancelToken = HistoryTabCancelToken;
 
-	Async(EAsyncExecution::ThreadPool, [WeakSelf, BinaryPath, WorkspacePath, InBranchFilter, LocalCancelToken]()
+	Async(EAsyncExecution::ThreadPool, [WeakSelf, BinaryPath, WorkspacePath, InBranchFilter, LocalCancelToken, TimeoutSeconds, CommitLimit]()
 	{
 		if (LocalCancelToken.IsValid() && LocalCancelToken->Load())
 		{
@@ -434,10 +417,15 @@ void SFlexVaultHistoryTab::FetchHistoryAsync(const FString& InBranchFilter)
 			HistoryArgs.Add(TEXT("-b"));
 			HistoryArgs.Add(InBranchFilter);
 		}
+		if (CommitLimit > 0)
+		{
+			HistoryArgs.Add(TEXT("-n"));
+			HistoryArgs.Add(FString::FromInt(CommitLimit));
+		}
 
 		TArray<FString> OutputLines;
 		FSourceControlResultInfo ResultInfo;
-		bool bOk = RunFlexVaultCommand(BinaryPath, WorkspacePath, HistoryArgs, OutputLines, ResultInfo, false, nullptr, 30.0, LocalCancelToken);
+		bool bOk = RunFlexVaultCommand(BinaryPath, WorkspacePath, HistoryArgs, OutputLines, ResultInfo, false, nullptr, TimeoutSeconds, LocalCancelToken);
 		if (LocalCancelToken.IsValid() && LocalCancelToken->Load())
 		{
 			return;
@@ -480,19 +468,8 @@ void SFlexVaultHistoryTab::FetchHistoryAsync(const FString& InBranchFilter)
 
 bool SFlexVaultHistoryTab::CanCompileLocally() const
 {
-	if (bSimulateArtistMode)
-	{
-		return false;
-	}
-
-#if WITH_LIVE_CODING
-	ILiveCodingModule* LiveCoding = FModuleManager::GetModulePtr<ILiveCodingModule>(LIVE_CODING_MODULE_NAME);
-	if (LiveCoding != nullptr && LiveCoding->IsEnabledForSession())
-	{
-		return true;
-	}
-#endif
-	return FSourceCodeNavigation::IsCompilerAvailable();
+	const UFlexVaultSourceControlDeveloperSettings* Settings = GetDefault<UFlexVaultSourceControlDeveloperSettings>();
+	return Settings ? Settings->IsEngineerMode() : FSourceCodeNavigation::IsCompilerAvailable();
 }
 
 void SFlexVaultHistoryTab::UpdateCommitDisabledStates()
@@ -581,7 +558,9 @@ void SFlexVaultHistoryTab::ScanCommitsForCodeChangesAsync()
 
 			TArray<FString> OutputLines;
 			FSourceControlResultInfo ResultInfo;
-			bool bOk = RunFlexVaultCommand(BinaryPath, WorkspacePath, ChangeInfoArgs, OutputLines, ResultInfo, true, nullptr, 15.0, LocalCancelToken);
+			const UFlexVaultSourceControlDeveloperSettings* Settings = GetDefault<UFlexVaultSourceControlDeveloperSettings>();
+			const double TimeoutSeconds = (Settings && Settings->CommandTimeoutSeconds > 0.0) ? Settings->CommandTimeoutSeconds : 60.0;
+			bool bOk = RunFlexVaultCommand(BinaryPath, WorkspacePath, ChangeInfoArgs, OutputLines, ResultInfo, true, nullptr, TimeoutSeconds, LocalCancelToken);
 
 			bool bHasCode = false;
 			if (bOk)
@@ -719,7 +698,9 @@ void SFlexVaultHistoryTab::FetchCommitDetailsAsync(const TSharedPtr<FFlexVaultHi
 		};
 		TArray<FString> OutputLines;
 		FSourceControlResultInfo ResultInfo;
-		bool bOk = RunFlexVaultCommand(BinaryPath, WorkspacePath, ChangeInfoArgs, OutputLines, ResultInfo, true, nullptr, 20.0, LocalCancelToken);
+		const UFlexVaultSourceControlDeveloperSettings* Settings = GetDefault<UFlexVaultSourceControlDeveloperSettings>();
+		const double TimeoutSeconds = (Settings && Settings->CommandTimeoutSeconds > 0.0) ? Settings->CommandTimeoutSeconds : 60.0;
+		bool bOk = RunFlexVaultCommand(BinaryPath, WorkspacePath, ChangeInfoArgs, OutputLines, ResultInfo, true, nullptr, TimeoutSeconds, LocalCancelToken);
 		if (LocalCancelToken.IsValid() && LocalCancelToken->Load())
 		{
 			return;
@@ -894,8 +875,14 @@ public:
 			// Distinct soft mint green for current workspace head
 			TextColor = FLinearColor(0.35f, 0.85f, 0.55f, 1.0f);
 		}
-		else if (bDisabled || bIsDraft)
+		else if (bDisabled)
 		{
+			// Low-saturation muted rust/brick tint for binary mismatch disabled code change rows
+			TextColor = FLinearColor(0.70f, 0.45f, 0.45f, 1.0f);
+		}
+		else if (bIsDraft)
+		{
+			// Cool neutral subdued grey for unpublished drafts
 			TextColor = FSlateColor::UseSubduedForeground();
 		}
 		else
@@ -1212,7 +1199,9 @@ void SFlexVaultHistoryTab::SyncToCommit(TSharedPtr<FFlexVaultHistoryCommitItem> 
 		TArray<FString> DiffArgs = BuildFlexVaultDiffArgs(TargetRevision);
 		TArray<FString> OutputLines;
 		FSourceControlResultInfo ResultInfo;
-		bool bOk = RunFlexVaultCommand(BinaryPath, WorkspacePath, DiffArgs, OutputLines, ResultInfo, true, nullptr, 30.0, LocalCancelToken);
+		const UFlexVaultSourceControlDeveloperSettings* Settings = GetDefault<UFlexVaultSourceControlDeveloperSettings>();
+		const double TimeoutSeconds = (Settings && Settings->CommandTimeoutSeconds > 0.0) ? Settings->CommandTimeoutSeconds : 60.0;
+		bool bOk = RunFlexVaultCommand(BinaryPath, WorkspacePath, DiffArgs, OutputLines, ResultInfo, true, nullptr, TimeoutSeconds, LocalCancelToken);
 
 		TArray<FString> ChangedFiles;
 		TArray<FString> CodeFiles;
@@ -1283,7 +1272,7 @@ void SFlexVaultHistoryTab::SyncToCommit(TSharedPtr<FFlexVaultHistoryCommitItem> 
 				}
 				else
 				{
-					// Non-local compiler (artist / designer without compiler)
+					// Non-local compiler (precompiled binaries / non-engineer workflow)
 					// Hard-block in-editor sync: syncing without precompiled binaries will corrupt or desync project
 					FString CodeFileListSummary;
 					const int32 MaxDisplay = 5;
@@ -1297,16 +1286,16 @@ void SFlexVaultHistoryTab::SyncToCommit(TSharedPtr<FFlexVaultHistoryCommitItem> 
 					}
 
 					const FText BlockedPrompt = FText::Format(
-						LOCTEXT("SyncCodeBlockedPrompt", "Sync to revision '{0}' is blocked.\n\nThis revision modifies {1} C++ source file(s) across the delta from your current workspace:\n\n{2}\nLocal C++ compilation is not available in this editor environment. Syncing code changes inside the running editor without matching precompiled binaries causes binaries and assets to desynchronize, leading to missing classes or editor crashes.\n\nPlease close Unreal Editor and sync outside the editor (e.g. via UnrealGameSync or the CLI) so matching binaries can be updated before opening the project."),
+						LOCTEXT("SyncCodeBlockedPrompt", "Sync to revision '{0}' is blocked due to potential binary mismatch.\n\nThis revision modifies {1} C++ source file(s) across the delta from your current workspace:\n\n{2}\nSyncing C++ code changes into the running editor without rebuilding causes binaries and asset schemas to desynchronize, leading to missing classes or editor crashes.\n\nTo proceed, either:\n  • Enable Engineer Mode in Project Settings -> Plugins -> FlexVault (if you can compile locally).\n  • Close Unreal Editor and sync matching precompiled binaries (e.g. via UnrealGameSync, build farm, or CLI)."),
 						FText::FromString(RevisionDisplay),
 						FText::AsNumber(CodeFiles.Num()),
 						FText::FromString(CodeFileListSummary)
 					);
 
-					FMessageDialog::Open(EAppMsgType::Ok, BlockedPrompt, LOCTEXT("SyncCodeBlockedTitle", "Sync Blocked: C++ Code Changes Detected"));
+					FMessageDialog::Open(EAppMsgType::Ok, BlockedPrompt, LOCTEXT("SyncCodeBlockedTitle", "Sync Blocked: Binary Mismatch Prevention"));
 
 					FNotificationInfo BlockedInfo(FText::Format(
-						LOCTEXT("SyncBlockedNotification", "Sync to '{0}' blocked: C++ code changes require syncing outside the editor."),
+						LOCTEXT("SyncBlockedNotification", "Sync to '{0}' blocked: C++ changes require local recompilation or precompiled binaries."),
 						FText::FromString(RevisionDisplay)
 					));
 					BlockedInfo.ExpireDuration = 5.0f;

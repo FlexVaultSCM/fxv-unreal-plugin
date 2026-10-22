@@ -1947,7 +1947,7 @@ void UpdateFlexVaultHistorySyncDisabledStates(
 		return;
 	}
 
-	// Non-local compilers (artists/designers without compiler):
+	// Non-local compilers (precompiled binaries / non-engineers):
 	// Find index of current workspace head in the list
 	int32 HeadIndex = INDEX_NONE;
 	if (!InCurrentHeadChangeId.IsEmpty())
@@ -1993,12 +1993,12 @@ void UpdateFlexVaultHistorySyncDisabledStates(
 			{
 				bEncounteredCodeFuture = true;
 				Commit->bSyncDisabled = true;
-				Commit->DisabledReason = TEXT("Contains C++ source code changes. In-editor sync is disabled without a local compiler. Please sync outside the editor (e.g. UGS or CLI).");
+				Commit->DisabledReason = TEXT("Contains C++ source code changes that would cause a binary mismatch with the running editor. Recompile locally (Engineer Mode) or sync matching precompiled binaries (e.g. via UGS or build pipeline).");
 			}
 			else if (bEncounteredCodeFuture)
 			{
 				Commit->bSyncDisabled = true;
-				Commit->DisabledReason = TEXT("Syncing to this revision incorporates intermediate C++ source code changes. Please sync outside the editor (e.g. UGS or CLI).");
+				Commit->DisabledReason = TEXT("Syncing forward incorporates intermediate C++ source code changes, causing a binary mismatch. Recompile locally or sync matching precompiled binaries.");
 			}
 		}
 
@@ -2022,8 +2022,8 @@ void UpdateFlexVaultHistorySyncDisabledStates(
 			{
 				Commit->bSyncDisabled = true;
 				Commit->DisabledReason = Commit->bHasCodeChanges
-					? TEXT("Contains C++ source code changes. In-editor sync is disabled without a local compiler. Please sync outside the editor (e.g. UGS or CLI).")
-					: TEXT("Syncing back to this revision reverts intermediate C++ source code changes. Please sync outside the editor (e.g. UGS or CLI).");
+					? TEXT("Contains C++ source code changes that would cause a binary mismatch with the running editor. Recompile locally (Engineer Mode) or sync matching precompiled binaries (e.g. via UGS or build pipeline).")
+					: TEXT("Syncing back reverts intermediate C++ source code changes, causing a binary mismatch with current binaries. Recompile locally or sync matching precompiled binaries.");
 			}
 		}
 	}
@@ -2045,12 +2045,12 @@ void UpdateFlexVaultHistorySyncDisabledStates(
 			{
 				bEncounteredCode = true;
 				Commit->bSyncDisabled = true;
-				Commit->DisabledReason = TEXT("Contains C++ source code changes. In-editor sync is disabled without a local compiler. Please sync outside the editor (e.g. UGS or CLI).");
+				Commit->DisabledReason = TEXT("Contains C++ source code changes that would cause a binary mismatch with the running editor. Recompile locally (Engineer Mode) or sync matching precompiled binaries (e.g. via UGS or build pipeline).");
 			}
 			else if (bEncounteredCode)
 			{
 				Commit->bSyncDisabled = true;
-				Commit->DisabledReason = TEXT("Incorporates earlier C++ source code changes from this branch. Please sync outside the editor (e.g. UGS or CLI).");
+				Commit->DisabledReason = TEXT("Incorporates earlier C++ source code changes from this branch that would cause a binary mismatch with the running editor. Recompile locally or sync matching precompiled binaries.");
 			}
 		}
 	}

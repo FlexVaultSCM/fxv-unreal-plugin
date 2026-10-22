@@ -100,7 +100,6 @@ private:
 
 	// Filter state
 	FString FilterString;
-	bool bSimulateArtistMode = false;
 
 	// Async state
 	bool bIsLoadingHistory = false;

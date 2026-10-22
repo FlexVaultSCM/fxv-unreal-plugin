@@ -439,7 +439,7 @@ struct FFlexVaultHistoryCommitItem;
  *
  * @param InCommits Array of commit items (sorted newest to oldest as displayed in History).
  * @param InCurrentHeadChangeId Change ID of the current workspace head (e.g. "main.6").
- * @param bCanCompileLocally True if local compiler or Live Coding is available, false for non-programmers/artists.
+ * @param bCanCompileLocally True if local compiler or Live Coding is available, false for precompiled binary / non-engineer workflows.
  */
 void UpdateFlexVaultHistorySyncDisabledStates(
 	TArray<TSharedPtr<FFlexVaultHistoryCommitItem>>& InCommits,

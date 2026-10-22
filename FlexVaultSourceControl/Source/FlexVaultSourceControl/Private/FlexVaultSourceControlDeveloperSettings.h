@@ -6,6 +6,22 @@
 #include "Engine/DeveloperSettings.h"
 #include "FlexVaultSourceControlDeveloperSettings.generated.h"
 
+/**
+ * Workflow role mode for C++ sync protection.
+ */
+UENUM(BlueprintType)
+enum class EFlexVaultRoleMode : uint8
+{
+	/** Automatically detect based on compiler availability (engineers with compilers can compile; users without compilers are protected from binary mismatches) */
+	Auto UMETA(DisplayName = "Auto-Detect"),
+
+	/** Engineer Mode: permits syncing across C++ source code changes with compilation prompt */
+	Engineer UMETA(DisplayName = "Engineer (Can Compile)"),
+
+	/** Precompiled Binaries: user relies on shared/precompiled binaries (blocks in-editor sync across C++ changes to prevent binary mismatch) */
+	PrecompiledBinaries UMETA(DisplayName = "Precompiled Binaries (Shared Binaries / Non-Engineer)")
+};
+
 UCLASS(Config=SourceControlSettings, meta=(DisplayName="FlexVault Source Control"))
 class UFlexVaultSourceControlDeveloperSettings : public UDeveloperSettings
 {
@@ -19,8 +35,23 @@ public:
 	virtual FName GetCategoryName() const override;
 	virtual FName GetSectionName() const override;
 
+#if WITH_EDITOR
+	virtual void PostEditChangeProperty(struct FPropertyChangedEvent& PropertyChangedEvent) override;
+#endif
+
 	/** Get the binary path, fallback to auto-discovery if empty or invalid */
 	FString GetEffectiveBinaryPath() const;
+
+	/** Returns true if operating in Engineer Mode (either explicitly overridden or auto-detected based on compiler/Live Coding availability) */
+	bool IsEngineerMode() const;
+
+	/** Workflow role mode for C++ sync protection. Auto-detect checks whether a C++ compiler or Live Coding is available. Can be overridden to Engineer (compile locally) or Precompiled Binaries (shared binaries). */
+	UPROPERTY(Config, EditAnywhere, Category="Workflow", meta=(DisplayName="Role Mode / Binary Strategy", ToolTip="Specifies whether the user compiles C++ source changes locally or relies on precompiled binaries. Auto-detect checks if a local compiler or Live Coding is available."))
+	EFlexVaultRoleMode RoleMode;
+
+	/** Maximum number of commits to retrieve when loading history. Set to 0 to fetch all commits. */
+	UPROPERTY(Config, EditAnywhere, Category="History", meta=(DisplayName="History Commit Limit", ClampMin="0", ToolTip="Maximum number of commits to retrieve when loading history in the FlexVault History tab. Set to 0 to fetch all commits without a limit."))
+	int32 HistoryCommitLimit;
 
 	/** Path to the fxv SCM executable */
 	UPROPERTY(Config, EditAnywhere, Category="FlexVault", meta=(DisplayName="Binary Path"))
