@@ -44,6 +44,7 @@
 #include "Framework/Notifications/NotificationManager.h"
 #include "Widgets/Notifications/SNotificationList.h"
 #include "UnrealEdMisc.h"
+#include "Settings/EditorLoadingSavingSettings.h"
 #include "Misc/App.h"
 #include "SourceCodeNavigation.h"
 #if WITH_LIVE_CODING
@@ -874,15 +875,18 @@ public:
 		}
 
 		const bool bDisabled = Item->bSyncDisabled;
-		const FSlateColor TextColor = bDisabled
+		const FSlateColor TextColor = (bDisabled || Item->bIsDraft)
 			? FSlateColor::UseSubduedForeground()
-			: (Item->bIsDraft ? FLinearColor(0.85f, 0.65f, 0.2f, 1.0f) : FSlateColor::UseForeground());
+			: FSlateColor::UseForeground();
 
 		if (ColumnName == FlexVaultHistoryColumns::CommitRevision)
 		{
-			TSharedRef<SHorizontalBox> RevBox = SNew(SHorizontalBox);
+			const FText RevTooltip = bDisabled
+				? FText::FromString(Item->DisabledReason)
+				: (Item->bIsDraft ? LOCTEXT("DraftRevTooltip", "Unpublished local changes (Draft)") : FText::GetEmpty());
 
-			RevBox->AddSlot()
+			return SNew(SHorizontalBox)
+				+ SHorizontalBox::Slot()
 				.AutoWidth()
 				.VAlign(VAlign_Center)
 				.Padding(4.0f, 0.0f)
@@ -891,49 +895,8 @@ public:
 					.Text(FText::FromString(Item->RevisionDisplay))
 					.ColorAndOpacity(TextColor)
 					.Font(FAppStyle::GetFontStyle(Item->bIsDraft ? "NormalFont" : "NormalFont.Bold"))
-					.ToolTipText(bDisabled ? FText::FromString(Item->DisabledReason) : FText::GetEmpty())
+					.ToolTipText(RevTooltip)
 				];
-
-			if (Item->bHasCodeChanges)
-			{
-				RevBox->AddSlot()
-					.AutoWidth()
-					.VAlign(VAlign_Center)
-					.Padding(2.0f, 0.0f)
-					[
-						SNew(SBorder)
-						.BorderImage(FAppStyle::Get().GetBrush("Brushes.Panel"))
-						.Padding(FMargin(4.0f, 1.0f))
-						[
-							SNew(STextBlock)
-							.Text(bDisabled ? LOCTEXT("CodeBadgeDisabled", "Code (External)") : LOCTEXT("CodeBadge", "Code"))
-							.ColorAndOpacity(bDisabled ? FLinearColor(0.75f, 0.45f, 0.45f, 0.8f) : FLinearColor(0.3f, 0.7f, 1.0f, 1.0f))
-							.Font(FAppStyle::GetFontStyle("NormalFont.SmallerBold"))
-							.ToolTipText(bDisabled ? FText::FromString(Item->DisabledReason) : LOCTEXT("CodeBadgeTooltip", "This revision modifies C++ source code files."))
-						]
-					];
-			}
-			else if (bDisabled)
-			{
-				RevBox->AddSlot()
-					.AutoWidth()
-					.VAlign(VAlign_Center)
-					.Padding(2.0f, 0.0f)
-					[
-						SNew(SBorder)
-						.BorderImage(FAppStyle::Get().GetBrush("Brushes.Panel"))
-						.Padding(FMargin(4.0f, 1.0f))
-						[
-							SNew(STextBlock)
-							.Text(LOCTEXT("ExternalSyncBadge", "External Sync"))
-							.ColorAndOpacity(FLinearColor(0.8f, 0.6f, 0.3f, 0.8f))
-							.Font(FAppStyle::GetFontStyle("NormalFont.SmallerBold"))
-							.ToolTipText(FText::FromString(Item->DisabledReason))
-						]
-					];
-			}
-
-			return RevBox;
 		}
 		else if (ColumnName == FlexVaultHistoryColumns::CommitAuthor)
 		{
@@ -1125,14 +1088,7 @@ void SFlexVaultHistoryTab::OnFileDoubleClicked(TSharedPtr<FFlexVaultHistoryFileI
 		return;
 	}
 
-	if (InItem->bIsAsset)
-	{
-		DiffSelectedFileAgainstWorkspace(InItem);
-	}
-	else
-	{
-		OpenInExternalEditor(InItem);
-	}
+	DiffSelectedFileAgainstWorkspace(InItem);
 }
 
 TSharedPtr<SWidget> SFlexVaultHistoryTab::OnCommitContextMenu()
@@ -1502,6 +1458,13 @@ TSharedPtr<SWidget> SFlexVaultHistoryTab::OnFileContextMenu()
 	else
 	{
 		MenuBuilder.AddMenuEntry(
+			LOCTEXT("DiffAgainstWorkspace", "Diff Against Workspace Version"),
+			LOCTEXT("DiffAgainstWorkspaceTooltip", "Compares this historical revision against current workspace file using configured diff tool"),
+			FSlateIcon(FAppStyle::GetAppStyleSetName(), "SourceControl.Actions.Diff"),
+			FUIAction(FExecuteAction::CreateSP(this, &SFlexVaultHistoryTab::DiffSelectedFileAgainstWorkspace, SelectedItem))
+		);
+
+		MenuBuilder.AddMenuEntry(
 			LOCTEXT("OpenExternal", "Open in External Editor"),
 			LOCTEXT("OpenExternalTooltip", "Opens the file with its default application or IDE"),
 			FSlateIcon(FAppStyle::GetAppStyleSetName(), "GenericCommands.Open"),
@@ -1523,7 +1486,7 @@ TSharedPtr<SWidget> SFlexVaultHistoryTab::OnFileContextMenu()
 
 void SFlexVaultHistoryTab::DiffSelectedFileAgainstWorkspace(TSharedPtr<FFlexVaultHistoryFileItem> InItem)
 {
-	if (!InItem.IsValid() || !InItem->bIsAsset)
+	if (!InItem.IsValid())
 	{
 		return;
 	}
@@ -1547,67 +1510,100 @@ void SFlexVaultHistoryTab::DiffSelectedFileAgainstWorkspace(TSharedPtr<FFlexVaul
 
 	TSharedRef<FFlexVaultSourceControlRevision, ESPMode::ThreadSafe> HistRev = CreateFlexVaultRevision(Detail, *Provider, InItem->FullPath);
 
-	// 2. Load the historical revision package using DiffUtils
-	UPackage* HistPackage = DiffUtils::LoadPackageForDiff(HistRev);
-	if (!HistPackage)
+	if (InItem->bIsAsset)
 	{
+		// 2. Load the historical revision package using DiffUtils
+		UPackage* HistPackage = DiffUtils::LoadPackageForDiff(HistRev);
+		if (!HistPackage)
+		{
+			return;
+		}
+
+		FString AssetName = FPaths::GetBaseFilename(InItem->FullPath);
+		UObject* HistAsset = FindObject<UObject>(HistPackage, *AssetName);
+		if (!HistAsset)
+		{
+			HistAsset = HistPackage->FindAssetInPackage();
+		}
+
+		if (!HistAsset)
+		{
+			return;
+		}
+
+		// 3. Load or locate the current workspace asset
+		FString LongPackageName;
+		if (!FPackageName::TryConvertFilenameToLongPackageName(InItem->FullPath, LongPackageName))
+		{
+			return;
+		}
+
+		UPackage* WorkspacePackage = FindPackage(nullptr, *LongPackageName);
+		if (!WorkspacePackage)
+		{
+			WorkspacePackage = LoadPackage(nullptr, *LongPackageName, LOAD_None);
+		}
+
+		if (!WorkspacePackage)
+		{
+			return;
+		}
+
+		UObject* WorkspaceAsset = FindObject<UObject>(WorkspacePackage, *AssetName);
+		if (!WorkspaceAsset)
+		{
+			WorkspaceAsset = WorkspacePackage->FindAssetInPackage();
+		}
+
+		if (!WorkspaceAsset)
+		{
+			return;
+		}
+
+		// 4. Launch diff window
+		FRevisionInfo OldRevisionInfo;
+		OldRevisionInfo.Revision = InItem->RevisionSpec;
+		OldRevisionInfo.Changelist = 0;
+		OldRevisionInfo.Date = Detail.Date;
+
+		FRevisionInfo NewRevisionInfo;
+		NewRevisionInfo.Revision = TEXT("Workspace");
+		NewRevisionInfo.Changelist = 0;
+		NewRevisionInfo.Date = FDateTime::Now();
+
+		FAssetToolsModule& AssetToolsModule = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools"));
+		AssetToolsModule.Get().DiffAssets(HistAsset, WorkspaceAsset, OldRevisionInfo, NewRevisionInfo);
 		return;
 	}
 
-	FString AssetName = FPaths::GetBaseFilename(InItem->FullPath);
-	UObject* HistAsset = FindObject<UObject>(HistPackage, *AssetName);
-	if (!HistAsset)
+	// Non-asset / text files: Use Unreal's external text diff tool API
+	FString TempHistoricalFile;
+	if (!HistRev->Get(TempHistoricalFile))
 	{
-		HistAsset = HistPackage->FindAssetInPackage();
-	}
-
-	if (!HistAsset)
-	{
+		FNotificationInfo Info(FText::Format(
+			LOCTEXT("DiffHistGetFailed", "Failed to retrieve historical revision '{0}' for '{1}'."),
+			FText::FromString(InItem->RevisionSpec),
+			FText::FromString(FPaths::GetCleanFilename(InItem->FullPath))
+		));
+		Info.ExpireDuration = 4.0f;
+		FSlateNotificationManager::Get().AddNotification(Info);
 		return;
 	}
 
-	// 3. Load or locate the current workspace asset
-	FString LongPackageName;
-	if (!FPackageName::TryConvertFilenameToLongPackageName(InItem->FullPath, LongPackageName))
+	if (!FPaths::FileExists(InItem->FullPath))
 	{
+		FNotificationInfo Info(FText::Format(
+			LOCTEXT("DiffWorkspaceFileMissing", "Workspace file '{0}' does not exist on disk."),
+			FText::FromString(FPaths::GetCleanFilename(InItem->FullPath))
+		));
+		Info.ExpireDuration = 4.0f;
+		FSlateNotificationManager::Get().AddNotification(Info);
 		return;
 	}
 
-	UPackage* WorkspacePackage = FindPackage(nullptr, *LongPackageName);
-	if (!WorkspacePackage)
-	{
-		WorkspacePackage = LoadPackage(nullptr, *LongPackageName, LOAD_None);
-	}
-
-	if (!WorkspacePackage)
-	{
-		return;
-	}
-
-	UObject* WorkspaceAsset = FindObject<UObject>(WorkspacePackage, *AssetName);
-	if (!WorkspaceAsset)
-	{
-		WorkspaceAsset = WorkspacePackage->FindAssetInPackage();
-	}
-
-	if (!WorkspaceAsset)
-	{
-		return;
-	}
-
-	// 4. Launch diff window
-	FRevisionInfo OldRevisionInfo;
-	OldRevisionInfo.Revision = InItem->RevisionSpec;
-	OldRevisionInfo.Changelist = 0;
-	OldRevisionInfo.Date = Detail.Date;
-
-	FRevisionInfo NewRevisionInfo;
-	NewRevisionInfo.Revision = TEXT("Workspace");
-	NewRevisionInfo.Changelist = 0;
-	NewRevisionInfo.Date = FDateTime::Now();
-
+	const FString DiffCommand = GetDefault<UEditorLoadingSavingSettings>()->TextDiffToolPath.FilePath;
 	FAssetToolsModule& AssetToolsModule = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools"));
-	AssetToolsModule.Get().DiffAssets(HistAsset, WorkspaceAsset, OldRevisionInfo, NewRevisionInfo);
+	AssetToolsModule.Get().CreateDiffProcess(DiffCommand, TempHistoricalFile, InItem->FullPath);
 }
 
 void SFlexVaultHistoryTab::LocateInContentBrowser(TSharedPtr<FFlexVaultHistoryFileItem> InItem)
