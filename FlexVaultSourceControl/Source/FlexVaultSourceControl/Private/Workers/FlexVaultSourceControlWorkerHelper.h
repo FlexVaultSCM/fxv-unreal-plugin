@@ -217,6 +217,14 @@ bool ParseFlexVaultCurrentBranch(
 );
 
 /**
+ * Extracts head commit snapshot ID from status json envelope.
+ */
+bool ParseFlexVaultHeadCommitId(
+	const TSharedPtr<class FJsonObject>& InEnvelope,
+	FString& OutHeadCommitId
+);
+
+/**
  * Parses the JSON output of 'fxv branch list --format json' into branch info structures.
  */
 bool ParseFlexVaultBranchList(

@@ -838,8 +838,33 @@ bool ParseFlexVaultCurrentBranch(
 	{
 		return false;
 	}
-
 	return PayloadObj->TryGetStringField(TEXT("current_branch"), OutCurrentBranch);
+}
+
+bool ParseFlexVaultHeadCommitId(
+	const TSharedPtr<FJsonObject>& InEnvelope,
+	FString& OutHeadCommitId
+)
+{
+	OutHeadCommitId.Empty();
+
+	TSharedPtr<FJsonObject> PayloadObj;
+	if (!TryGetFlexVaultEnvelopePayload(InEnvelope, PayloadObj))
+	{
+		return false;
+	}
+
+	const TSharedPtr<FJsonObject>* HeadCommitObj = nullptr;
+	if (PayloadObj->TryGetObjectField(TEXT("head_commit"), HeadCommitObj) && HeadCommitObj && HeadCommitObj->IsValid())
+	{
+		const TSharedPtr<FJsonObject>* LocalSnapshotObj = nullptr;
+		if ((*HeadCommitObj)->TryGetObjectField(TEXT("local_snapshot"), LocalSnapshotObj) && LocalSnapshotObj && LocalSnapshotObj->IsValid())
+		{
+			return (*LocalSnapshotObj)->TryGetStringField(TEXT("id"), OutHeadCommitId);
+		}
+	}
+
+	return false;
 }
 
 bool ParseFlexVaultBranchList(

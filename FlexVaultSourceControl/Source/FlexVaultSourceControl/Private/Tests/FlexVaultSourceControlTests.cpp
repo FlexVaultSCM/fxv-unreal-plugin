@@ -27,6 +27,9 @@
 #include "HAL/PlatformFileManager.h"
 #include "Misc/Paths.h"
 #include "Misc/FileHelper.h"
+#if SOURCE_CONTROL_WITH_SLATE
+#include "FlexVaultHistoryCommon.h"
+#endif
 
 #if WITH_DEV_AUTOMATION_TESTS
 
@@ -1561,6 +1564,102 @@ bool FFlexVaultFetchTest::RunTest(const FString& Parameters)
 	FFlexVaultFetchResult NoPayloadResult;
 	FSourceControlResultInfo NoPayloadInfo;
 	TestFalse(TEXT("ParseFlexVaultFetch fails on missing payload"), ParseFlexVaultFetch(NoPayloadJson, NoPayloadResult, NoPayloadInfo));
+
+	return true;
+}
+
+// ── Test 34: History Commit & File Model ──────────────────────────────────────
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultHistoryModelTest, "FlexVault.SourceControl.HistoryModel", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FFlexVaultHistoryModelTest::RunTest(const FString& Parameters)
+{
+	// 1. Published commit item creation
+	FFlexVaultCommitMeta PublishedMeta;
+	PublishedMeta.Branch = TEXT("main");
+	PublishedMeta.PublishedRevision = 42;
+	PublishedMeta.CommitType = TEXT("published");
+	PublishedMeta.Author = TEXT("church");
+	PublishedMeta.Description = TEXT("Initial import of assets");
+	PublishedMeta.Date = FDateTime(2026, 10, 22, 10, 0, 0);
+
+	const FString ChangeIdPub = BuildFlexVaultChangeId(PublishedMeta);
+	TestEqual(TEXT("ChangeId for published commit matches"), ChangeIdPub, TEXT("main.42"));
+
+#if SOURCE_CONTROL_WITH_SLATE
+	TSharedRef<FFlexVaultHistoryCommitItem> PubItem = FFlexVaultHistoryCommitItem::FromMeta(PublishedMeta);
+	TestFalse(TEXT("Published commit is not draft"), PubItem->bIsDraft);
+	TestEqual(TEXT("Revision display formatted for published"), PubItem->RevisionDisplay, TEXT("Rev 42"));
+	TestEqual(TEXT("ChangeId matches in commit item"), PubItem->ChangeId, TEXT("main.42"));
+#endif
+
+	// 2. Draft commit item creation parented on published revision
+	FFlexVaultCommitMeta DraftMeta;
+	DraftMeta.Branch = TEXT("feature");
+	DraftMeta.PublishedRevision = 10;
+	DraftMeta.DraftRevision = 3;
+	DraftMeta.CommitType = TEXT("draft");
+	DraftMeta.Author = TEXT("church");
+	DraftMeta.Description = TEXT("WIP character tuning");
+	DraftMeta.Date = FDateTime(2026, 10, 22, 12, 0, 0);
+
+	const FString ChangeIdDraft = BuildFlexVaultChangeId(DraftMeta);
+	TestEqual(TEXT("ChangeId for draft commit matches"), ChangeIdDraft, TEXT("feature.10.3"));
+
+#if SOURCE_CONTROL_WITH_SLATE
+	TSharedRef<FFlexVaultHistoryCommitItem> DraftItem = FFlexVaultHistoryCommitItem::FromMeta(DraftMeta);
+	TestTrue(TEXT("Draft commit identified as draft"), DraftItem->bIsDraft);
+	TestEqual(TEXT("Revision display formatted for draft"), DraftItem->RevisionDisplay, TEXT("Draft 3"));
+	TestEqual(TEXT("ChangeId matches in draft item"), DraftItem->ChangeId, TEXT("feature.10.3"));
+#endif
+
+	// 3. Draft with no published parent ("feature.-.1")
+	FFlexVaultCommitMeta UnparentedDraft;
+	UnparentedDraft.Branch = TEXT("feature");
+	UnparentedDraft.DraftRevision = 1;
+	UnparentedDraft.CommitType = TEXT("draft");
+
+	const FString ChangeIdUnparented = BuildFlexVaultChangeId(UnparentedDraft);
+	TestEqual(TEXT("ChangeId for unparented draft uses hyphen"), ChangeIdUnparented, TEXT("feature.-.1"));
+
+	// 4. Parse changeinfo JSON
+	const TArray<FString> ChangeInfoJsonLines = {
+		TEXT("{"),
+		FString::Printf(TEXT("  \"program\": { \"name\": \"fxv\", \"version\": \"%s\" },"), *FlexVaultCliCompatibility::GetMinVersionString()),
+		TEXT("  \"message\": {"),
+		TEXT("    \"kind\": \"changeinfo\","),
+		TEXT("    \"version\": \"1.0\","),
+		TEXT("    \"payload\": {"),
+		TEXT("      \"changes\": ["),
+		TEXT("        {"),
+		TEXT("          \"path\": \"Content/Characters/Hero.uasset\","),
+		TEXT("          \"action\": \"Modified\","),
+		TEXT("          \"size\": 2048,"),
+		TEXT("          \"content_address\": \"BLOB:abcdef123456\""),
+		TEXT("        },"),
+		TEXT("        {"),
+		TEXT("          \"path\": \"Source/MyGame/Hero.cpp\","),
+		TEXT("          \"action\": \"Added\","),
+		TEXT("          \"size\": 512,"),
+		TEXT("          \"content_address\": \"BLOB:123456abcdef\""),
+		TEXT("        }"),
+		TEXT("      ]"),
+		TEXT("    }"),
+		TEXT("  }"),
+		TEXT("}")
+	};
+
+	TMap<FString, TArray<FFlexVaultRevisionDetail>> RevisionMap;
+	const bool bParsedChanges = ParseFlexVaultChangeInfo(ChangeInfoJsonLines, PublishedMeta, ChangeIdPub, RevisionMap);
+	TestTrue(TEXT("ParseFlexVaultChangeInfo succeeded"), bParsedChanges);
+	TestEqual(TEXT("Parsed 2 file paths in changeinfo"), RevisionMap.Num(), 2);
+
+	const TArray<FFlexVaultRevisionDetail>* HeroAssetRevs = RevisionMap.Find(TEXT("content/characters/hero.uasset"));
+	TestNotNull(TEXT("Hero.uasset found in revision map"), HeroAssetRevs);
+	if (HeroAssetRevs && HeroAssetRevs->Num() > 0)
+	{
+		TestEqual(TEXT("Hero.uasset action mapped to Edit"), (*HeroAssetRevs)[0].Action, TEXT("Edit"));
+		TestEqual(TEXT("Hero.uasset size matches"), (*HeroAssetRevs)[0].FileSize, (int64)2048);
+	}
 
 	return true;
 }

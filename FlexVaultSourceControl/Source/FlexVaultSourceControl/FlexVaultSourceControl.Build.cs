@@ -19,7 +19,11 @@ public class FlexVaultSourceControl : ModuleRules
 				"DeveloperSettings",
 				"UnrealEd",
 				"ApplicationCore",
-				"HTTP"
+				"HTTP",
+				"ToolMenus",
+				"WorkspaceMenuStructure",
+				"AssetTools",
+				"ContentBrowser"
 			}
 		);
 
