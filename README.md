@@ -30,7 +30,8 @@ Optional settings can be configured in **Edit > Project Settings > Plugins > Fle
 - **Submit / Check In**: Commit modified, added, or deleted assets with a changelist description directly from the editor.
 - **Revert**: Discard local asset modifications and restore the published revision state.
 - **Diff Against Depot**: Visually compare modified assets against the base depot revision in Unreal's diff viewer.
-- **History**: Inspect past revisions, authors, timestamps, and commit descriptions.
+- **FlexVault History Window**: Dedicated repository-wide commit visualizer under **Tools > FlexVault History** featuring branch switching, search filtering, commit inspection, asset and text diffing (against workspace or previous revision), one-click workspace sync, package reloading, and C++ binary mismatch protection.
+- **Asset History**: Inspect revision history, authors, timestamps, and changelist descriptions for individual assets from the Content Browser.
 - **Branch Support**: Switch branches directly via the Revision Control workspace switch interface while maintaining cache coherency and automatic asset reloading.
 - **Conflict Handling**: Resolves concurrent edits using your configured conflict preference.
 - **Auto-Snapshots**: Automatically captures safety draft snapshots periodically or during high-entropy actions (level saves with significant actor changes, bulk asset reimports).
