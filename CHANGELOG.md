@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0](https://github.com/FlexVaultSCM/fxv-unreal-plugin/compare/v0.9.0...v0.10.0) (2026-10-26)
+
+
+### Features
+
+* add slate commit history visualizer and status check refresh ([#40](https://github.com/FlexVaultSCM/fxv-unreal-plugin/issues/40)) ([d09d883](https://github.com/FlexVaultSCM/fxv-unreal-plugin/commit/d09d88391b9c5173ba1068f48f7788eba682213c))
+
 ## [0.9.0](https://github.com/FlexVaultSCM/fxv-unreal-plugin/compare/v0.8.1...v0.9.0) (2026-10-19)
 
 
