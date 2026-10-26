@@ -49,7 +49,12 @@ bool FFlexVaultSourceControlRevision::Get(FString& InOutFilename, EConcurrency::
 	// 'fxv cat' would be run from for any other command.
 	const FString WorkspacePath = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
 	const FString BinaryPath = GetDefault<UFlexVaultSourceControlDeveloperSettings>()->GetEffectiveBinaryPath();
-	const FString RelativePath = GetRelativeWorkspacePath(FileName, WorkspacePath);
+	FString EffectiveFileName = FileName;
+	if (FPaths::FileExists(EffectiveFileName))
+	{
+		EffectiveFileName = FPaths::FindCorrectCase(EffectiveFileName);
+	}
+	const FString RelativePath = GetRelativeWorkspacePath(EffectiveFileName, WorkspacePath);
 
 	FSourceControlResultInfo ResultInfo;
 	// RunFlexVaultCatCommand streams stdout chunks directly to InOutFilename and logs failures at Error verbosity;

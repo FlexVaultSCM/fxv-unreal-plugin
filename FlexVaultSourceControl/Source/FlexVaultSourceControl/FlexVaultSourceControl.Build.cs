@@ -19,9 +19,19 @@ public class FlexVaultSourceControl : ModuleRules
 				"DeveloperSettings",
 				"UnrealEd",
 				"ApplicationCore",
-				"HTTP"
+				"HTTP",
+				"ToolMenus",
+				"WorkspaceMenuStructure",
+				"AssetTools",
+				"ContentBrowser",
+				"AssetRegistry"
 			}
 		);
+
+		if (Target.bWithLiveCoding)
+		{
+			PrivateDependencyModuleNames.Add("LiveCoding");
+		}
 
 		if (Target.bUsesSlate)
 		{

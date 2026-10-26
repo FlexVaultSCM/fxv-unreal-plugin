@@ -22,6 +22,7 @@
 #include "Framework/Notifications/NotificationManager.h"
 #include "Widgets/Notifications/SNotificationList.h"
 #include "Framework/Application/SlateApplication.h"
+#include "FlexVaultHistoryCommon.h"
 #endif
 
 #define LOCTEXT_NAMESPACE "FlexVaultSourceControl"
@@ -784,7 +785,7 @@ void CheckForRemotePluginUpdateAsync(
 /**
  * Unwraps the `message.payload` object shared by all FlexVault CLI JSON envelopes.
  */
-static bool TryGetFlexVaultEnvelopePayload(
+bool TryGetFlexVaultEnvelopePayload(
 	const TSharedPtr<FJsonObject>& InEnvelope,
 	TSharedPtr<FJsonObject>& OutPayload
 )
@@ -838,8 +839,136 @@ bool ParseFlexVaultCurrentBranch(
 	{
 		return false;
 	}
-
 	return PayloadObj->TryGetStringField(TEXT("current_branch"), OutCurrentBranch);
+}
+
+bool ParseFlexVaultHeadCommitId(
+	const TSharedPtr<FJsonObject>& InEnvelope,
+	FString& OutHeadCommitId
+)
+{
+	OutHeadCommitId.Empty();
+
+	TSharedPtr<FJsonObject> PayloadObj;
+	if (!TryGetFlexVaultEnvelopePayload(InEnvelope, PayloadObj))
+	{
+		return false;
+	}
+
+	FString CurrentBranch;
+	PayloadObj->TryGetStringField(TEXT("current_branch"), CurrentBranch);
+
+	const TSharedPtr<FJsonObject>* HeadCommitObj = nullptr;
+	const bool bHasHeadCommit = PayloadObj->TryGetObjectField(TEXT("head_commit"), HeadCommitObj) && HeadCommitObj && (*HeadCommitObj).IsValid();
+
+	// 1. Check local draft snapshot if it has an actual draft revision (> 0)
+	if (bHasHeadCommit)
+	{
+		const TSharedPtr<FJsonObject>* LocalSnapshotObj = nullptr;
+		if ((*HeadCommitObj)->TryGetObjectField(TEXT("local_snapshot"), LocalSnapshotObj) && LocalSnapshotObj && LocalSnapshotObj->IsValid())
+		{
+			const TSharedPtr<FJsonObject>* CommitObj = nullptr;
+			if ((*LocalSnapshotObj)->TryGetObjectField(TEXT("commit"), CommitObj) && CommitObj && (*CommitObj).IsValid())
+			{
+				uint64 DraftRev = 0;
+				if ((*CommitObj)->TryGetNumberField(TEXT("draft_revision"), DraftRev) && DraftRev > 0)
+				{
+					FFlexVaultCommitMeta Meta;
+					(*CommitObj)->TryGetStringField(TEXT("branch"), Meta.Branch);
+					if (Meta.Branch.IsEmpty())
+					{
+						Meta.Branch = CurrentBranch;
+					}
+					(*CommitObj)->TryGetStringField(TEXT("type"), Meta.CommitType);
+					Meta.DraftRevision = DraftRev;
+					uint64 PubRev = 0;
+					if ((*CommitObj)->TryGetNumberField(TEXT("revision"), PubRev))
+					{
+						Meta.PublishedRevision = PubRev;
+					}
+					OutHeadCommitId = BuildFlexVaultChangeId(Meta);
+					if (!OutHeadCommitId.IsEmpty())
+					{
+						return true;
+					}
+				}
+			}
+		}
+	}
+
+	// 2. Check sync_status for the currently synced published revision (e.g. when synced to an older revision)
+	const TSharedPtr<FJsonObject>* SyncStatusObj = nullptr;
+	if (PayloadObj->TryGetObjectField(TEXT("sync_status"), SyncStatusObj) && SyncStatusObj && (*SyncStatusObj).IsValid())
+	{
+		uint64 SyncedRev = 0;
+		if ((*SyncStatusObj)->TryGetNumberField(TEXT("synced_revision"), SyncedRev))
+		{
+			const FString Branch = !CurrentBranch.IsEmpty() ? CurrentBranch : TEXT("main");
+			OutHeadCommitId = FString::Printf(TEXT("%s.%llu"), *Branch, SyncedRev);
+			return true;
+		}
+	}
+
+	// 3. Check local_snapshot for the base published revision if draft_revision == 0
+	if (bHasHeadCommit)
+	{
+		const TSharedPtr<FJsonObject>* LocalSnapshotObj = nullptr;
+		if ((*HeadCommitObj)->TryGetObjectField(TEXT("local_snapshot"), LocalSnapshotObj) && LocalSnapshotObj && LocalSnapshotObj->IsValid())
+		{
+			const TSharedPtr<FJsonObject>* CommitObj = nullptr;
+			if ((*LocalSnapshotObj)->TryGetObjectField(TEXT("commit"), CommitObj) && CommitObj && (*CommitObj).IsValid())
+			{
+				uint64 PubRev = 0;
+				if ((*CommitObj)->TryGetNumberField(TEXT("revision"), PubRev))
+				{
+					FString Branch;
+					(*CommitObj)->TryGetStringField(TEXT("branch"), Branch);
+					if (Branch.IsEmpty())
+					{
+						Branch = CurrentBranch;
+					}
+					if (Branch.IsEmpty())
+					{
+						Branch = TEXT("main");
+					}
+					OutHeadCommitId = FString::Printf(TEXT("%s.%llu"), *Branch, PubRev);
+					return true;
+				}
+			}
+		}
+	}
+
+	// 4. Otherwise fall back to published_head
+	if (bHasHeadCommit)
+	{
+		const TSharedPtr<FJsonObject>* PublishedHeadObj = nullptr;
+		if ((*HeadCommitObj)->TryGetObjectField(TEXT("published_head"), PublishedHeadObj) && PublishedHeadObj && PublishedHeadObj->IsValid())
+		{
+			const TSharedPtr<FJsonObject>* CommitObj = nullptr;
+			if ((*PublishedHeadObj)->TryGetObjectField(TEXT("commit"), CommitObj) && CommitObj && (*CommitObj).IsValid())
+			{
+				FFlexVaultCommitMeta Meta;
+				(*CommitObj)->TryGetStringField(TEXT("branch"), Meta.Branch);
+				if (Meta.Branch.IsEmpty())
+				{
+					Meta.Branch = CurrentBranch;
+				}
+				(*CommitObj)->TryGetStringField(TEXT("type"), Meta.CommitType);
+				uint64 PubRev = 0;
+				if ((*CommitObj)->TryGetNumberField(TEXT("revision"), PubRev))
+				{
+					Meta.PublishedRevision = PubRev;
+				}
+				OutHeadCommitId = BuildFlexVaultChangeId(Meta);
+				if (!OutHeadCommitId.IsEmpty())
+				{
+					return true;
+				}
+			}
+		}
+	}
+
+	return false;
 }
 
 bool ParseFlexVaultBranchList(
@@ -1148,12 +1277,26 @@ bool ParseFlexVaultHistory(
 					}
 
 					EntryObj->TryGetStringField(TEXT("description"), Meta.Description);
-					
-					// author_id is the canonical identifier and author_display_name is the display name.
-					// We prefer author_display_name for display, with a fallback to author_id.
-					if (!EntryObj->TryGetStringField(TEXT("author_display_name"), Meta.Author))
+
+					const TSharedPtr<FJsonObject>* AuthorDetailsObj = nullptr;
+					if (EntryObj->TryGetObjectField(TEXT("author_details"), AuthorDetailsObj) && AuthorDetailsObj && (*AuthorDetailsObj).IsValid())
 					{
-						EntryObj->TryGetStringField(TEXT("author_id"), Meta.Author);
+						Meta.Author = FormatFlexVaultAuthorAlias(*AuthorDetailsObj);
+						Meta.AuthorDetails = FormatFlexVaultAuthor(*AuthorDetailsObj);
+					}
+					if (Meta.Author.IsEmpty())
+					{
+						if (!EntryObj->TryGetStringField(TEXT("author_display_name"), Meta.Author) || Meta.Author.IsEmpty())
+						{
+							EntryObj->TryGetStringField(TEXT("author_id"), Meta.Author);
+						}
+					}
+					if (Meta.AuthorDetails.IsEmpty())
+					{
+						if (!EntryObj->TryGetStringField(TEXT("author_display_name"), Meta.AuthorDetails) || Meta.AuthorDetails.IsEmpty())
+						{
+							Meta.AuthorDetails = Meta.Author;
+						}
 					}
 
 					int64 TimestampMillis = 0;
@@ -1184,14 +1327,8 @@ bool ParseFlexVaultChangeInfo(
 		return false;
 	}
 
-	TSharedPtr<FJsonObject> MessageObj = JsonEnvelope->GetObjectField(TEXT("message"));
-	if (!MessageObj.IsValid())
-	{
-		return false;
-	}
-
-	TSharedPtr<FJsonObject> PayloadObj = MessageObj->GetObjectField(TEXT("payload"));
-	if (!PayloadObj.IsValid())
+	TSharedPtr<FJsonObject> PayloadObj;
+	if (!TryGetFlexVaultEnvelopePayload(JsonEnvelope, PayloadObj) || !PayloadObj.IsValid())
 	{
 		return false;
 	}
@@ -1266,6 +1403,7 @@ bool ParseFlexVaultChangeInfo(
 				Rev.Action = ActionStr;
 			}
 
+			Rev.RelativePath = RelPath;
 			Rev.Date = InCommit.Date;
 
 			if (HashStr.StartsWith(TEXT("BLOB:")) || HashStr.StartsWith(TEXT("content:")))
@@ -1322,6 +1460,177 @@ FString BuildFlexVaultChangeId(const FFlexVaultCommitMeta& InCommit)
 	}
 
 	return InCommit.Branch;
+}
+
+bool IsFlexVaultDraftRevisionSpec(const FString& InRevisionSpec)
+{
+	int32 DotCount = 0;
+	for (const TCHAR Ch : InRevisionSpec)
+	{
+		if (Ch == TEXT('.'))
+		{
+			++DotCount;
+		}
+	}
+	return InRevisionSpec.Contains(TEXT(".-.")) || DotCount >= 2;
+}
+
+FString FormatFlexVaultAuthorAlias(const TSharedPtr<FJsonObject>& InAuthorDetails)
+{
+	if (!InAuthorDetails.IsValid())
+	{
+		return FString();
+	}
+
+	FString Type;
+	InAuthorDetails->TryGetStringField(TEXT("type"), Type);
+
+	if (Type.Equals(TEXT("Local"), ESearchCase::IgnoreCase))
+	{
+		return TEXT("(local user)");
+	}
+	else if (Type.Equals(TEXT("Service"), ESearchCase::IgnoreCase))
+	{
+		return TEXT("(service user)");
+	}
+	else if (Type.Equals(TEXT("FxvUser"), ESearchCase::IgnoreCase))
+	{
+		FString Username;
+		InAuthorDetails->TryGetStringField(TEXT("username"), Username);
+		if (!Username.IsEmpty())
+		{
+			return Username;
+		}
+
+		FString DisplayName;
+		InAuthorDetails->TryGetStringField(TEXT("display_name"), DisplayName);
+		return DisplayName;
+	}
+	else if (Type.Equals(TEXT("P4User"), ESearchCase::IgnoreCase))
+	{
+		FString Username;
+		InAuthorDetails->TryGetStringField(TEXT("username"), Username);
+		if (!Username.IsEmpty())
+		{
+			return Username;
+		}
+
+		FString DisplayName;
+		InAuthorDetails->TryGetStringField(TEXT("display_name"), DisplayName);
+		return DisplayName;
+	}
+	else if (Type.Equals(TEXT("GitUser"), ESearchCase::IgnoreCase))
+	{
+		FString Name;
+		InAuthorDetails->TryGetStringField(TEXT("name"), Name);
+		if (!Name.IsEmpty())
+		{
+			return Name;
+		}
+
+		FString Email;
+		InAuthorDetails->TryGetStringField(TEXT("email"), Email);
+		return Email;
+	}
+	else if (Type.Equals(TEXT("Error"), ESearchCase::IgnoreCase))
+	{
+		return TEXT("(error)");
+	}
+
+	return FString();
+}
+
+FString FormatFlexVaultAuthor(const TSharedPtr<FJsonObject>& InAuthorDetails)
+{
+	if (!InAuthorDetails.IsValid())
+	{
+		return FString();
+	}
+
+	FString Type;
+	InAuthorDetails->TryGetStringField(TEXT("type"), Type);
+
+	if (Type.Equals(TEXT("Local"), ESearchCase::IgnoreCase))
+	{
+		return TEXT("(local user)");
+	}
+	else if (Type.Equals(TEXT("Service"), ESearchCase::IgnoreCase))
+	{
+		return TEXT("(service user)");
+	}
+	else if (Type.Equals(TEXT("FxvUser"), ESearchCase::IgnoreCase))
+	{
+		FString Username;
+		FString DisplayName;
+		InAuthorDetails->TryGetStringField(TEXT("username"), Username);
+		InAuthorDetails->TryGetStringField(TEXT("display_name"), DisplayName);
+
+		if (!DisplayName.IsEmpty() && !Username.IsEmpty())
+		{
+			return FString::Printf(TEXT("%s [%s]"), *DisplayName, *Username);
+		}
+		else if (!DisplayName.IsEmpty())
+		{
+			return DisplayName;
+		}
+		else
+		{
+			return Username;
+		}
+	}
+	else if (Type.Equals(TEXT("GitUser"), ESearchCase::IgnoreCase))
+	{
+		FString Name;
+		FString Email;
+		InAuthorDetails->TryGetStringField(TEXT("name"), Name);
+		InAuthorDetails->TryGetStringField(TEXT("email"), Email);
+
+		if (!Name.IsEmpty() && !Email.IsEmpty())
+		{
+			return FString::Printf(TEXT("%s <%s>"), *Name, *Email);
+		}
+		else if (!Name.IsEmpty())
+		{
+			return Name;
+		}
+		else
+		{
+			return Email;
+		}
+	}
+	else if (Type.Equals(TEXT("P4User"), ESearchCase::IgnoreCase))
+	{
+		FString Username;
+		FString DisplayName;
+		FString Email;
+		InAuthorDetails->TryGetStringField(TEXT("username"), Username);
+		InAuthorDetails->TryGetStringField(TEXT("display_name"), DisplayName);
+		InAuthorDetails->TryGetStringField(TEXT("email"), Email);
+
+		TArray<FString> Parts;
+		if (!DisplayName.IsEmpty())
+		{
+			Parts.Add(DisplayName);
+		}
+		if (!Username.IsEmpty())
+		{
+			Parts.Add(FString::Printf(TEXT("[%s]"), *Username));
+		}
+		if (!Email.IsEmpty())
+		{
+			Parts.Add(FString::Printf(TEXT("<%s>"), *Email));
+		}
+		Parts.Add(TEXT("(p4)"));
+		return FString::Join(Parts, TEXT(" "));
+	}
+	else if (Type.Equals(TEXT("Error"), ESearchCase::IgnoreCase))
+	{
+		FString Message;
+		InAuthorDetails->TryGetStringField(TEXT("message"), Message);
+		return FString::Printf(TEXT("(error: %s)"), *Message);
+	}
+
+	return FString();
 }
 
 TSharedRef<FFlexVaultSourceControlRevision, ESPMode::ThreadSafe> CreateFlexVaultRevision(
@@ -1550,5 +1859,202 @@ bool RunFlexVaultFetch(
 
 	return ParseFlexVaultFetch(OutputLines, OutFetchResult, OutResultInfo);
 }
+
+TArray<FString> BuildFlexVaultDiffArgs(const FString& InTargetRevision)
+{
+	TArray<FString> Args;
+	Args.Add(TEXT("diff"));
+	Args.Add(TEXT("**"));
+	Args.Add(InTargetRevision);
+	Args.Add(TEXT("--no-pager"));
+	Args.Add(TEXT("--unattended"));
+	Args.Add(TEXT("--no-color"));
+	return Args;
+}
+
+bool ParseFlexVaultDiffChangedFiles(const TArray<FString>& InDiffOutputLines, TArray<FString>& OutChangedFiles)
+{
+	OutChangedFiles.Empty();
+	bool bInChangedFilesSection = false;
+
+	for (const FString& RawLine : InDiffOutputLines)
+	{
+		const FString Line = RawLine.TrimStartAndEnd();
+
+		if (Line.Equals(TEXT("Changed files:"), ESearchCase::IgnoreCase))
+		{
+			bInChangedFilesSection = true;
+			continue;
+		}
+
+		if (bInChangedFilesSection)
+		{
+			if (Line.IsEmpty() || Line.StartsWith(TEXT("###")) || Line.StartsWith(TEXT("Compared ")) || Line.StartsWith(TEXT("No files changed")))
+			{
+				break;
+			}
+
+			FString ActionStr;
+			FString FilePathStr;
+			if (Line.Split(TEXT(" "), &ActionStr, &FilePathStr, ESearchCase::CaseSensitive, ESearchDir::FromStart))
+			{
+				FilePathStr = FilePathStr.TrimStartAndEnd();
+				if (!FilePathStr.IsEmpty())
+				{
+					FilePathStr.ReplaceInline(TEXT("\\"), TEXT("/"));
+					OutChangedFiles.Add(FilePathStr);
+				}
+			}
+		}
+	}
+
+	return true;
+}
+
+bool IsFlexVaultSourceCodeFile(const FString& InFilePath)
+{
+	const FString Ext = FPaths::GetExtension(InFilePath).ToLower();
+	return Ext == TEXT("h")
+		|| Ext == TEXT("hpp")
+		|| Ext == TEXT("inl")
+		|| Ext == TEXT("cpp")
+		|| Ext == TEXT("c")
+		|| Ext == TEXT("cc")
+		|| Ext == TEXT("cxx")
+		|| Ext == TEXT("cs")
+		|| Ext == TEXT("uproject")
+		|| Ext == TEXT("uplugin");
+}
+
+#if SOURCE_CONTROL_WITH_SLATE
+void UpdateFlexVaultHistorySyncDisabledStates(
+	TArray<TSharedPtr<FFlexVaultHistoryCommitItem>>& InCommits,
+	const FString& InCurrentHeadChangeId,
+	bool bCanCompileLocally
+)
+{
+	// Programmers with local compiler can sync to any revision
+	if (bCanCompileLocally)
+	{
+		for (TSharedPtr<FFlexVaultHistoryCommitItem>& Commit : InCommits)
+		{
+			if (Commit.IsValid())
+			{
+				Commit->bSyncDisabled = false;
+				Commit->DisabledReason.Empty();
+			}
+		}
+		return;
+	}
+
+	// Non-local compilers (precompiled binaries / non-engineers):
+	// Find index of current workspace head in the list
+	int32 HeadIndex = INDEX_NONE;
+	if (!InCurrentHeadChangeId.IsEmpty())
+	{
+		for (int32 i = 0; i < InCommits.Num(); ++i)
+		{
+			if (InCommits[i].IsValid() && InCommits[i]->ChangeId == InCurrentHeadChangeId)
+			{
+				HeadIndex = i;
+				break;
+			}
+		}
+	}
+
+	// First reset all commits
+	for (TSharedPtr<FFlexVaultHistoryCommitItem>& Commit : InCommits)
+	{
+		if (Commit.IsValid())
+		{
+			Commit->bSyncDisabled = false;
+			Commit->DisabledReason.Empty();
+		}
+	}
+
+	// If Head is found:
+	// InCommits is sorted newest (index 0) to oldest (index N-1).
+	// Future commits relative to Head are indices 0 to HeadIndex - 1.
+	// Past commits relative to Head are indices HeadIndex + 1 to InCommits.Num() - 1.
+	if (HeadIndex != INDEX_NONE)
+	{
+		// Check future commits (from Head towards index 0):
+		// As soon as any commit along this path has code changes, that commit and all subsequent future commits are disabled.
+		bool bEncounteredCodeFuture = false;
+		for (int32 i = HeadIndex - 1; i >= 0; --i)
+		{
+			TSharedPtr<FFlexVaultHistoryCommitItem>& Commit = InCommits[i];
+			if (!Commit.IsValid())
+			{
+				continue;
+			}
+
+			if (Commit->bHasCodeChanges)
+			{
+				bEncounteredCodeFuture = true;
+				Commit->bSyncDisabled = true;
+				Commit->DisabledReason = TEXT("Contains C++ source code changes that would cause a binary mismatch with the running editor. Recompile locally (Engineer Mode) or sync matching precompiled binaries (e.g. via UGS or build pipeline).");
+			}
+			else if (bEncounteredCodeFuture)
+			{
+				Commit->bSyncDisabled = true;
+				Commit->DisabledReason = TEXT("Syncing forward incorporates intermediate C++ source code changes, causing a binary mismatch. Recompile locally or sync matching precompiled binaries.");
+			}
+		}
+
+		// Check past commits (from Head towards older commits):
+		// As soon as any commit along this path has code changes, syncing past it would revert code changes without local build.
+		bool bEncounteredCodePast = false;
+		for (int32 i = HeadIndex + 1; i < InCommits.Num(); ++i)
+		{
+			TSharedPtr<FFlexVaultHistoryCommitItem>& Commit = InCommits[i];
+			if (!Commit.IsValid())
+			{
+				continue;
+			}
+
+			if (InCommits[i - 1].IsValid() && InCommits[i - 1]->bHasCodeChanges)
+			{
+				bEncounteredCodePast = true;
+			}
+
+			if (bEncounteredCodePast || Commit->bHasCodeChanges)
+			{
+				Commit->bSyncDisabled = true;
+				Commit->DisabledReason = Commit->bHasCodeChanges
+					? TEXT("Contains C++ source code changes that would cause a binary mismatch with the running editor. Recompile locally (Engineer Mode) or sync matching precompiled binaries (e.g. via UGS or build pipeline).")
+					: TEXT("Syncing back reverts intermediate C++ source code changes, causing a binary mismatch with current binaries. Recompile locally or sync matching precompiled binaries.");
+			}
+		}
+	}
+	else
+	{
+		// Fallback when Head is not in the displayed list (e.g. viewing another branch or pagination limit):
+		// In a branch history (sorted newest at index 0 to oldest at index N-1),
+		// if an older commit introduces code changes, all newer commits built upon it also contain those code changes.
+		bool bEncounteredCode = false;
+		for (int32 i = InCommits.Num() - 1; i >= 0; --i)
+		{
+			TSharedPtr<FFlexVaultHistoryCommitItem>& Commit = InCommits[i];
+			if (!Commit.IsValid())
+			{
+				continue;
+			}
+
+			if (Commit->bHasCodeChanges)
+			{
+				bEncounteredCode = true;
+				Commit->bSyncDisabled = true;
+				Commit->DisabledReason = TEXT("Contains C++ source code changes that would cause a binary mismatch with the running editor. Recompile locally (Engineer Mode) or sync matching precompiled binaries (e.g. via UGS or build pipeline).");
+			}
+			else if (bEncounteredCode)
+			{
+				Commit->bSyncDisabled = true;
+				Commit->DisabledReason = TEXT("Incorporates earlier C++ source code changes from this branch that would cause a binary mismatch with the running editor. Recompile locally or sync matching precompiled binaries.");
+			}
+		}
+	}
+}
+#endif
 
 #undef LOCTEXT_NAMESPACE

@@ -18,6 +18,7 @@ struct FFlexVaultCommitMeta
 	TOptional<uint64> DraftRevision;
 	FString Description;
 	FString Author;
+	FString AuthorDetails;
 	FDateTime Date;
 };
 
@@ -31,6 +32,7 @@ struct FFlexVaultRevisionDetail
 	FDateTime Date;
 	FString ContentAddress;
 	int64 FileSize;
+	FString RelativePath;
 };
 
 /**
@@ -217,6 +219,22 @@ bool ParseFlexVaultCurrentBranch(
 );
 
 /**
+ * Extracts payload object from standard FlexVault JSON envelope.
+ */
+bool TryGetFlexVaultEnvelopePayload(
+	const TSharedPtr<class FJsonObject>& InEnvelope,
+	TSharedPtr<class FJsonObject>& OutPayload
+);
+
+/**
+ * Extracts head commit snapshot ID from status json envelope.
+ */
+bool ParseFlexVaultHeadCommitId(
+	const TSharedPtr<class FJsonObject>& InEnvelope,
+	FString& OutHeadCommitId
+);
+
+/**
  * Parses the JSON output of 'fxv branch list --format json' into branch info structures.
  */
 bool ParseFlexVaultBranchList(
@@ -295,6 +313,21 @@ bool ParseFlexVaultHistory(
  * string for a draft commit with no DraftRevision set (nothing to query).
  */
 FString BuildFlexVaultChangeId(const FFlexVaultCommitMeta& InCommit);
+
+/**
+ * Returns true if the revision spec represents a draft revision (e.g. "main.5.1" or "main.-.1").
+ */
+bool IsFlexVaultDraftRevisionSpec(const FString& InRevisionSpec);
+
+/**
+ * Formats an author alias (username) from the structured author_details JSON object.
+ */
+FString FormatFlexVaultAuthorAlias(const TSharedPtr<FJsonObject>& InAuthorDetails);
+
+/**
+ * Formats an author string matching 'fxv history' output from the structured author_details JSON object.
+ */
+FString FormatFlexVaultAuthor(const TSharedPtr<FJsonObject>& InAuthorDetails);
 
 /**
  * Parses the JSON output lines of 'fxv changeinfo --format json' for a specific commit and groups them by file path.
@@ -382,3 +415,35 @@ bool RunFlexVaultFetch(
 	TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> InCancelToken = nullptr
 );
 
+/**
+ * Builds the CLI args for 'fxv diff' to compare changes between target revision and current workspace.
+ */
+TArray<FString> BuildFlexVaultDiffArgs(const FString& InTargetRevision);
+
+/**
+ * Parses the changed file paths from 'fxv diff' human/summary output.
+ */
+bool ParseFlexVaultDiffChangedFiles(const TArray<FString>& InDiffOutputLines, TArray<FString>& OutChangedFiles);
+
+/**
+ * Checks if a given file path is a C++ source or project file (.h, .hpp, .inl, .cpp, .c, .cc, .cxx, .cs, .uproject, .uplugin).
+ */
+bool IsFlexVaultSourceCodeFile(const FString& InFilePath);
+
+#if SOURCE_CONTROL_WITH_SLATE
+struct FFlexVaultHistoryCommitItem;
+
+/**
+ * Updates the bSyncDisabled and DisabledReason flags for a list of commit items based on
+ * code changes and the current workspace head revision.
+ *
+ * @param InCommits Array of commit items (sorted newest to oldest as displayed in History).
+ * @param InCurrentHeadChangeId Change ID of the current workspace head (e.g. "main.6").
+ * @param bCanCompileLocally True if local compiler or Live Coding is available, false for precompiled binary / non-engineer workflows.
+ */
+void UpdateFlexVaultHistorySyncDisabledStates(
+	TArray<TSharedPtr<FFlexVaultHistoryCommitItem>>& InCommits,
+	const FString& InCurrentHeadChangeId,
+	bool bCanCompileLocally
+);
+#endif
