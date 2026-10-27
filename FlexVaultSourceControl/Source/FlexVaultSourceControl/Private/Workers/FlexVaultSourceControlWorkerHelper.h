@@ -106,7 +106,7 @@ namespace FlexVaultCliCompatibility
 {
 	// See fxv-core/CHANGELOG.md for the "Breaking Changes" entries that justify this range.
 	constexpr int32 MinMajor = 0, MinMinor = 11, MinPatch = 0;
-	constexpr int32 MaxMajor = 0, MaxMinor = 13, MaxPatch = 0;
+	constexpr int32 MaxMajor = 0, MaxMinor = 14, MaxPatch = 0;
 
 	inline FString GetMinVersionString()
 	{

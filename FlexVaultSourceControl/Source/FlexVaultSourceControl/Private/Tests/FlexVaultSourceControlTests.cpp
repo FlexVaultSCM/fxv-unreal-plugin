@@ -1436,7 +1436,7 @@ bool FFlexVaultIntegrationRegisterTest::RunTest(const FString& Parameters)
 {
 	// 1. Verify FlexVaultCliCompatibility version strings
 	TestEqual(TEXT("MinVersion string matches expected"), FlexVaultCliCompatibility::GetMinVersionString(), TEXT("0.11.0"));
-	TestEqual(TEXT("MaxVersion string matches expected"), FlexVaultCliCompatibility::GetMaxVersionString(), TEXT("0.13.0"));
+	TestEqual(TEXT("MaxVersion string matches expected"), FlexVaultCliCompatibility::GetMaxVersionString(), TEXT("0.14.0"));
 
 	// 2. Verify BuildFlexVaultIntegrationRegisterArgs with full options
 	FFlexVaultIntegrationRegisterOptions FullOptions;
