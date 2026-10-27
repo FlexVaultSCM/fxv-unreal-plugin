@@ -1152,26 +1152,26 @@ bool FFlexVaultCheckVersionTest::RunTest(const FString& Parameters)
 			TEXT("  }\n")
 			TEXT("}");
 
-		// Compatible: remote > current plugin AND CLI is within [0.12.0, 0.14.0)
+		// Compatible: remote > current plugin and CLI is within manifest range
 		FString NewVersion, CliRange;
 		const bool bUpdateAvailable = ParseFlexVaultVersionManifest(SampleManifest, TEXT("0.8.1"), TEXT("0.12.1"), NewVersion, CliRange);
 		TestTrue(TEXT("Update is available when remote > current and CLI compatible"), bUpdateAvailable);
 		TestEqual(TEXT("Parsed remote version"), NewVersion, TEXT("0.9.0"));
 		TestEqual(TEXT("Parsed remote CLI range"), CliRange, TEXT(">= 0.12.0, < 0.14.0"));
 
-		// Incompatible CLI (below min 0.12.0): should NOT prompt update
+		// Incompatible CLI (below min): should NOT prompt update
 		FString IncompatMinVersion, IncompatMinRange;
 		const bool bIncompatMin = ParseFlexVaultVersionManifest(SampleManifest, TEXT("0.8.1"), TEXT("0.11.0"), IncompatMinVersion, IncompatMinRange);
 		TestFalse(TEXT("No update when CLI version is below min compatible"), bIncompatMin);
 		TestTrue(TEXT("Outputs reset when CLI below min"), IncompatMinVersion.IsEmpty() && IncompatMinRange.IsEmpty());
 
-		// Incompatible CLI (at/above max 0.14.0): should NOT prompt update
+		// Incompatible CLI (at/above max): should NOT prompt update
 		FString IncompatMaxVersion, IncompatMaxRange;
 		const bool bIncompatMax = ParseFlexVaultVersionManifest(SampleManifest, TEXT("0.8.1"), TEXT("0.14.0"), IncompatMaxVersion, IncompatMaxRange);
 		TestFalse(TEXT("No update when CLI version is at or above max compatible"), bIncompatMax);
 		TestTrue(TEXT("Outputs reset when CLI at/above max"), IncompatMaxVersion.IsEmpty() && IncompatMaxRange.IsEmpty());
 
-		// Boundary tests: exactly min (0.12.0, inclusive) should pass
+		// Boundary tests: exactly min (inclusive) should pass
 		FString BoundaryMinVersion, BoundaryMinRange;
 		const bool bBoundaryMin = ParseFlexVaultVersionManifest(SampleManifest, TEXT("0.8.1"), TEXT("0.12.0"), BoundaryMinVersion, BoundaryMinRange);
 		TestTrue(TEXT("Update available when CLI matches min bound exactly"), bBoundaryMin);
@@ -1435,8 +1435,10 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultIntegrationRegisterTest, "FlexVault.S
 bool FFlexVaultIntegrationRegisterTest::RunTest(const FString& Parameters)
 {
 	// 1. Verify FlexVaultCliCompatibility version strings
-	TestEqual(TEXT("MinVersion string matches expected"), FlexVaultCliCompatibility::GetMinVersionString(), TEXT("0.11.0"));
-	TestEqual(TEXT("MaxVersion string matches expected"), FlexVaultCliCompatibility::GetMaxVersionString(), TEXT("0.13.0"));
+	const FString ExpectedMinString = FString::Printf(TEXT("%d.%d.%d"), FlexVaultCliCompatibility::MinMajor, FlexVaultCliCompatibility::MinMinor, FlexVaultCliCompatibility::MinPatch);
+	const FString ExpectedMaxString = FString::Printf(TEXT("%d.%d.%d"), FlexVaultCliCompatibility::MaxMajor, FlexVaultCliCompatibility::MaxMinor, FlexVaultCliCompatibility::MaxPatch);
+	TestEqual(TEXT("MinVersion string matches expected"), FlexVaultCliCompatibility::GetMinVersionString(), ExpectedMinString);
+	TestEqual(TEXT("MaxVersion string matches expected"), FlexVaultCliCompatibility::GetMaxVersionString(), ExpectedMaxString);
 
 	// 2. Verify BuildFlexVaultIntegrationRegisterArgs with full options
 	FFlexVaultIntegrationRegisterOptions FullOptions;
