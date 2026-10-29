@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.1](https://github.com/FlexVaultSCM/fxv-unreal-plugin/compare/v0.11.0...v0.11.1) (2026-10-29)
+
+
+### Bug Fixes
+
+* resolve IWYU compile errors under strict non-unity builds ([#45](https://github.com/FlexVaultSCM/fxv-unreal-plugin/issues/45)) ([f35ab48](https://github.com/FlexVaultSCM/fxv-unreal-plugin/commit/f35ab4879d863656b7496ef14902ef616fce8ccc))
+
 ## [0.11.0](https://github.com/FlexVaultSCM/fxv-unreal-plugin/compare/v0.10.0...v0.11.0) (2026-10-27)
 
 
