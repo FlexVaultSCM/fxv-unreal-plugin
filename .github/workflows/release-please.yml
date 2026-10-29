@@ -97,7 +97,8 @@ jobs:
           # Package root directory of the plugin suitable for dropping directly into UE Projects/Plugins
           git archive --format=zip --prefix="FlexVaultSourceControl/" HEAD:FlexVaultSourceControl -o "$asset_versioned"
           cp "$asset_versioned" "$asset_latest"
-          cp "$asset_versioned" "$asset_fab"
+          # Package plugin archive for Fab submission without root prefix so .uplugin sits at archive root
+          git archive --format=zip HEAD:FlexVaultSourceControl -o "$asset_fab"
 
           sha256sum "$asset_versioned" > "${asset_versioned}.sha256"
           sha256sum "$asset_latest" > "${asset_latest}.sha256"

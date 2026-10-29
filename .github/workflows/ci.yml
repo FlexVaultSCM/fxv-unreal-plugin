@@ -84,3 +84,10 @@ jobs:
           test -s "$archive_name"
           sha256sum "$archive_name"
           echo "Packaging dry-run successful: $archive_name"
+
+          # Also validate root-level archive layout for Fab marketplace submissions
+          fab_archive="FlexVaultSourceControl-${version}-Fab.zip"
+          git archive --format=zip HEAD:FlexVaultSourceControl -o "$fab_archive"
+          test -s "$fab_archive"
+          sha256sum "$fab_archive"
+          echo "Fab packaging dry-run successful: $fab_archive"
