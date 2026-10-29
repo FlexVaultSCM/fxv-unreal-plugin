@@ -7,6 +7,7 @@
 #include "FlexVaultSourceControlRevision.h"
 #include "SourceControlOperations.h"
 #include "HAL/PlatformFileManager.h"
+#include "GenericPlatform/GenericPlatformFile.h"
 #include "Misc/Paths.h"
 #include "Misc/App.h"
 #include "Dom/JsonObject.h"

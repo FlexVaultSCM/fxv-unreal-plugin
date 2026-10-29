@@ -27,6 +27,8 @@
 #include "HAL/PlatformFileManager.h"
 #include "Misc/Paths.h"
 #include "Misc/FileHelper.h"
+#include "GenericPlatform/GenericPlatformFile.h"
+#include "SourceCodeNavigation.h"
 #if SOURCE_CONTROL_WITH_SLATE
 #include "FlexVaultHistoryCommon.h"
 #endif
