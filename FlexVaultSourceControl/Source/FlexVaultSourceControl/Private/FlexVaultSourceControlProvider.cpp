@@ -28,6 +28,8 @@
 #include "Async/Async.h"
 #include "Logging/MessageLog.h"
 #include "HAL/PlatformApplicationMisc.h"
+#include "UObject/GarbageCollection.h"
+#include "UObject/UObjectGlobals.h"
 
 #if SOURCE_CONTROL_WITH_SLATE
 #include "Widgets/SNullWidget.h"
@@ -992,6 +994,14 @@ bool FFlexVaultSourceControlProvider::EnsureUserLoggedInBeforeCheckIn()
 #else
 	return true;
 #endif
+}
+
+void FFlexVaultSourceControlProvider::OutputStateChangedEvent()
+{
+	if (!GIsInitialLoad && !IsGarbageCollecting() && !IsAsyncLoading())
+	{
+		OnSourceControlStateChanged.Broadcast();
+	}
 }
 
 #undef LOCTEXT_NAMESPACE

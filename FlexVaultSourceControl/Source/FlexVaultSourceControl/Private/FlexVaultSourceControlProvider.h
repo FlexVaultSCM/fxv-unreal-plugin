@@ -74,13 +74,7 @@ public:
 	virtual TOptional<bool> HasChangesToSync() const override { return bHasChangesToSync; }
 	virtual TOptional<bool> HasChangesToCheckIn() const override { return TOptional<bool>(); }
 	void SetHasChangesToSync(TOptional<bool> InHasChangesToSync) { bHasChangesToSync = InHasChangesToSync; }
-	void OutputStateChangedEvent()
-	{
-		if (!GIsInitialLoad && !IsGarbageCollecting() && !IsAsyncLoading())
-		{
-			OnSourceControlStateChanged.Broadcast();
-		}
-	}
+	void OutputStateChangedEvent();
 	virtual void Tick() override;
 	virtual TArray<TSharedRef<class ISourceControlLabel>> GetLabels(const FString& InMatchingSpec) const override { return TArray<TSharedRef<class ISourceControlLabel>>(); }
 	virtual TArray<FSourceControlChangelistRef> GetChangelists(EStateCacheUsage::Type InStateCacheUsage) override { return TArray<FSourceControlChangelistRef>(); }

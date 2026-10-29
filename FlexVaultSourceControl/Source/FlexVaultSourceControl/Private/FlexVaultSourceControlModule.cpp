@@ -4,6 +4,7 @@
 #include "FlexVaultAutoSnapshot.h"
 #include "Features/IModularFeatures.h"
 #include "Interfaces/IPluginManager.h"
+#include "Engine/Engine.h"
 
 #if SOURCE_CONTROL_WITH_SLATE
 #include "SFlexVaultHistoryTab.h"

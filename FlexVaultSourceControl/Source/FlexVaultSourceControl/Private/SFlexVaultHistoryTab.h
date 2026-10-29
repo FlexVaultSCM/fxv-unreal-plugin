@@ -5,6 +5,7 @@
 #if SOURCE_CONTROL_WITH_SLATE
 
 #include "FlexVaultHistoryCommon.h"
+#include "ISourceControlProvider.h"
 #include "Widgets/SCompoundWidget.h"
 #include "Widgets/DeclarativeSyntaxSupport.h"
 #include "Widgets/Views/SListView.h"
