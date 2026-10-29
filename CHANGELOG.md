@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.2](https://github.com/FlexVaultSCM/fxv-unreal-plugin/compare/v0.11.1...v0.11.2) (2026-10-29)
+
+
+### Bug Fixes
+
+* **ci:** package Fab release archive without root directory prefix ([#47](https://github.com/FlexVaultSCM/fxv-unreal-plugin/issues/47)) ([fd02b13](https://github.com/FlexVaultSCM/fxv-unreal-plugin/commit/fd02b132d739b0ee1cdff792aaa33352922fadfa))
+
 ## [0.11.1](https://github.com/FlexVaultSCM/fxv-unreal-plugin/compare/v0.11.0...v0.11.1) (2026-10-29)
 
 
