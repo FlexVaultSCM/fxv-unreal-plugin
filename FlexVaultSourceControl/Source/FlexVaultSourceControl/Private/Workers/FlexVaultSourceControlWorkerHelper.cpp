@@ -1213,7 +1213,10 @@ bool ParseFlexVaultRemoteAndAuth(
 	if (PayloadObj->TryGetObjectField(TEXT("remote"), RemoteObj) && RemoteObj != nullptr && (*RemoteObj).IsValid())
 	{
 		(*RemoteObj)->TryGetStringField(TEXT("mode"), OutRemote.Mode);
-		(*RemoteObj)->TryGetStringField(TEXT("broker_url"), OutRemote.BrokerUrl);
+		if (!(*RemoteObj)->TryGetStringField(TEXT("broker"), OutRemote.BrokerUrl) || OutRemote.BrokerUrl.IsEmpty())
+		{
+			(*RemoteObj)->TryGetStringField(TEXT("broker_url"), OutRemote.BrokerUrl);
+		}
 		bFoundAny = true;
 	}
 
@@ -1221,8 +1224,14 @@ bool ParseFlexVaultRemoteAndAuth(
 	if (PayloadObj->TryGetObjectField(TEXT("auth"), AuthObj) && AuthObj != nullptr && (*AuthObj).IsValid())
 	{
 		(*AuthObj)->TryGetStringField(TEXT("state"), OutAuth.State);
-		(*AuthObj)->TryGetStringField(TEXT("broker_url"), OutAuth.BrokerUrl);
-		(*AuthObj)->TryGetStringField(TEXT("identity"), OutAuth.Identity);
+		if (!(*AuthObj)->TryGetStringField(TEXT("broker"), OutAuth.BrokerUrl) || OutAuth.BrokerUrl.IsEmpty())
+		{
+			(*AuthObj)->TryGetStringField(TEXT("broker_url"), OutAuth.BrokerUrl);
+		}
+		if (!(*AuthObj)->TryGetStringField(TEXT("identity"), OutAuth.Identity) || OutAuth.Identity.IsEmpty())
+		{
+			(*AuthObj)->TryGetStringField(TEXT("user"), OutAuth.Identity);
+		}
 		(*AuthObj)->TryGetStringField(TEXT("expires_at"), OutAuth.ExpiresAt);
 		bFoundAny = true;
 	}
@@ -1255,29 +1264,45 @@ bool ParseFlexVaultBrokerError(
 		return false;
 	}
 
-	FString MessageType;
-	if (!(*MessageObj)->TryGetStringField(TEXT("type"), MessageType) || !MessageType.Equals(TEXT("broker-error"), ESearchCase::IgnoreCase))
-	{
-		return false;
-	}
-
 	const TSharedPtr<FJsonObject>* PayloadObj = nullptr;
 	if (!(*MessageObj)->TryGetObjectField(TEXT("payload"), PayloadObj) || PayloadObj == nullptr || !(*PayloadObj).IsValid())
 	{
 		return false;
 	}
 
-	(*PayloadObj)->TryGetStringField(TEXT("reason"), OutBrokerError.Reason);
-	(*PayloadObj)->TryGetStringField(TEXT("broker_url"), OutBrokerError.BrokerUrl);
+	// Standard fxv error envelope: message.kind == "error", message.payload.error_data.kind == "broker-error"
+	const TSharedPtr<FJsonObject>* ErrorDataObj = nullptr;
+	if (!(*PayloadObj)->TryGetObjectField(TEXT("error_data"), ErrorDataObj) || ErrorDataObj == nullptr || !(*ErrorDataObj).IsValid())
+	{
+		return false;
+	}
+
+	FString ErrorDataKind;
+	if (!(*ErrorDataObj)->TryGetStringField(TEXT("kind"), ErrorDataKind) || !ErrorDataKind.Equals(TEXT("broker-error"), ESearchCase::IgnoreCase))
+	{
+		return false;
+	}
+
+	const TSharedPtr<FJsonObject>* BrokerPayloadObj = nullptr;
+	if (!(*ErrorDataObj)->TryGetObjectField(TEXT("payload"), BrokerPayloadObj) || BrokerPayloadObj == nullptr || !(*BrokerPayloadObj).IsValid())
+	{
+		return false;
+	}
+
+	(*PayloadObj)->TryGetStringField(TEXT("message"), OutBrokerError.Message);
+	(*BrokerPayloadObj)->TryGetStringField(TEXT("reason"), OutBrokerError.Reason);
+	if (!(*BrokerPayloadObj)->TryGetStringField(TEXT("broker"), OutBrokerError.BrokerUrl) || OutBrokerError.BrokerUrl.IsEmpty())
+	{
+		(*BrokerPayloadObj)->TryGetStringField(TEXT("broker_url"), OutBrokerError.BrokerUrl);
+	}
 	int32 HttpStatus = 0;
-	if ((*PayloadObj)->TryGetNumberField(TEXT("http_status"), HttpStatus))
+	if ((*BrokerPayloadObj)->TryGetNumberField(TEXT("http_status"), HttpStatus))
 	{
 		OutBrokerError.HttpStatus = HttpStatus;
 	}
-	(*PayloadObj)->TryGetStringField(TEXT("message"), OutBrokerError.Message);
-	(*PayloadObj)->TryGetStringField(TEXT("advice"), OutBrokerError.Advice);
+	(*BrokerPayloadObj)->TryGetStringField(TEXT("advice"), OutBrokerError.Advice);
 
-	return !OutBrokerError.Reason.IsEmpty() || !OutBrokerError.Message.IsEmpty();
+	return !OutBrokerError.Reason.IsEmpty();
 }
 
 bool RunFlexVaultBrokerLoginCommand(
