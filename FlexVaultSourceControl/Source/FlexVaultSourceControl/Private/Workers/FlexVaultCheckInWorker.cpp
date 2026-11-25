@@ -67,12 +67,19 @@ bool FFlexVaultCheckInWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 		TEXT("publish"),
 		TEXT("-d"),
 		Description,
+		TEXT("--format"),
+		TEXT("json"),
 		TEXT("--unattended"),
 		TEXT("--no-color")
 	};
-	bool bPublishOk = RunFlexVaultCommand(InCommand.BinaryPath, InCommand.WorkspacePath, PublishArgs, PublishOutputLines, InCommand.ResultInfo, false, &InCommand);
+	bool bPublishOk = RunFlexVaultCommand(InCommand.BinaryPath, InCommand.WorkspacePath, PublishArgs, PublishOutputLines, InCommand.ResultInfo, false, &InCommand, 0.0, nullptr, &InCommand.LastExitCode);
 	if (!bPublishOk)
 	{
+		FFlexVaultBrokerError BrokerErr;
+		if (ParseFlexVaultBrokerError(PublishOutputLines, BrokerErr))
+		{
+			InCommand.BrokerError = BrokerErr;
+		}
 		UE_LOG(LogFlexVault, Error, TEXT("FlexVault SCM: Publish phase failed during check-in."));
 		if (InCommand.ResultInfo.ErrorMessages.Num() == 0)
 		{

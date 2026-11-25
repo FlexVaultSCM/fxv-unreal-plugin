@@ -7,6 +7,7 @@
 #include "ISourceControlProvider.h"
 #include "ISourceControlState.h"
 #include "FlexVaultSourceControlState.h"
+#include "Workers/FlexVaultSourceControlWorkerHelper.h"
 
 namespace FlexVaultSourceControlConstants
 {
@@ -89,6 +90,12 @@ public:
 	const FString& GetCurrentHeadCommit() const { return CurrentHeadCommit; }
 	void SetCurrentHeadCommit(const FString& InHeadCommit) { CurrentHeadCommit = InHeadCommit; }
 
+	const FFlexVaultRemoteInfo& GetRemoteInfo() const { return RemoteInfo; }
+	void SetRemoteInfo(const FFlexVaultRemoteInfo& InRemoteInfo) { RemoteInfo = InRemoteInfo; }
+	const FFlexVaultAuthInfo& GetAuthInfo() const { return AuthInfo; }
+	void SetAuthInfo(const FFlexVaultAuthInfo& InAuthInfo) { AuthInfo = InAuthInfo; }
+	bool IsBrokerWorkspace() const { return RemoteInfo.IsBroker(); }
+
 	const TArray<FString>& GetLastSyncedFiles() const { return LastSyncedFiles; }
 	void SetLastSyncedFiles(const TArray<FString>& InFiles) { LastSyncedFiles = InFiles; }
 
@@ -148,6 +155,12 @@ private:
 
 	/** Current workspace head commit change ID (e.g. 'main.7') */
 	FString CurrentHeadCommit;
+
+	/** Remote configuration from `fxv status --format json` (v2.2+) */
+	FFlexVaultRemoteInfo RemoteInfo;
+
+	/** Broker authentication state from `fxv status --format json` (v2.2+) */
+	FFlexVaultAuthInfo AuthInfo;
 
 	/** Files updated in the most recent sync operation */
 	TArray<FString> LastSyncedFiles;

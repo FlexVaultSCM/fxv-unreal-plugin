@@ -17,9 +17,13 @@ public:
 	SLATE_BEGIN_ARGS(SFlexVaultLoginDialog)
 		: _BinaryPath()
 		, _WorkspacePath()
+		, _bIsBrokerWorkspace(false)
+		, _BrokerUrl()
 	{}
 		SLATE_ARGUMENT(FString, BinaryPath)
 		SLATE_ARGUMENT(FString, WorkspacePath)
+		SLATE_ARGUMENT(bool, bIsBrokerWorkspace)
+		SLATE_ARGUMENT(FString, BrokerUrl)
 		SLATE_ARGUMENT(TSharedPtr<SWindow>, ParentWindow)
 	SLATE_END_ARGS()
 
@@ -28,8 +32,14 @@ public:
 	virtual bool SupportsKeyboardFocus() const override { return true; }
 	virtual FReply OnKeyDown(const FGeometry& MyGeometry, const FKeyEvent& InKeyEvent) override;
 
-	/** Displays the modal login dialog. Returns true if user logged in, outputting the username. */
-	static bool ShowModal(const FString& InBinaryPath, const FString& InWorkspacePath, FString& OutLoggedInUser);
+	/** Displays the modal login dialog. Returns true if user logged in, outputting the username/identity. */
+	static bool ShowModal(
+		const FString& InBinaryPath,
+		const FString& InWorkspacePath,
+		FString& OutLoggedInUser,
+		bool bInIsBrokerWorkspace = false,
+		const FString& InBrokerUrl = FString()
+	);
 
 private:
 	FReply OnLoginClicked();
@@ -38,6 +48,8 @@ private:
 
 	FString BinaryPath;
 	FString WorkspacePath;
+	bool bIsBrokerWorkspace = false;
+	FString BrokerUrl;
 	TWeakPtr<SWindow> ParentWindow;
 
 	TSharedPtr<SEditableTextBox> UsernameTextBox;

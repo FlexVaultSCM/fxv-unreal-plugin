@@ -165,7 +165,8 @@ bool RunFlexVaultCommand(
 	bool bIgnoreError,
 	const FFlexVaultSourceControlCommand* InCancelCommand,
 	double InTimeoutSeconds,
-	TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> InCancelToken
+	TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> InCancelToken,
+	int32* OutReturnCode
 )
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(RunFlexVaultCommand);
@@ -237,6 +238,10 @@ bool RunFlexVaultCommand(
 
 	int32 ReturnCode = 0;
 	FPlatformProcess::GetProcReturnCode(Process, &ReturnCode);
+	if (OutReturnCode != nullptr)
+	{
+		*OutReturnCode = ReturnCode;
+	}
 	FPlatformProcess::CloseProc(Process);
 	FPlatformProcess::ClosePipe(PipeRead, PipeWrite);
 
@@ -1182,6 +1187,163 @@ bool EnsureFlexVaultLoggedIn(
 	if (OutCurrentUser)
 	{
 		*OutCurrentUser = CurrentUser;
+	}
+
+	return true;
+}
+
+bool ParseFlexVaultRemoteAndAuth(
+	const TSharedPtr<FJsonObject>& InEnvelope,
+	FFlexVaultRemoteInfo& OutRemote,
+	FFlexVaultAuthInfo& OutAuth
+)
+{
+	OutRemote = FFlexVaultRemoteInfo();
+	OutAuth = FFlexVaultAuthInfo();
+
+	TSharedPtr<FJsonObject> PayloadObj;
+	if (!TryGetFlexVaultEnvelopePayload(InEnvelope, PayloadObj))
+	{
+		return false;
+	}
+
+	bool bFoundAny = false;
+
+	const TSharedPtr<FJsonObject>* RemoteObj = nullptr;
+	if (PayloadObj->TryGetObjectField(TEXT("remote"), RemoteObj) && RemoteObj != nullptr && (*RemoteObj).IsValid())
+	{
+		(*RemoteObj)->TryGetStringField(TEXT("mode"), OutRemote.Mode);
+		(*RemoteObj)->TryGetStringField(TEXT("broker_url"), OutRemote.BrokerUrl);
+		bFoundAny = true;
+	}
+
+	const TSharedPtr<FJsonObject>* AuthObj = nullptr;
+	if (PayloadObj->TryGetObjectField(TEXT("auth"), AuthObj) && AuthObj != nullptr && (*AuthObj).IsValid())
+	{
+		(*AuthObj)->TryGetStringField(TEXT("state"), OutAuth.State);
+		(*AuthObj)->TryGetStringField(TEXT("broker_url"), OutAuth.BrokerUrl);
+		(*AuthObj)->TryGetStringField(TEXT("identity"), OutAuth.Identity);
+		(*AuthObj)->TryGetStringField(TEXT("expires_at"), OutAuth.ExpiresAt);
+		bFoundAny = true;
+	}
+
+	return bFoundAny;
+}
+
+bool ParseFlexVaultBrokerError(
+	const TArray<FString>& InOutputLines,
+	FFlexVaultBrokerError& OutBrokerError
+)
+{
+	OutBrokerError = FFlexVaultBrokerError();
+	if (InOutputLines.Num() == 0)
+	{
+		return false;
+	}
+
+	FString RawJson = FString::Join(InOutputLines, TEXT("\n"));
+	TSharedPtr<FJsonObject> Envelope;
+	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(RawJson);
+	if (!FJsonSerializer::Deserialize(Reader, Envelope) || !Envelope.IsValid())
+	{
+		return false;
+	}
+
+	const TSharedPtr<FJsonObject>* MessageObj = nullptr;
+	if (!Envelope->TryGetObjectField(TEXT("message"), MessageObj) || MessageObj == nullptr || !(*MessageObj).IsValid())
+	{
+		return false;
+	}
+
+	FString MessageType;
+	if (!(*MessageObj)->TryGetStringField(TEXT("type"), MessageType) || !MessageType.Equals(TEXT("broker-error"), ESearchCase::IgnoreCase))
+	{
+		return false;
+	}
+
+	const TSharedPtr<FJsonObject>* PayloadObj = nullptr;
+	if (!(*MessageObj)->TryGetObjectField(TEXT("payload"), PayloadObj) || PayloadObj == nullptr || !(*PayloadObj).IsValid())
+	{
+		return false;
+	}
+
+	(*PayloadObj)->TryGetStringField(TEXT("reason"), OutBrokerError.Reason);
+	(*PayloadObj)->TryGetStringField(TEXT("broker_url"), OutBrokerError.BrokerUrl);
+	int32 HttpStatus = 0;
+	if ((*PayloadObj)->TryGetNumberField(TEXT("http_status"), HttpStatus))
+	{
+		OutBrokerError.HttpStatus = HttpStatus;
+	}
+	(*PayloadObj)->TryGetStringField(TEXT("message"), OutBrokerError.Message);
+	(*PayloadObj)->TryGetStringField(TEXT("advice"), OutBrokerError.Advice);
+
+	return !OutBrokerError.Reason.IsEmpty() || !OutBrokerError.Message.IsEmpty();
+}
+
+bool RunFlexVaultBrokerLoginCommand(
+	const FString& InBinaryPath,
+	const FString& InWorkspacePath,
+	FSourceControlResultInfo& OutResultInfo,
+	FString* OutErrorMessage,
+	FString* OutIdentity
+)
+{
+	// Omit --unattended so `fxv login` can launch the interactive browser device flow.
+	TArray<FString> Args = {
+		TEXT("login"),
+		TEXT("--format"),
+		TEXT("json"),
+		TEXT("--no-color")
+	};
+
+	TArray<FString> OutputLines;
+	bool bOk = RunFlexVaultCommand(InBinaryPath, InWorkspacePath, Args, OutputLines, OutResultInfo, false, nullptr, 120.0);
+	if (!bOk)
+	{
+		FFlexVaultBrokerError BrokerErr;
+		if (ParseFlexVaultBrokerError(OutputLines, BrokerErr) && !BrokerErr.Message.IsEmpty())
+		{
+			if (OutErrorMessage)
+			{
+				*OutErrorMessage = BrokerErr.Advice.IsEmpty()
+					? BrokerErr.Message
+					: FString::Printf(TEXT("%s %s"), *BrokerErr.Message, *BrokerErr.Advice);
+			}
+		}
+		else
+		{
+			FString ParsedError;
+			if (ParseFlexVaultErrorMessage(OutputLines, ParsedError))
+			{
+				if (OutErrorMessage)
+				{
+					*OutErrorMessage = ParsedError;
+				}
+			}
+			else if (OutResultInfo.ErrorMessages.Num() > 0 && OutErrorMessage)
+			{
+				*OutErrorMessage = OutResultInfo.ErrorMessages.Last().ToString();
+			}
+		}
+		return false;
+	}
+
+	if (OutIdentity != nullptr)
+	{
+		FString RawJson = FString::Join(OutputLines, TEXT("\n"));
+		TSharedPtr<FJsonObject> Envelope;
+		TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(RawJson);
+		if (FJsonSerializer::Deserialize(Reader, Envelope) && Envelope.IsValid())
+		{
+			TSharedPtr<FJsonObject> PayloadObj;
+			if (TryGetFlexVaultEnvelopePayload(Envelope, PayloadObj))
+			{
+				if (!PayloadObj->TryGetStringField(TEXT("identity"), *OutIdentity) || OutIdentity->IsEmpty())
+				{
+					PayloadObj->TryGetStringField(TEXT("username"), *OutIdentity);
+				}
+			}
+		}
 	}
 
 	return true;

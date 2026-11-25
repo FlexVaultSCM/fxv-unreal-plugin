@@ -67,6 +67,74 @@ TArray<FString> BuildFlexVaultSnapshotArgs(const FString& InDescription);
 FCriticalSection& GetFlexVaultSnapshotLock();
 
 /**
+ * Standard FlexVault CLI exit codes.
+ */
+namespace FlexVaultExitCodes
+{
+	/** Broker authentication is missing or expired (requires `fxv login`). */
+	constexpr int32 AuthRequired = 95;
+}
+
+/**
+ * Remote configuration extracted from `fxv status --format json` (v2.2+).
+ */
+struct FFlexVaultRemoteInfo
+{
+	/** "broker", "direct", or "local_only" (empty for older CLI versions). */
+	FString Mode;
+	FString BrokerUrl;
+
+	bool IsBroker() const { return Mode.Equals(TEXT("broker"), ESearchCase::IgnoreCase); }
+	bool operator==(const FFlexVaultRemoteInfo& Other) const
+	{
+		return Mode == Other.Mode && BrokerUrl == Other.BrokerUrl;
+	}
+	bool operator!=(const FFlexVaultRemoteInfo& Other) const { return !(*this == Other); }
+};
+
+/**
+ * Broker authentication state extracted from `fxv status --format json` (v2.2+).
+ */
+struct FFlexVaultAuthInfo
+{
+	/** "authenticated", "not_authenticated", "expired", "unverified", "offline", or "not_applicable". */
+	FString State;
+	FString BrokerUrl;
+	FString Identity;
+	FString ExpiresAt;
+
+	bool NeedsLogin() const
+	{
+		return State.Equals(TEXT("not_authenticated"), ESearchCase::IgnoreCase) ||
+			State.Equals(TEXT("expired"), ESearchCase::IgnoreCase);
+	}
+	bool operator==(const FFlexVaultAuthInfo& Other) const
+	{
+		return State == Other.State && BrokerUrl == Other.BrokerUrl && Identity == Other.Identity && ExpiresAt == Other.ExpiresAt;
+	}
+	bool operator!=(const FFlexVaultAuthInfo& Other) const { return !(*this == Other); }
+};
+
+/**
+ * Structured broker error extracted from a `broker-error` JSON envelope.
+ */
+struct FFlexVaultBrokerError
+{
+	/** "not_authenticated", "token_expired", "forbidden", "broker_unreachable", "invalid_broker_url". */
+	FString Reason;
+	FString BrokerUrl;
+	TOptional<int32> HttpStatus;
+	FString Message;
+	FString Advice;
+
+	bool IsAuthRequired() const
+	{
+		return Reason.Equals(TEXT("not_authenticated"), ESearchCase::IgnoreCase) ||
+			Reason.Equals(TEXT("token_expired"), ESearchCase::IgnoreCase);
+	}
+};
+
+/**
  * Runs the FlexVault CLI as a child process and blocks the calling thread until it exits.
  * Cancellation support:
  *  - InCancelCommand: For provider-queued operations (FFlexVaultSourceControlCommand). Checks
@@ -74,6 +142,7 @@ FCriticalSection& GetFlexVaultSnapshotLock();
  *  - InCancelToken: For ad-hoc or background tasks outside the command queue (e.g. periodic
  *    fetch, auto-snapshot). A lightweight atomic flag that triggers immediate process termination.
  * If InTimeoutSeconds is > 0, the process is also terminated after that duration as a fallback.
+ * If OutReturnCode is non-null, it receives the process exit code (e.g. 95 for AuthRequired).
  */
 bool RunFlexVaultCommand(
 	const FString& InBinaryPath,
@@ -84,7 +153,8 @@ bool RunFlexVaultCommand(
 	bool bIgnoreError = false,
 	const FFlexVaultSourceControlCommand* InCancelCommand = nullptr,
 	double InTimeoutSeconds = 0.0,
-	TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> InCancelToken = nullptr
+	TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> InCancelToken = nullptr,
+	int32* OutReturnCode = nullptr
 );
 
 /**
@@ -283,6 +353,37 @@ bool EnsureFlexVaultLoggedIn(
 	FSourceControlResultInfo& OutResultInfo,
 	const FFlexVaultSourceControlCommand* InCancelCommand = nullptr,
 	FString* OutCurrentUser = nullptr
+);
+
+/**
+ * Extracts the workspace's remote configuration and broker auth state (v2.2+) from an
+ * `fxv status --format json` envelope. Returns true if either `remote` or `auth` was present.
+ */
+bool ParseFlexVaultRemoteAndAuth(
+	const TSharedPtr<class FJsonObject>& InEnvelope,
+	FFlexVaultRemoteInfo& OutRemote,
+	FFlexVaultAuthInfo& OutAuth
+);
+
+/**
+ * Extracts a structured `broker-error` payload from CLI `--format json` output lines.
+ * Returns true if the output contains a `broker-error` envelope.
+ */
+bool ParseFlexVaultBrokerError(
+	const TArray<FString>& InOutputLines,
+	FFlexVaultBrokerError& OutBrokerError
+);
+
+/**
+ * Launches interactive browser login for a brokered workspace via `fxv login --format json --no-color`.
+ * Returns true if login succeeded. If it failed, OutErrorMessage will contain the error details.
+ */
+bool RunFlexVaultBrokerLoginCommand(
+	const FString& InBinaryPath,
+	const FString& InWorkspacePath,
+	FSourceControlResultInfo& OutResultInfo,
+	FString* OutErrorMessage = nullptr,
+	FString* OutIdentity = nullptr
 );
 
 /**

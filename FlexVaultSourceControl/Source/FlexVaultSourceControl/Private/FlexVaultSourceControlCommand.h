@@ -8,6 +8,7 @@
 #include "IFlexVaultSourceControlWorker.h"
 
 #include "Templates/Atomic.h"
+#include "Workers/FlexVaultSourceControlWorkerHelper.h"
 
 class FFlexVaultSourceControlCommand : public IQueuedWork
 {
@@ -69,4 +70,10 @@ public:
 
 	/** Standard output message logging collections */
 	FSourceControlResultInfo ResultInfo;
+
+	/** Last CLI exit code recorded by a worker (e.g. 95 for AuthRequired) */
+	int32 LastExitCode = 0;
+
+	/** Structured broker error, if the command failed with a `broker-error` envelope */
+	TOptional<FFlexVaultBrokerError> BrokerError;
 };

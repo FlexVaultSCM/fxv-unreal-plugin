@@ -44,7 +44,7 @@ bool FFlexVaultConnectWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 		TEXT("--skip-remote-update"),
 		TEXT("--skip-scan")
 	};
-	bool bSucceeded = RunFlexVaultCommand(InCommand.BinaryPath, InCommand.WorkspacePath, StatusArgs, OutputLines, InCommand.ResultInfo, false, &InCommand);
+	bool bSucceeded = RunFlexVaultCommand(InCommand.BinaryPath, InCommand.WorkspacePath, StatusArgs, OutputLines, InCommand.ResultInfo, false, &InCommand, 0.0, nullptr, &InCommand.LastExitCode);
 	
 	if (bSucceeded)
 	{
@@ -77,6 +77,7 @@ bool FFlexVaultConnectWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 
 		ParseFlexVaultCurrentBranch(Envelope, CurrentBranch);
 		ParseFlexVaultCurrentUser(Envelope, CurrentUser);
+		ParseFlexVaultRemoteAndAuth(Envelope, RemoteInfo, AuthInfo);
 		LastConnectionError = FText::GetEmpty();
 
 		TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("FlexVaultSourceControl"));
@@ -106,6 +107,12 @@ bool FFlexVaultConnectWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 	}
 	else if (InCommand.ResultInfo.ErrorMessages.Num() > 0)
 	{
+		FFlexVaultBrokerError BrokerErr;
+		if (ParseFlexVaultBrokerError(OutputLines, BrokerErr))
+		{
+			InCommand.BrokerError = BrokerErr;
+		}
+
 		FString ErrorMessage;
 		if (!ParseFlexVaultErrorMessage(OutputLines, ErrorMessage))
 		{
@@ -125,6 +132,8 @@ bool FFlexVaultConnectWorker::UpdateStates() const
 	FFlexVaultSourceControlProvider& Provider = GetSCCProvider();
 	Provider.SetCurrentBranch(CurrentBranch);
 	Provider.SetCurrentUser(CurrentUser);
+	Provider.SetRemoteInfo(RemoteInfo);
+	Provider.SetAuthInfo(AuthInfo);
 	Provider.SetLastConnectionError(LastConnectionError);
 	return true;
 }
