@@ -125,7 +125,7 @@ struct FFlexVaultAuthInfo
  */
 struct FFlexVaultBrokerError
 {
-	/** "not_authenticated", "token_expired", "forbidden", "broker_unreachable", "invalid_broker_url". */
+	/** "not_authenticated", "token_expired", "forbidden", "network_unreachable", "invalid_broker_url". */
 	FString Reason;
 	FString BrokerUrl;
 	FString Tenant;
@@ -138,6 +138,11 @@ struct FFlexVaultBrokerError
 	{
 		return Reason.Equals(TEXT("not_authenticated"), ESearchCase::IgnoreCase) ||
 			Reason.Equals(TEXT("token_expired"), ESearchCase::IgnoreCase);
+	}
+
+	bool IsNetworkUnreachable() const
+	{
+		return Reason.Equals(TEXT("network_unreachable"), ESearchCase::IgnoreCase);
 	}
 };
 

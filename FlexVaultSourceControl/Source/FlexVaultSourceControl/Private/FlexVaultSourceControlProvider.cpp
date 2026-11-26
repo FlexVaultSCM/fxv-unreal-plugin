@@ -165,18 +165,24 @@ namespace
 		return !State.IsEmpty() ? State : TEXT("Unknown");
 	}
 
-	FText SummarizeErrorForToast(const FText& FullError)
+	FText SummarizeErrorForToast(const FText& FullError, const TOptional<FFlexVaultBrokerError>& BrokerError = TOptional<FFlexVaultBrokerError>())
 	{
+		if (BrokerError.IsSet() && BrokerError->IsNetworkUnreachable())
+		{
+			return LOCTEXT("FlexVaultRemoteUnreachableSummary", "Could not reach the remote repository. Check your network connection or VPN, then try again.");
+		}
+
 		FString Msg = FullError.ToString().TrimStartAndEnd();
 		if (Msg.IsEmpty())
 		{
 			return LOCTEXT("FlexVaultGenericErrorSummary", "Operation failed. See the Source Control log for details.");
 		}
 
-		if (Msg.Contains(TEXT("Reqwest error"), ESearchCase::IgnoreCase) ||
+		if (Msg.Contains(TEXT("Failed to reach broker"), ESearchCase::IgnoreCase) ||
+			Msg.Contains(TEXT("network_unreachable"), ESearchCase::IgnoreCase) ||
+			Msg.Contains(TEXT("Reqwest error"), ESearchCase::IgnoreCase) ||
 			Msg.Contains(TEXT("error sending request"), ESearchCase::IgnoreCase) ||
-			Msg.Contains(TEXT("Could not read the FXV repository"), ESearchCase::IgnoreCase) ||
-			Msg.Contains(TEXT("broker_unreachable"), ESearchCase::IgnoreCase))
+			Msg.Contains(TEXT("Could not read the FXV repository"), ESearchCase::IgnoreCase))
 		{
 			return LOCTEXT("FlexVaultRemoteUnreachableSummary", "Could not reach the remote repository. Check your network connection or VPN, then try again.");
 		}
@@ -925,7 +931,12 @@ void FFlexVaultSourceControlProvider::HandleCommandNotifications(const FFlexVaul
 		else
 		{
 			NotificationTitle = LOCTEXT("FlexVaultCheckInFailedTitle", "FlexVault: Check-in failed.");
-			NotificationSubText = SummarizeErrorForToast(ErrorText);
+			NotificationSubText = SummarizeErrorForToast(ErrorText, InCommand.BrokerError);
+			if (InCommand.BrokerError.IsSet() && InCommand.BrokerError->IsNetworkUnreachable())
+			{
+				LastRemoteError = NotificationSubText;
+				OutputStateChangedEvent();
+			}
 		}
 
 		FNotificationInfo Info(NotificationTitle);
