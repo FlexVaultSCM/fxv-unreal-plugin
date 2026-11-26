@@ -197,6 +197,9 @@ private:
 	/** Active broker auth-required notification, used to prevent duplicate toasts */
 	TWeakPtr<class SNotificationItem> ActiveAuthNotification;
 
+	/** Set once the client-upgrade-required notification has been shown, so it appears only once per connection */
+	bool bClientUpgradeNotified = false;
+
 	/** Active remote-unreachable warning notification, used to prevent duplicate toasts */
 	TWeakPtr<class SNotificationItem> ActiveRemoteErrorNotification;
 #endif

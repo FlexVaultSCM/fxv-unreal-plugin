@@ -132,6 +132,7 @@ void FFlexVaultSourceControlProvider::Close()
 #if SOURCE_CONTROL_WITH_SLATE
 	ActiveAuthNotification.Reset();
 	ActiveRemoteErrorNotification.Reset();
+	bClientUpgradeNotified = false;
 #endif
 }
 
@@ -736,6 +737,33 @@ void FFlexVaultSourceControlProvider::HandleCommandNotifications(const FFlexVaul
 		Info.ExpireDuration = 6.0f;
 		Info.bUseSuccessFailIcons = true;
 		FSlateNotificationManager::Get().AddNotification(Info);
+		return;
+	}
+
+	// Broker refused this fxv as too old (exit code 94). Shown once; signing in would not help.
+	if (!InCommand.bCommandSuccessful && !InCommand.IsCanceled() &&
+		IsFlexVaultClientUpgradeRequired(InCommand.LastExitCode, InCommand.BrokerError))
+	{
+		if (bClientUpgradeNotified)
+		{
+			return;
+		}
+		bClientUpgradeNotified = true;
+
+		const FString UpgradeMessage = BuildFlexVaultClientUpgradeMessage(InCommand.BrokerError);
+		FNotificationInfo Info(LOCTEXT("FlexVaultClientUpgradeRequiredTitle", "FlexVault: fxv upgrade required."));
+		Info.SubText = FText::FromString(UpgradeMessage);
+		SetupErrorNotificationDefaults(Info);
+		TSharedRef<TSharedPtr<SNotificationItem>> NotificationHandle = MakeShared<TSharedPtr<SNotificationItem>>();
+		AddStandardErrorNotificationButtons(Info, NotificationHandle);
+		*NotificationHandle = FSlateNotificationManager::Get().AddNotification(Info);
+		if (NotificationHandle->IsValid())
+		{
+			(*NotificationHandle)->SetCompletionState(SNotificationItem::CS_Fail);
+		}
+
+		FMessageLog SourceControlLog("SourceControl");
+		SourceControlLog.Error(FText::Format(LOCTEXT("FlexVaultClientUpgradeLogEntry", "FlexVault SCM {0} failed: {1}"), FText::FromName(InCommand.Operation->GetName()), FText::FromString(UpgradeMessage)));
 		return;
 	}
 

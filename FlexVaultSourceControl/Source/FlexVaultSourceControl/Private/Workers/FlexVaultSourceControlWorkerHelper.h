@@ -73,6 +73,8 @@ namespace FlexVaultExitCodes
 {
 	/** Broker authentication is missing or expired (requires `fxv login`). */
 	constexpr int32 AuthRequired = 95;
+	/** The broker refused this fxv as too old (requires installing a newer fxv). */
+	constexpr int32 ClientUpgradeRequired = 94;
 }
 
 /**
@@ -144,7 +146,28 @@ struct FFlexVaultBrokerError
 	{
 		return Reason.Equals(TEXT("network_unreachable"), ESearchCase::IgnoreCase);
 	}
+
+	bool IsClientUpgradeRequired() const
+	{
+		return Reason.Equals(TEXT("client_upgrade_required"), ESearchCase::IgnoreCase);
+	}
 };
+
+/** True when a failed fxv run means the broker refused this fxv as too old (exit 94 or matching broker-error reason). */
+inline bool IsFlexVaultClientUpgradeRequired(int32 ExitCode, const TOptional<FFlexVaultBrokerError>& BrokerError)
+{
+	return ExitCode == FlexVaultExitCodes::ClientUpgradeRequired ||
+		(BrokerError.IsSet() && BrokerError->IsClientUpgradeRequired());
+}
+
+/** User-facing text for a client-upgrade-required failure, including the CLI's message when available. */
+inline FString BuildFlexVaultClientUpgradeMessage(const TOptional<FFlexVaultBrokerError>& BrokerError)
+{
+	const FString Detail = (BrokerError.IsSet() && !BrokerError->Message.IsEmpty())
+		? BrokerError->Message
+		: FString(TEXT("This fxv is older than the FlexVault broker supports."));
+	return FString::Printf(TEXT("%s. Install a newer release of fxv, then reconnect."), *Detail.TrimEnd().TrimChar(TEXT('.')));
+}
 
 /**
  * Walks up from StartDir (defaulting to FPaths::ProjectDir()) looking for a `.fxv_workspace` directory.
