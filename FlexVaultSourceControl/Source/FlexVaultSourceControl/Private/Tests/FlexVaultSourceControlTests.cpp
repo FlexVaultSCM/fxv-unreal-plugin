@@ -2119,6 +2119,27 @@ bool FFlexVaultBrokerAuthParsingTest::RunTest(const FString& Parameters)
 		TestFalse(TEXT("ParseFlexVaultBrokerError ignores generic error"), ParseFlexVaultBrokerError(Lines, BrokerErr));
 	}
 
+	// 7. Client upgrade required (exit 94): detected, not auth, message keeps CLI text
+	{
+		TArray<FString> Lines = {
+			TEXT("{ \"message\": { \"kind\": \"error\", \"version\": \"1.1\", \"payload\": { \"message\": \"fxv 0.13.3 is older than 0.14.0, the oldest version this broker serves\", \"exit_code\": 94, \"error_data\": { \"kind\": \"broker-error\", \"version\": \"1.0\", \"payload\": { \"reason\": \"client_upgrade_required\", \"broker\": \"https://broker.fxv.dev/\" } } } } }")
+		};
+		FFlexVaultBrokerError BrokerErr;
+		TestTrue(TEXT("ParseFlexVaultBrokerError parses client_upgrade_required"), ParseFlexVaultBrokerError(Lines, BrokerErr));
+		TestTrue(TEXT("IsClientUpgradeRequired is true"), BrokerErr.IsClientUpgradeRequired());
+		TestFalse(TEXT("client_upgrade_required is not auth required"), BrokerErr.IsAuthRequired());
+
+		const TOptional<FFlexVaultBrokerError> Opt(BrokerErr);
+		TestTrue(TEXT("Exit 94 with envelope is upgrade required"), IsFlexVaultClientUpgradeRequired(FlexVaultExitCodes::ClientUpgradeRequired, Opt));
+		TestTrue(TEXT("Exit 94 alone is upgrade required"), IsFlexVaultClientUpgradeRequired(94, TOptional<FFlexVaultBrokerError>()));
+		TestTrue(TEXT("Reason alone is upgrade required"), IsFlexVaultClientUpgradeRequired(1, Opt));
+		TestFalse(TEXT("Exit 95 is not upgrade required"), IsFlexVaultClientUpgradeRequired(FlexVaultExitCodes::AuthRequired, TOptional<FFlexVaultBrokerError>()));
+
+		TestEqual(TEXT("Upgrade message includes CLI text and advice"), BuildFlexVaultClientUpgradeMessage(Opt),
+			FString(TEXT("fxv 0.13.3 is older than 0.14.0, the oldest version this broker serves. Install a newer release of fxv, then reconnect.")));
+		TestTrue(TEXT("Fallback upgrade message advises install"), BuildFlexVaultClientUpgradeMessage(TOptional<FFlexVaultBrokerError>()).Contains(TEXT("Install a newer release of fxv")));
+	}
+
 	return true;
 }
 
