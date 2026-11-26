@@ -182,6 +182,11 @@ private:
 	TSet<FString> PendingStatusUpdates;
 	bool bStatusUpdateDelayed;
 	TOptional<bool> bHasChangesToSync;
+
+#if SOURCE_CONTROL_WITH_SLATE
+	/** Active broker auth-required notification, used to prevent duplicate toasts */
+	TWeakPtr<class SNotificationItem> ActiveAuthNotification;
+#endif
 };
 
 DECLARE_LOG_CATEGORY_EXTERN(LogFlexVault, Verbose, All);

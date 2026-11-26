@@ -14,9 +14,18 @@
 #include "Styling/AppStyle.h"
 #include "Framework/Application/SlateApplication.h"
 #include "Framework/Docking/TabManager.h"
+#include "Async/Async.h"
 #include "InputCoreTypes.h"
 
 #define LOCTEXT_NAMESPACE "FlexVaultSourceControl"
+
+SFlexVaultLoginDialog::~SFlexVaultLoginDialog()
+{
+	if (LoginCancelToken.IsValid())
+	{
+		LoginCancelToken->Store(true);
+	}
+}
 
 void SFlexVaultLoginDialog::Construct(const FArguments& InArgs)
 {
@@ -116,9 +125,10 @@ void SFlexVaultLoginDialog::Construct(const FArguments& InArgs)
 					.AutoWidth()
 					.Padding(0.0f, 0.0f, 8.0f, 0.0f)
 					[
-						SNew(SButton)
+						SAssignNew(LoginButton, SButton)
 						.HAlign(HAlign_Center)
 						.Text(PrimaryButtonText)
+						.IsEnabled_Lambda([this]() { return !bLoginInProgress; })
 						.OnClicked(this, &SFlexVaultLoginDialog::OnLoginClicked)
 					]
 					+ SHorizontalBox::Slot()
@@ -161,30 +171,82 @@ FReply SFlexVaultLoginDialog::OnLoginClicked()
 {
 	if (bIsBrokerWorkspace)
 	{
-		FSourceControlResultInfo ResultInfo;
-		FString ErrorMessage;
-		FString Identity;
-		if (RunFlexVaultBrokerLoginCommand(BinaryPath, WorkspacePath, ResultInfo, &ErrorMessage, &Identity))
+		if (bLoginInProgress)
 		{
-			bLoginSuccessful = true;
-			LoggedInUser = Identity;
-
-			if (TSharedPtr<SWindow> PinnedWindow = ParentWindow.Pin())
-			{
-				PinnedWindow->RequestDestroyWindow();
-			}
 			return FReply::Handled();
 		}
 
+		bLoginInProgress = true;
+		LoginCancelToken = MakeShared<TAtomic<bool>, ESPMode::ThreadSafe>(false);
+
 		if (ErrorTextBlock.IsValid())
 		{
-			if (ErrorMessage.IsEmpty())
-			{
-				ErrorMessage = TEXT("Broker sign-in failed. Run 'fxv login' in a terminal to see details.");
-			}
-			ErrorTextBlock->SetText(FText::FromString(ErrorMessage));
+			ErrorTextBlock->SetColorAndOpacity(FLinearColor(0.75f, 0.75f, 0.75f));
+			ErrorTextBlock->SetText(LOCTEXT("FlexVaultBrokerLoginWaiting", "Waiting for browser sign-in... Complete authentication in your browser or click Cancel."));
 			ErrorTextBlock->SetVisibility(EVisibility::Visible);
 		}
+
+		const FString CapturedBinary = BinaryPath;
+		const FString CapturedWorkspace = WorkspacePath;
+		TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> CancelToken = LoginCancelToken;
+		TWeakPtr<SFlexVaultLoginDialog> WeakSelf = SharedThis(this);
+
+		// Run interactive `fxv login` off the Game Thread so the Editor stays responsive and Cancel works.
+		Async(EAsyncExecution::ThreadPool, [WeakSelf, CapturedBinary, CapturedWorkspace, CancelToken]()
+		{
+			FSourceControlResultInfo ResultInfo;
+			FString ErrorMessage;
+			FString Username;
+			FString Email;
+			const bool bOk = RunFlexVaultBrokerLoginCommand(
+				CapturedBinary,
+				CapturedWorkspace,
+				ResultInfo,
+				&ErrorMessage,
+				&Username,
+				&Email,
+				CancelToken
+			);
+
+			AsyncTask(ENamedThreads::GameThread, [WeakSelf, bOk, ErrorMessage, Username, Email, CancelToken]()
+			{
+				TSharedPtr<SFlexVaultLoginDialog> Pinned = WeakSelf.Pin();
+				if (!Pinned.IsValid())
+				{
+					return;
+				}
+
+				Pinned->bLoginInProgress = false;
+
+				if (CancelToken.IsValid() && CancelToken->Load())
+				{
+					return;
+				}
+
+				if (bOk)
+				{
+					Pinned->bLoginSuccessful = true;
+					Pinned->LoggedInUser = Username;
+					Pinned->LoggedInEmail = Email;
+
+					if (TSharedPtr<SWindow> PinnedWindow = Pinned->ParentWindow.Pin())
+					{
+						PinnedWindow->RequestDestroyWindow();
+					}
+					return;
+				}
+
+				if (Pinned->ErrorTextBlock.IsValid())
+				{
+					Pinned->ErrorTextBlock->SetColorAndOpacity(FLinearColor(1.0f, 0.35f, 0.35f));
+					FString DisplayError = ErrorMessage.IsEmpty()
+						? TEXT("Broker sign-in failed. Run 'fxv login' in a terminal to see details.")
+						: ErrorMessage;
+					Pinned->ErrorTextBlock->SetText(FText::FromString(DisplayError));
+					Pinned->ErrorTextBlock->SetVisibility(EVisibility::Visible);
+				}
+			});
+		});
 
 		return FReply::Handled();
 	}
@@ -235,6 +297,11 @@ FReply SFlexVaultLoginDialog::OnLoginClicked()
 
 FReply SFlexVaultLoginDialog::OnCancelClicked()
 {
+	if (LoginCancelToken.IsValid())
+	{
+		LoginCancelToken->Store(true);
+	}
+	bLoginInProgress = false;
 	bLoginSuccessful = false;
 	if (TSharedPtr<SWindow> PinnedWindow = ParentWindow.Pin())
 	{
@@ -256,7 +323,8 @@ bool SFlexVaultLoginDialog::ShowModal(
 	const FString& InWorkspacePath,
 	FString& OutLoggedInUser,
 	bool bInIsBrokerWorkspace,
-	const FString& InBrokerUrl
+	const FString& InBrokerUrl,
+	FString* OutLoggedInEmail
 )
 {
 	TSharedRef<SWindow> Window = SNew(SWindow)
@@ -282,6 +350,10 @@ bool SFlexVaultLoginDialog::ShowModal(
 	if (Dialog->bLoginSuccessful)
 	{
 		OutLoggedInUser = Dialog->LoggedInUser;
+		if (OutLoggedInEmail != nullptr)
+		{
+			*OutLoggedInEmail = Dialog->LoggedInEmail;
+		}
 		return true;
 	}
 

@@ -614,6 +614,12 @@ void FFlexVaultSourceControlProvider::HandleCommandNotifications(const FFlexVaul
 
 	if (bIsBrokerAuthRequired)
 	{
+		// Deduplicate: if a broker sign-in notification is already visible, don't stack another one.
+		if (ActiveAuthNotification.IsValid())
+		{
+			return;
+		}
+
 		const FString BrokerUrl = (InCommand.BrokerError.IsSet() && !InCommand.BrokerError->BrokerUrl.IsEmpty())
 			? InCommand.BrokerError->BrokerUrl
 			: RemoteInfo.BrokerUrl;
@@ -642,8 +648,9 @@ void FFlexVaultSourceControlProvider::HandleCommandNotifications(const FFlexVaul
 			FText(),
 			FSimpleDelegate::CreateLambda([NotificationHandle, BinaryPath, WorkspacePath, BrokerUrl]()
 			{
-				FString LoggedInIdentity;
-				if (SFlexVaultLoginDialog::ShowModal(BinaryPath, WorkspacePath, LoggedInIdentity, /*bInIsBrokerWorkspace=*/true, BrokerUrl))
+				FString LoggedInUser;
+				FString LoggedInEmail;
+				if (SFlexVaultLoginDialog::ShowModal(BinaryPath, WorkspacePath, LoggedInUser, /*bInIsBrokerWorkspace=*/true, BrokerUrl, &LoggedInEmail))
 				{
 					if (ISourceControlModule::Get().IsEnabled())
 					{
@@ -651,11 +658,15 @@ void FFlexVaultSourceControlProvider::HandleCommandNotifications(const FFlexVaul
 						if (ActiveProvider.GetName() == TEXT("FlexVault"))
 						{
 							FFlexVaultSourceControlProvider& FxvProvider = static_cast<FFlexVaultSourceControlProvider&>(ActiveProvider);
+							if (!LoggedInUser.IsEmpty())
+							{
+								FxvProvider.SetCurrentUser(LoggedInUser);
+							}
 							FFlexVaultAuthInfo UpdatedAuth = FxvProvider.GetAuthInfo();
 							UpdatedAuth.State = TEXT("authenticated");
-							if (!LoggedInIdentity.IsEmpty())
+							if (!LoggedInEmail.IsEmpty())
 							{
-								UpdatedAuth.Identity = LoggedInIdentity;
+								UpdatedAuth.Identity = LoggedInEmail;
 							}
 							FxvProvider.SetAuthInfo(UpdatedAuth);
 							FxvProvider.OutputStateChangedEvent();
@@ -694,6 +705,7 @@ void FFlexVaultSourceControlProvider::HandleCommandNotifications(const FFlexVaul
 		AddStandardErrorNotificationButtons(Info, NotificationHandle);
 
 		*NotificationHandle = FSlateNotificationManager::Get().AddNotification(Info);
+		ActiveAuthNotification = *NotificationHandle;
 		if (NotificationHandle->IsValid())
 		{
 			(*NotificationHandle)->SetCompletionState(SNotificationItem::CS_Fail);
@@ -1069,22 +1081,33 @@ bool FFlexVaultSourceControlProvider::EnsureUserLoggedInBeforeCheckIn()
 		}
 	}
 
-	// For broker workspaces with known missing/expired auth, prompt for browser sign-in first.
-	if (IsBrokerWorkspace() && AuthInfo.NeedsLogin())
+	// For broker workspaces, never fall through to the legacy username dialog.
+	// If we already know auth is missing/expired, prompt for browser sign-in now;
+	// otherwise let CheckInWorker run `fxv publish` (which will exit 95 if the token expired).
+	if (IsBrokerWorkspace())
 	{
+		if (!AuthInfo.NeedsLogin())
+		{
+			return true;
+		}
 #if SOURCE_CONTROL_WITH_SLATE
 		if (FApp::IsUnattended() || !IsInGameThread() || !FSlateApplication::IsInitialized())
 		{
 			return true;
 		}
 
-		FString LoggedInIdentity;
-		if (SFlexVaultLoginDialog::ShowModal(BinaryPath, WorkspacePath, LoggedInIdentity, /*bInIsBrokerWorkspace=*/true, RemoteInfo.BrokerUrl))
+		FString LoggedInUser;
+		FString LoggedInEmail;
+		if (SFlexVaultLoginDialog::ShowModal(BinaryPath, WorkspacePath, LoggedInUser, /*bInIsBrokerWorkspace=*/true, RemoteInfo.BrokerUrl, &LoggedInEmail))
 		{
-			AuthInfo.State = TEXT("authenticated");
-			if (!LoggedInIdentity.IsEmpty())
+			if (!LoggedInUser.IsEmpty())
 			{
-				AuthInfo.Identity = LoggedInIdentity;
+				SetCurrentUser(LoggedInUser);
+			}
+			AuthInfo.State = TEXT("authenticated");
+			if (!LoggedInEmail.IsEmpty())
+			{
+				AuthInfo.Identity = LoggedInEmail;
 			}
 			OutputStateChangedEvent();
 			return true;

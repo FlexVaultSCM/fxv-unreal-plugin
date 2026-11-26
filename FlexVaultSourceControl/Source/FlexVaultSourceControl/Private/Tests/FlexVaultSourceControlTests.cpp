@@ -2004,7 +2004,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultBrokerAuthParsingTest, "FlexVault.Sou
 
 bool FFlexVaultBrokerAuthParsingTest::RunTest(const FString& Parameters)
 {
-	// 1. Broker workspace (authenticated)
+	// 1. Broker workspace (authenticated, matching fxv-core StatusAuthJson)
 	{
 		const FString StatusJson =
 			TEXT("{\n")
@@ -2015,7 +2015,7 @@ bool FFlexVaultBrokerAuthParsingTest::RunTest(const FString& Parameters)
 			TEXT("      \"current_branch\": \"main\",\n")
 			TEXT("      \"current_user\": \"matt\",\n")
 			TEXT("      \"remote\": { \"mode\": \"broker\", \"uri\": \"fxv://broker.fxv.dev/acme/game\", \"broker\": \"https://broker.fxv.dev/\", \"tenant\": \"acme\", \"repo\": \"game\" },\n")
-			TEXT("      \"auth\": { \"required\": true, \"state\": \"authenticated\", \"source\": \"keyring\", \"identity\": \"matt@fxv.dev\", \"expires_at\": \"2026-12-01T00:00:00Z\" }\n")
+			TEXT("      \"auth\": { \"required\": true, \"state\": \"authenticated\", \"source\": \"keyring\" }\n")
 			TEXT("    }\n")
 			TEXT("  }\n")
 			TEXT("}");
@@ -2029,33 +2029,33 @@ bool FFlexVaultBrokerAuthParsingTest::RunTest(const FString& Parameters)
 		TestTrue(TEXT("ParseFlexVaultRemoteAndAuth succeeds"), ParseFlexVaultRemoteAndAuth(Envelope, Remote, Auth));
 		TestTrue(TEXT("Remote is broker"), Remote.IsBroker());
 		TestEqual(TEXT("Remote broker URL"), Remote.BrokerUrl, TEXT("https://broker.fxv.dev/"));
+		TestTrue(TEXT("Auth required is true"), Auth.bRequired);
 		TestEqual(TEXT("Auth state"), Auth.State, TEXT("authenticated"));
-		TestEqual(TEXT("Auth identity"), Auth.Identity, TEXT("matt@fxv.dev"));
+		TestEqual(TEXT("Auth source"), Auth.Source, TEXT("keyring"));
 		TestFalse(TEXT("Authenticated does not need login"), Auth.NeedsLogin());
 	}
 
-	// 2. Broker workspace (expired)
+	// 2. Broker workspace (missing_token and expired both need login; unverified does not)
 	{
-		const FString StatusJson =
-			TEXT("{\n")
-			TEXT("  \"message\": {\n")
-			TEXT("    \"kind\": \"status\",\n")
-			TEXT("    \"version\": \"2.2\",\n")
-			TEXT("    \"payload\": {\n")
-			TEXT("      \"remote\": { \"mode\": \"broker\", \"broker\": \"https://staging.broker.fxv.dev/\" },\n")
-			TEXT("      \"auth\": { \"required\": true, \"state\": \"expired\" }\n")
-			TEXT("    }\n")
-			TEXT("  }\n")
-			TEXT("}");
-
+		const FString MissingJson =
+			TEXT("{ \"message\": { \"kind\": \"status\", \"version\": \"2.2\", \"payload\": { \"remote\": { \"mode\": \"broker\", \"broker\": \"https://staging.broker.fxv.dev/\" }, \"auth\": { \"required\": true, \"state\": \"missing_token\" } } } }");
 		TSharedPtr<FJsonObject> Envelope;
-		TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(StatusJson);
-		TestTrue(TEXT("Deserialize expired broker status JSON"), FJsonSerializer::Deserialize(Reader, Envelope));
+		TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(MissingJson);
+		TestTrue(TEXT("Deserialize missing_token status JSON"), FJsonSerializer::Deserialize(Reader, Envelope));
 
 		FFlexVaultRemoteInfo Remote;
 		FFlexVaultAuthInfo Auth;
-		TestTrue(TEXT("ParseFlexVaultRemoteAndAuth succeeds for expired"), ParseFlexVaultRemoteAndAuth(Envelope, Remote, Auth));
-		TestTrue(TEXT("Expired auth needs login"), Auth.NeedsLogin());
+		TestTrue(TEXT("ParseFlexVaultRemoteAndAuth succeeds for missing_token"), ParseFlexVaultRemoteAndAuth(Envelope, Remote, Auth));
+		TestTrue(TEXT("missing_token needs login"), Auth.NeedsLogin());
+
+		Auth.State = TEXT("expired");
+		TestTrue(TEXT("expired needs login"), Auth.NeedsLogin());
+
+		Auth.State = TEXT("unverified");
+		TestFalse(TEXT("unverified does not need login"), Auth.NeedsLogin());
+
+		Auth.State = TEXT("forbidden");
+		TestFalse(TEXT("forbidden does not need login"), Auth.NeedsLogin());
 	}
 
 	// 3. Legacy status JSON without remote/auth
@@ -2071,18 +2071,22 @@ bool FFlexVaultBrokerAuthParsingTest::RunTest(const FString& Parameters)
 		TestFalse(TEXT("Legacy remote is not broker"), Remote.IsBroker());
 	}
 
-	// 4. Structured broker-error envelope (token_expired)
+	// 4. Structured broker-error envelope with leading stderr lines (merged pipe)
 	{
 		TArray<FString> Lines = {
-			TEXT("{ \"message\": { \"kind\": \"error\", \"version\": \"1.1\", \"payload\": { \"message\": \"Broker authentication failed or session has expired (HTTP 401 Unauthorized)\", \"exit_code\": 95, \"error_data\": { \"kind\": \"broker-error\", \"version\": \"1.0\", \"payload\": { \"reason\": \"token_expired\", \"broker\": \"https://broker.fxv.dev/\", \"http_status\": 401 } } } } }")
+			TEXT("To authenticate with FlexVault, open this URL in your browser:"),
+			TEXT("  https://broker.fxv.dev/device"),
+			TEXT("{ \"message\": { \"kind\": \"error\", \"version\": \"1.1\", \"payload\": { \"message\": \"Broker authentication failed or session has expired (HTTP 401 Unauthorized)\", \"exit_code\": 95, \"error_data\": { \"kind\": \"broker-error\", \"version\": \"1.0\", \"payload\": { \"reason\": \"token_expired\", \"broker\": \"https://broker.fxv.dev/\", \"tenant\": \"acme\", \"repo\": \"game\", \"http_status\": 401 } } } } }")
 		};
 		FFlexVaultBrokerError BrokerErr;
-		TestTrue(TEXT("ParseFlexVaultBrokerError succeeds for token_expired"), ParseFlexVaultBrokerError(Lines, BrokerErr));
+		TestTrue(TEXT("ParseFlexVaultBrokerError parses JSON after stderr lines"), ParseFlexVaultBrokerError(Lines, BrokerErr));
 		TestEqual(TEXT("Reason is token_expired"), BrokerErr.Reason, TEXT("token_expired"));
 		TestTrue(TEXT("token_expired is auth required"), BrokerErr.IsAuthRequired());
 		TestTrue(TEXT("HttpStatus is set"), BrokerErr.HttpStatus.IsSet());
 		TestEqual(TEXT("HttpStatus is 401"), BrokerErr.HttpStatus.Get(0), 401);
 		TestEqual(TEXT("BrokerUrl matches"), BrokerErr.BrokerUrl, TEXT("https://broker.fxv.dev/"));
+		TestEqual(TEXT("Tenant matches"), BrokerErr.Tenant, TEXT("acme"));
+		TestEqual(TEXT("Repo matches"), BrokerErr.Repo, TEXT("game"));
 		TestTrue(TEXT("Outer error message captured"), BrokerErr.Message.Contains(TEXT("401 Unauthorized")));
 	}
 

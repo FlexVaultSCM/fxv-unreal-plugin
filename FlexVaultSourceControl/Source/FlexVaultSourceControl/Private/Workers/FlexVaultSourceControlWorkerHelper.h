@@ -94,38 +94,45 @@ struct FFlexVaultRemoteInfo
 
 /**
  * Broker authentication state extracted from `fxv status --format json` (v2.2+).
+ * Matches fxv-core's StatusAuthJson (`{ required, state, source }`) plus optional
+ * in-session Identity populated after interactive `fxv login`.
  */
 struct FFlexVaultAuthInfo
 {
-	/** "authenticated", "not_authenticated", "expired", "unverified", "offline", or "not_applicable". */
+	bool bRequired = false;
+	/** "authenticated", "unverified", "missing_token", "expired", "forbidden", or "offline". */
 	FString State;
-	FString BrokerUrl;
+	/** "env", "keyring", or empty. */
+	FString Source;
+	/** Account email populated in-session after interactive `fxv login`. */
 	FString Identity;
-	FString ExpiresAt;
 
 	bool NeedsLogin() const
 	{
-		return State.Equals(TEXT("not_authenticated"), ESearchCase::IgnoreCase) ||
+		return State.Equals(TEXT("missing_token"), ESearchCase::IgnoreCase) ||
 			State.Equals(TEXT("expired"), ESearchCase::IgnoreCase);
 	}
 	bool operator==(const FFlexVaultAuthInfo& Other) const
 	{
-		return State == Other.State && BrokerUrl == Other.BrokerUrl && Identity == Other.Identity && ExpiresAt == Other.ExpiresAt;
+		return bRequired == Other.bRequired && State == Other.State && Source == Other.Source && Identity == Other.Identity;
 	}
 	bool operator!=(const FFlexVaultAuthInfo& Other) const { return !(*this == Other); }
 };
 
 /**
- * Structured broker error extracted from a `broker-error` JSON envelope.
+ * Structured broker error extracted from an error envelope's `payload.error_data`
+ * (`kind: "broker-error"`).
  */
 struct FFlexVaultBrokerError
 {
 	/** "not_authenticated", "token_expired", "forbidden", "broker_unreachable", "invalid_broker_url". */
 	FString Reason;
 	FString BrokerUrl;
+	FString Tenant;
+	FString Repo;
 	TOptional<int32> HttpStatus;
+	/** Human-readable error message from outer `message.payload.message`. */
 	FString Message;
-	FString Advice;
 
 	bool IsAuthRequired() const
 	{
@@ -366,6 +373,15 @@ bool ParseFlexVaultRemoteAndAuth(
 );
 
 /**
+ * Deserializes a FlexVault JSON envelope from CLI output lines, tolerating leading
+ * non-JSON stderr lines (e.g. interactive device-code instructions before stdout JSON).
+ */
+bool TryExtractFlexVaultJsonEnvelope(
+	const TArray<FString>& InOutputLines,
+	TSharedPtr<class FJsonObject>& OutEnvelope
+);
+
+/**
  * Extracts a structured `broker-error` payload from CLI `--format json` output lines.
  * Returns true if the output contains a `broker-error` envelope.
  */
@@ -376,14 +392,16 @@ bool ParseFlexVaultBrokerError(
 
 /**
  * Launches interactive browser login for a brokered workspace via `fxv login --format json --no-color`.
- * Returns true if login succeeded. If it failed, OutErrorMessage will contain the error details.
+ * Safe to call from a background thread; pass InCancelToken to allow cancelling the process.
  */
 bool RunFlexVaultBrokerLoginCommand(
 	const FString& InBinaryPath,
 	const FString& InWorkspacePath,
 	FSourceControlResultInfo& OutResultInfo,
 	FString* OutErrorMessage = nullptr,
-	FString* OutIdentity = nullptr
+	FString* OutUsername = nullptr,
+	FString* OutEmail = nullptr,
+	TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> InCancelToken = nullptr
 );
 
 /**

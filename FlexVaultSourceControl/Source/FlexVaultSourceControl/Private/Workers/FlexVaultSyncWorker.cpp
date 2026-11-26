@@ -73,7 +73,16 @@ bool FFlexVaultSyncWorker::Execute(FFlexVaultSourceControlCommand& InCommand)
 	UE_LOG(LogFlexVault, Display, TEXT("FlexVault SCM: Syncing workspace with remote..."));
 
 	TArray<FString> OutputLines;
-	bool bSucceeded = RunFlexVaultCommand(InCommand.BinaryPath, InCommand.WorkspacePath, SyncArgs, OutputLines, InCommand.ResultInfo, false, &InCommand);
+	bool bSucceeded = RunFlexVaultCommand(InCommand.BinaryPath, InCommand.WorkspacePath, SyncArgs, OutputLines, InCommand.ResultInfo, false, &InCommand, 0.0, nullptr, &InCommand.LastExitCode);
+
+	if (!bSucceeded)
+	{
+		FFlexVaultBrokerError BrokerErr;
+		if (ParseFlexVaultBrokerError(OutputLines, BrokerErr))
+		{
+			InCommand.BrokerError = BrokerErr;
+		}
+	}
 
 	if (bSucceeded && OutputLines.Num() > 0)
 	{

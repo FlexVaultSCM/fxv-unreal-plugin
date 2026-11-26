@@ -6,10 +6,12 @@
 
 #include "Widgets/SCompoundWidget.h"
 #include "Widgets/DeclarativeSyntaxSupport.h"
+#include "Templates/Atomic.h"
 
 class SWindow;
 class SEditableTextBox;
 class STextBlock;
+class SButton;
 
 class SFlexVaultLoginDialog : public SCompoundWidget
 {
@@ -28,17 +30,19 @@ public:
 	SLATE_END_ARGS()
 
 	void Construct(const FArguments& InArgs);
+	virtual ~SFlexVaultLoginDialog();
 
 	virtual bool SupportsKeyboardFocus() const override { return true; }
 	virtual FReply OnKeyDown(const FGeometry& MyGeometry, const FKeyEvent& InKeyEvent) override;
 
-	/** Displays the modal login dialog. Returns true if user logged in, outputting the username/identity. */
+	/** Displays the modal login dialog. Returns true if user logged in, outputting the username (and optional broker email). */
 	static bool ShowModal(
 		const FString& InBinaryPath,
 		const FString& InWorkspacePath,
 		FString& OutLoggedInUser,
 		bool bInIsBrokerWorkspace = false,
-		const FString& InBrokerUrl = FString()
+		const FString& InBrokerUrl = FString(),
+		FString* OutLoggedInEmail = nullptr
 	);
 
 private:
@@ -54,9 +58,13 @@ private:
 
 	TSharedPtr<SEditableTextBox> UsernameTextBox;
 	TSharedPtr<STextBlock> ErrorTextBlock;
+	TSharedPtr<SButton> LoginButton;
 
+	TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> LoginCancelToken;
+	bool bLoginInProgress = false;
 	bool bLoginSuccessful = false;
 	FString LoggedInUser;
+	FString LoggedInEmail;
 };
 
 #endif // SOURCE_CONTROL_WITH_SLATE
