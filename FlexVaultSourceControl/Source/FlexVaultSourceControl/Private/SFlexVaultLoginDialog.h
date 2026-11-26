@@ -6,6 +6,7 @@
 
 #include "Widgets/SCompoundWidget.h"
 #include "Widgets/DeclarativeSyntaxSupport.h"
+#include "Templates/Atomic.h"
 
 class SWindow;
 class SEditableTextBox;
@@ -17,19 +18,31 @@ public:
 	SLATE_BEGIN_ARGS(SFlexVaultLoginDialog)
 		: _BinaryPath()
 		, _WorkspacePath()
+		, _bIsBrokerWorkspace(false)
+		, _BrokerUrl()
 	{}
 		SLATE_ARGUMENT(FString, BinaryPath)
 		SLATE_ARGUMENT(FString, WorkspacePath)
+		SLATE_ARGUMENT(bool, bIsBrokerWorkspace)
+		SLATE_ARGUMENT(FString, BrokerUrl)
 		SLATE_ARGUMENT(TSharedPtr<SWindow>, ParentWindow)
 	SLATE_END_ARGS()
 
 	void Construct(const FArguments& InArgs);
+	virtual ~SFlexVaultLoginDialog();
 
 	virtual bool SupportsKeyboardFocus() const override { return true; }
 	virtual FReply OnKeyDown(const FGeometry& MyGeometry, const FKeyEvent& InKeyEvent) override;
 
-	/** Displays the modal login dialog. Returns true if user logged in, outputting the username. */
-	static bool ShowModal(const FString& InBinaryPath, const FString& InWorkspacePath, FString& OutLoggedInUser);
+	/** Displays the modal login dialog. Returns true if user logged in, outputting the username (and optional broker email). */
+	static bool ShowModal(
+		const FString& InBinaryPath,
+		const FString& InWorkspacePath,
+		FString& OutLoggedInUser,
+		bool bInIsBrokerWorkspace = false,
+		const FString& InBrokerUrl = FString(),
+		FString* OutLoggedInEmail = nullptr
+	);
 
 private:
 	FReply OnLoginClicked();
@@ -38,13 +51,18 @@ private:
 
 	FString BinaryPath;
 	FString WorkspacePath;
+	bool bIsBrokerWorkspace = false;
+	FString BrokerUrl;
 	TWeakPtr<SWindow> ParentWindow;
 
 	TSharedPtr<SEditableTextBox> UsernameTextBox;
 	TSharedPtr<STextBlock> ErrorTextBlock;
 
+	TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> LoginCancelToken;
+	bool bLoginInProgress = false;
 	bool bLoginSuccessful = false;
 	FString LoggedInUser;
+	FString LoggedInEmail;
 };
 
 #endif // SOURCE_CONTROL_WITH_SLATE

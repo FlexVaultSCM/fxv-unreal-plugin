@@ -156,6 +156,31 @@ FCriticalSection& GetFlexVaultSnapshotLock()
 	return SnapshotLock;
 }
 
+FString FindFlexVaultWorkspaceRoot(const FString& StartDir)
+{
+	const FString BaseDir = StartDir.IsEmpty() ? FPaths::ProjectDir() : StartDir;
+	FString Dir = FPaths::ConvertRelativePathToFull(BaseDir);
+	FPaths::NormalizeDirectoryName(Dir);
+
+	while (!Dir.IsEmpty())
+	{
+		if (IFileManager::Get().DirectoryExists(*FPaths::Combine(Dir, TEXT(".fxv_workspace"))))
+		{
+			return Dir + TEXT("/");
+		}
+
+		FString Parent = FPaths::GetPath(Dir);
+		FPaths::NormalizeDirectoryName(Parent);
+		if (Parent.IsEmpty() || Parent == Dir)
+		{
+			break;
+		}
+		Dir = Parent;
+	}
+
+	return FPaths::ConvertRelativePathToFull(BaseDir);
+}
+
 bool RunFlexVaultCommand(
 	const FString& InBinaryPath,
 	const FString& InWorkspacePath,
@@ -165,7 +190,8 @@ bool RunFlexVaultCommand(
 	bool bIgnoreError,
 	const FFlexVaultSourceControlCommand* InCancelCommand,
 	double InTimeoutSeconds,
-	TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> InCancelToken
+	TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> InCancelToken,
+	int32* OutReturnCode
 )
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(RunFlexVaultCommand);
@@ -237,6 +263,10 @@ bool RunFlexVaultCommand(
 
 	int32 ReturnCode = 0;
 	FPlatformProcess::GetProcReturnCode(Process, &ReturnCode);
+	if (OutReturnCode != nullptr)
+	{
+		*OutReturnCode = ReturnCode;
+	}
 	FPlatformProcess::CloseProc(Process);
 	FPlatformProcess::ClosePipe(PipeRead, PipeWrite);
 
@@ -1187,6 +1217,211 @@ bool EnsureFlexVaultLoggedIn(
 	return true;
 }
 
+bool ParseFlexVaultRemoteAndAuth(
+	const TSharedPtr<FJsonObject>& InEnvelope,
+	FFlexVaultRemoteInfo& OutRemote,
+	FFlexVaultAuthInfo& OutAuth
+)
+{
+	OutRemote = FFlexVaultRemoteInfo();
+	OutAuth = FFlexVaultAuthInfo();
+
+	TSharedPtr<FJsonObject> PayloadObj;
+	if (!TryGetFlexVaultEnvelopePayload(InEnvelope, PayloadObj))
+	{
+		return false;
+	}
+
+	bool bFoundAny = false;
+
+	const TSharedPtr<FJsonObject>* RemoteObj = nullptr;
+	if (PayloadObj->TryGetObjectField(TEXT("remote"), RemoteObj) && RemoteObj != nullptr && (*RemoteObj).IsValid())
+	{
+		(*RemoteObj)->TryGetStringField(TEXT("mode"), OutRemote.Mode);
+		(*RemoteObj)->TryGetStringField(TEXT("broker"), OutRemote.BrokerUrl);
+		bFoundAny = true;
+	}
+
+	const TSharedPtr<FJsonObject>* AuthObj = nullptr;
+	if (PayloadObj->TryGetObjectField(TEXT("auth"), AuthObj) && AuthObj != nullptr && (*AuthObj).IsValid())
+	{
+		(*AuthObj)->TryGetBoolField(TEXT("required"), OutAuth.bRequired);
+		(*AuthObj)->TryGetStringField(TEXT("state"), OutAuth.State);
+		(*AuthObj)->TryGetStringField(TEXT("source"), OutAuth.Source);
+		bFoundAny = true;
+	}
+
+	return bFoundAny;
+}
+
+bool TryExtractFlexVaultJsonEnvelope(
+	const TArray<FString>& InOutputLines,
+	TSharedPtr<FJsonObject>& OutEnvelope
+)
+{
+	OutEnvelope.Reset();
+	if (InOutputLines.Num() == 0)
+	{
+		return false;
+	}
+
+	// Fast path: entire output is valid JSON.
+	FString RawJson = FString::Join(InOutputLines, TEXT("\n"));
+	{
+		TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(RawJson);
+		if (FJsonSerializer::Deserialize(Reader, OutEnvelope) && OutEnvelope.IsValid())
+		{
+			return true;
+		}
+	}
+
+	// Fallback: LaunchProcessWithPipe merges stderr+stdout; skip leading non-JSON lines
+	// (such as device-code browser instructions on stderr) and parse from the first '{'.
+	for (int32 i = 0; i < InOutputLines.Num(); ++i)
+	{
+		const FString& Line = InOutputLines[i];
+		if (Line.StartsWith(TEXT("{")))
+		{
+			FString Slice;
+			for (int32 j = i; j < InOutputLines.Num(); ++j)
+			{
+				if (j > i)
+				{
+					Slice.AppendChar(TEXT('\n'));
+				}
+				Slice.Append(InOutputLines[j]);
+			}
+			TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Slice);
+			if (FJsonSerializer::Deserialize(Reader, OutEnvelope) && OutEnvelope.IsValid())
+			{
+				return true;
+			}
+		}
+	}
+
+	OutEnvelope.Reset();
+	return false;
+}
+
+bool ParseFlexVaultBrokerError(
+	const TArray<FString>& InOutputLines,
+	FFlexVaultBrokerError& OutBrokerError
+)
+{
+	OutBrokerError = FFlexVaultBrokerError();
+	TSharedPtr<FJsonObject> Envelope;
+	if (!TryExtractFlexVaultJsonEnvelope(InOutputLines, Envelope))
+	{
+		return false;
+	}
+
+	const TSharedPtr<FJsonObject>* MessageObj = nullptr;
+	if (!Envelope->TryGetObjectField(TEXT("message"), MessageObj) || MessageObj == nullptr || !(*MessageObj).IsValid())
+	{
+		return false;
+	}
+
+	const TSharedPtr<FJsonObject>* PayloadObj = nullptr;
+	if (!(*MessageObj)->TryGetObjectField(TEXT("payload"), PayloadObj) || PayloadObj == nullptr || !(*PayloadObj).IsValid())
+	{
+		return false;
+	}
+
+	// Standard fxv error envelope: message.kind == "error", message.payload.error_data.kind == "broker-error"
+	const TSharedPtr<FJsonObject>* ErrorDataObj = nullptr;
+	if (!(*PayloadObj)->TryGetObjectField(TEXT("error_data"), ErrorDataObj) || ErrorDataObj == nullptr || !(*ErrorDataObj).IsValid())
+	{
+		return false;
+	}
+
+	FString ErrorDataKind;
+	if (!(*ErrorDataObj)->TryGetStringField(TEXT("kind"), ErrorDataKind) || !ErrorDataKind.Equals(TEXT("broker-error"), ESearchCase::IgnoreCase))
+	{
+		return false;
+	}
+
+	const TSharedPtr<FJsonObject>* BrokerPayloadObj = nullptr;
+	if (!(*ErrorDataObj)->TryGetObjectField(TEXT("payload"), BrokerPayloadObj) || BrokerPayloadObj == nullptr || !(*BrokerPayloadObj).IsValid())
+	{
+		return false;
+	}
+
+	(*PayloadObj)->TryGetStringField(TEXT("message"), OutBrokerError.Message);
+	(*BrokerPayloadObj)->TryGetStringField(TEXT("reason"), OutBrokerError.Reason);
+	(*BrokerPayloadObj)->TryGetStringField(TEXT("broker"), OutBrokerError.BrokerUrl);
+	(*BrokerPayloadObj)->TryGetStringField(TEXT("tenant"), OutBrokerError.Tenant);
+	(*BrokerPayloadObj)->TryGetStringField(TEXT("repo"), OutBrokerError.Repo);
+	int32 HttpStatus = 0;
+	if ((*BrokerPayloadObj)->TryGetNumberField(TEXT("http_status"), HttpStatus))
+	{
+		OutBrokerError.HttpStatus = HttpStatus;
+	}
+
+	return !OutBrokerError.Reason.IsEmpty();
+}
+
+bool RunFlexVaultBrokerLoginCommand(
+	const FString& InBinaryPath,
+	const FString& InWorkspacePath,
+	FSourceControlResultInfo& OutResultInfo,
+	FString* OutErrorMessage,
+	FString* OutUsername,
+	FString* OutEmail,
+	TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> InCancelToken
+)
+{
+	// Omit --unattended so `fxv login` can launch the interactive browser device flow.
+	TArray<FString> Args = {
+		TEXT("login"),
+		TEXT("--format"),
+		TEXT("json"),
+		TEXT("--no-color")
+	};
+
+	TArray<FString> OutputLines;
+	bool bOk = RunFlexVaultCommand(InBinaryPath, InWorkspacePath, Args, OutputLines, OutResultInfo, false, nullptr, 120.0, InCancelToken);
+	if (!bOk)
+	{
+		if (OutErrorMessage != nullptr)
+		{
+			FFlexVaultBrokerError BrokerErr;
+			FString ParsedError;
+			if (ParseFlexVaultBrokerError(OutputLines, BrokerErr) && !BrokerErr.Message.IsEmpty())
+			{
+				*OutErrorMessage = BrokerErr.Message;
+			}
+			else if (ParseFlexVaultErrorMessage(OutputLines, ParsedError))
+			{
+				*OutErrorMessage = ParsedError;
+			}
+			else if (OutResultInfo.ErrorMessages.Num() > 0)
+			{
+				*OutErrorMessage = OutResultInfo.ErrorMessages.Last().ToString();
+			}
+		}
+		return false;
+	}
+
+	TSharedPtr<FJsonObject> Envelope;
+	if (TryExtractFlexVaultJsonEnvelope(OutputLines, Envelope))
+	{
+		TSharedPtr<FJsonObject> PayloadObj;
+		if (TryGetFlexVaultEnvelopePayload(Envelope, PayloadObj))
+		{
+			if (OutUsername != nullptr)
+			{
+				PayloadObj->TryGetStringField(TEXT("username"), *OutUsername);
+			}
+			if (OutEmail != nullptr)
+			{
+				PayloadObj->TryGetStringField(TEXT("email"), *OutEmail);
+			}
+		}
+	}
+
+	return true;
+}
+
 bool RunFlexVaultLoginCommand(
 	const FString& InBinaryPath,
 	const FString& InWorkspacePath,
@@ -2056,5 +2291,256 @@ void UpdateFlexVaultHistorySyncDisabledStates(
 	}
 }
 #endif
+
+bool RunFlexVaultAuthStatus(
+	const FString& InBinaryPath,
+	const FString& InWorkingDir,
+	FFlexVaultAuthStatusResult& OutStatus,
+	FString* OutErrorMessage,
+	TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> InCancelToken)
+{
+	OutStatus = FFlexVaultAuthStatusResult();
+
+	TArray<FString> Args = { TEXT("login"), TEXT("--status"), TEXT("--format"), TEXT("json"), TEXT("--no-color") };
+	TArray<FString> OutputLines;
+	FSourceControlResultInfo ResultInfo;
+	const bool bOk = RunFlexVaultCommand(
+		InBinaryPath,
+		InWorkingDir,
+		Args,
+		OutputLines,
+		ResultInfo,
+		/*bIgnoreError=*/true,
+		/*InCancelCommand=*/nullptr,
+		/*InTimeoutSeconds=*/15.0,
+		InCancelToken
+	);
+
+	TSharedPtr<FJsonObject> Envelope;
+	const FString JsonStr = FString::Join(OutputLines, TEXT("\n"));
+	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonStr);
+	if (FJsonSerializer::Deserialize(Reader, Envelope) && Envelope.IsValid())
+	{
+		const TSharedPtr<FJsonObject>* MessageObj = nullptr;
+		if (Envelope->TryGetObjectField(TEXT("message"), MessageObj) && MessageObj && MessageObj->IsValid())
+		{
+			FString Kind;
+			(*MessageObj)->TryGetStringField(TEXT("kind"), Kind);
+			const TSharedPtr<FJsonObject>* PayloadObj = nullptr;
+			if (Kind.Equals(TEXT("auth-status"), ESearchCase::IgnoreCase) &&
+				(*MessageObj)->TryGetObjectField(TEXT("payload"), PayloadObj) && PayloadObj && PayloadObj->IsValid())
+			{
+				(*PayloadObj)->TryGetBoolField(TEXT("authenticated"), OutStatus.bAuthenticated);
+				(*PayloadObj)->TryGetStringField(TEXT("broker"), OutStatus.BrokerUrl);
+				(*PayloadObj)->TryGetStringField(TEXT("email"), OutStatus.Email);
+				(*PayloadObj)->TryGetStringField(TEXT("source"), OutStatus.Source);
+				return true;
+			}
+		}
+	}
+
+	if (OutErrorMessage != nullptr)
+	{
+		if (!ParseFlexVaultErrorMessage(OutputLines, *OutErrorMessage) || OutErrorMessage->IsEmpty())
+		{
+			*OutErrorMessage = bOk ? TEXT("Unexpected response from fxv login --status.") : TEXT("Failed to check FlexVault authentication status.");
+		}
+	}
+	return false;
+}
+
+bool RunFlexVaultTenantList(
+	const FString& InBinaryPath,
+	const FString& InWorkingDir,
+	TArray<FFlexVaultTenantItem>& OutTenants,
+	FString* OutErrorMessage,
+	TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> InCancelToken)
+{
+	OutTenants.Empty();
+
+	TArray<FString> Args = { TEXT("tenant"), TEXT("list"), TEXT("--format"), TEXT("json"), TEXT("--no-color") };
+	TArray<FString> OutputLines;
+	FSourceControlResultInfo ResultInfo;
+	const bool bOk = RunFlexVaultCommand(
+		InBinaryPath,
+		InWorkingDir,
+		Args,
+		OutputLines,
+		ResultInfo,
+		/*bIgnoreError=*/true,
+		/*InCancelCommand=*/nullptr,
+		/*InTimeoutSeconds=*/20.0,
+		InCancelToken
+	);
+
+	TSharedPtr<FJsonObject> Envelope;
+	const FString JsonStr = FString::Join(OutputLines, TEXT("\n"));
+	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonStr);
+	if (bOk && FJsonSerializer::Deserialize(Reader, Envelope) && Envelope.IsValid())
+	{
+		const TSharedPtr<FJsonObject>* MessageObj = nullptr;
+		if (Envelope->TryGetObjectField(TEXT("message"), MessageObj) && MessageObj && MessageObj->IsValid())
+		{
+			const TSharedPtr<FJsonObject>* PayloadObj = nullptr;
+			if ((*MessageObj)->TryGetObjectField(TEXT("payload"), PayloadObj) && PayloadObj && PayloadObj->IsValid())
+			{
+				const TArray<TSharedPtr<FJsonValue>>* TenantsArray = nullptr;
+				if ((*PayloadObj)->TryGetArrayField(TEXT("tenants"), TenantsArray) && TenantsArray)
+				{
+					for (const TSharedPtr<FJsonValue>& Val : *TenantsArray)
+					{
+						const TSharedPtr<FJsonObject>* Obj = nullptr;
+						if (Val.IsValid() && Val->TryGetObject(Obj) && Obj && Obj->IsValid())
+						{
+							FFlexVaultTenantItem Item;
+							(*Obj)->TryGetStringField(TEXT("tenant_id"), Item.TenantId);
+							(*Obj)->TryGetStringField(TEXT("slug"), Item.Slug);
+							(*Obj)->TryGetStringField(TEXT("name"), Item.Name);
+							(*Obj)->TryGetStringField(TEXT("role"), Item.Role);
+							if (!Item.Slug.IsEmpty())
+							{
+								OutTenants.Add(MoveTemp(Item));
+							}
+						}
+					}
+					return true;
+				}
+			}
+		}
+	}
+
+	if (OutErrorMessage != nullptr)
+	{
+		if (!ParseFlexVaultErrorMessage(OutputLines, *OutErrorMessage) || OutErrorMessage->IsEmpty())
+		{
+			*OutErrorMessage = TEXT("Failed to list FlexVault organizations.");
+		}
+	}
+	return false;
+}
+
+bool RunFlexVaultRepoList(
+	const FString& InBinaryPath,
+	const FString& InWorkingDir,
+	const FString& InTenantSlug,
+	TArray<FFlexVaultRepoItem>& OutRepos,
+	FString* OutErrorMessage,
+	TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> InCancelToken)
+{
+	OutRepos.Empty();
+
+	TArray<FString> Args = { TEXT("repository"), TEXT("list"), TEXT("--tenant"), InTenantSlug, TEXT("--format"), TEXT("json"), TEXT("--no-color") };
+	TArray<FString> OutputLines;
+	FSourceControlResultInfo ResultInfo;
+	const bool bOk = RunFlexVaultCommand(
+		InBinaryPath,
+		InWorkingDir,
+		Args,
+		OutputLines,
+		ResultInfo,
+		/*bIgnoreError=*/true,
+		/*InCancelCommand=*/nullptr,
+		/*InTimeoutSeconds=*/20.0,
+		InCancelToken
+	);
+
+	TSharedPtr<FJsonObject> Envelope;
+	const FString JsonStr = FString::Join(OutputLines, TEXT("\n"));
+	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonStr);
+	if (bOk && FJsonSerializer::Deserialize(Reader, Envelope) && Envelope.IsValid())
+	{
+		const TSharedPtr<FJsonObject>* MessageObj = nullptr;
+		if (Envelope->TryGetObjectField(TEXT("message"), MessageObj) && MessageObj && MessageObj->IsValid())
+		{
+			const TSharedPtr<FJsonObject>* PayloadObj = nullptr;
+			if ((*MessageObj)->TryGetObjectField(TEXT("payload"), PayloadObj) && PayloadObj && PayloadObj->IsValid())
+			{
+				const TArray<TSharedPtr<FJsonValue>>* ReposArray = nullptr;
+				if ((*PayloadObj)->TryGetArrayField(TEXT("repos"), ReposArray) && ReposArray)
+				{
+					for (const TSharedPtr<FJsonValue>& Val : *ReposArray)
+					{
+						const TSharedPtr<FJsonObject>* Obj = nullptr;
+						if (Val.IsValid() && Val->TryGetObject(Obj) && Obj && Obj->IsValid())
+						{
+							FFlexVaultRepoItem Item;
+							(*Obj)->TryGetStringField(TEXT("repo_id"), Item.RepoId);
+							(*Obj)->TryGetStringField(TEXT("name"), Item.Name);
+							(*Obj)->TryGetStringField(TEXT("role"), Item.Role);
+							(*Obj)->TryGetStringField(TEXT("uri"), Item.Uri);
+							if (!Item.Uri.IsEmpty())
+							{
+								OutRepos.Add(MoveTemp(Item));
+							}
+						}
+					}
+					return true;
+				}
+			}
+		}
+	}
+
+	if (OutErrorMessage != nullptr)
+	{
+		if (!ParseFlexVaultErrorMessage(OutputLines, *OutErrorMessage) || OutErrorMessage->IsEmpty())
+		{
+			*OutErrorMessage = TEXT("Failed to list FlexVault repositories.");
+		}
+	}
+	return false;
+}
+
+bool RunFlexVaultInitWorkspace(
+	const FString& InBinaryPath,
+	const FString& InTargetPath,
+	const FString& InRepoUri,
+	bool bLocalOnly,
+	FString* OutErrorMessage,
+	TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> InCancelToken)
+{
+	TArray<FString> Args = { TEXT("init") };
+	if (bLocalOnly)
+	{
+		Args.Add(TEXT("--local-only"));
+	}
+	else if (!InRepoUri.IsEmpty())
+	{
+		Args.Add(InRepoUri);
+	}
+	Args.Add(TEXT("--path"));
+	Args.Add(InTargetPath);
+	Args.Add(TEXT("--unattended"));
+	Args.Add(TEXT("--format"));
+	Args.Add(TEXT("json"));
+	Args.Add(TEXT("--no-color"));
+
+	TArray<FString> OutputLines;
+	FSourceControlResultInfo ResultInfo;
+	const bool bOk = RunFlexVaultCommand(
+		InBinaryPath,
+		InTargetPath,
+		Args,
+		OutputLines,
+		ResultInfo,
+		/*bIgnoreError=*/true,
+		/*InCancelCommand=*/nullptr,
+		/*InTimeoutSeconds=*/60.0,
+		InCancelToken
+	);
+
+	if (bOk)
+	{
+		return true;
+	}
+
+	if (OutErrorMessage != nullptr)
+	{
+		if (!ParseFlexVaultErrorMessage(OutputLines, *OutErrorMessage) || OutErrorMessage->IsEmpty())
+		{
+			*OutErrorMessage = TEXT("Failed to initialize FlexVault workspace.");
+		}
+	}
+	return false;
+}
 
 #undef LOCTEXT_NAMESPACE

@@ -18,6 +18,7 @@
 #include "Workers/FlexVaultRevertWorker.h"
 #include "Workers/FlexVaultResolveWorker.h"
 #include "Workers/FlexVaultSyncWorker.h"
+#include "Workers/FlexVaultConnectWorker.h"
 #include "SourceControlOperations.h"
 
 #include "Dom/JsonObject.h"
@@ -171,8 +172,8 @@ bool FFlexVaultVersionCheckTest::RunTest(const FString& Parameters)
 	ResultInfo.ErrorMessages.Empty();
 	TestTrue(FString::Printf(TEXT("CLI version %s is compatible"), *PatchIncrementVersion), CheckFlexVaultVersion(WidenedEnv, ResultInfo));
 
-	// 3b. Compatible version within the pinned range (minor increment if range spans multiple minors)
-	if (FlexVaultCliCompatibility::MaxMinor > FlexVaultCliCompatibility::MinMinor + 1)
+	// 3b. Compatible version within the pinned range (minor increment if range spans multiple minors/majors)
+	if (FlexVaultCliCompatibility::MaxMajor > FlexVaultCliCompatibility::MinMajor || FlexVaultCliCompatibility::MaxMinor > FlexVaultCliCompatibility::MinMinor + 1)
 	{
 		const FString MidRangeVersion = FString::Printf(TEXT("%d.%d.0"), FlexVaultCliCompatibility::MinMajor, FlexVaultCliCompatibility::MinMinor + 1);
 		TSharedPtr<FJsonObject> EnvMid = MakeShared<FJsonObject>();
@@ -1095,7 +1096,7 @@ bool FFlexVaultCheckVersionTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("Extracted version matches"), ExtractedVersion, PatchVersion);
 		TestEqual(TEXT("No errors on success"), ResultInfo.ErrorMessages.Num(), 0);
 	}
-	if (FlexVaultCliCompatibility::MaxMinor > FlexVaultCliCompatibility::MinMinor + 1)
+	if (FlexVaultCliCompatibility::MaxMajor > FlexVaultCliCompatibility::MinMajor || FlexVaultCliCompatibility::MaxMinor > FlexVaultCliCompatibility::MinMinor + 1)
 	{
 		const FString MidVersion = FString::Printf(TEXT("%d.%d.0"), FlexVaultCliCompatibility::MinMajor, FlexVaultCliCompatibility::MinMinor + 1);
 		FSourceControlResultInfo ResultInfo;
@@ -1103,6 +1104,16 @@ bool FFlexVaultCheckVersionTest::RunTest(const FString& Parameters)
 		TSharedPtr<FJsonObject> Env = MakeEnvelope(MidVersion);
 		TestTrue(FString::Printf(TEXT("%s is compatible"), *MidVersion), CheckFlexVaultVersion(Env, ResultInfo, &ExtractedVersion));
 		TestEqual(TEXT("Extracted version matches"), ExtractedVersion, MidVersion);
+		TestEqual(TEXT("No errors on success"), ResultInfo.ErrorMessages.Num(), 0);
+	}
+	if (FlexVaultCliCompatibility::MaxMajor > FlexVaultCliCompatibility::MinMajor + 1)
+	{
+		const FString NextMajorVersion = FString::Printf(TEXT("%d.0.0"), FlexVaultCliCompatibility::MinMajor + 1);
+		FSourceControlResultInfo ResultInfo;
+		FString ExtractedVersion;
+		TSharedPtr<FJsonObject> Env = MakeEnvelope(NextMajorVersion);
+		TestTrue(FString::Printf(TEXT("%s is compatible"), *NextMajorVersion), CheckFlexVaultVersion(Env, ResultInfo, &ExtractedVersion));
+		TestEqual(TEXT("Extracted version matches"), ExtractedVersion, NextMajorVersion);
 		TestEqual(TEXT("No errors on success"), ResultInfo.ErrorMessages.Num(), 0);
 	}
 
@@ -1993,6 +2004,174 @@ bool FFlexVaultAuthorFormattingTest::RunTest(const FString& Parameters)
 		FString OlderHeadId;
 		TestTrue(TEXT("ParseFlexVaultHeadCommitId for older synced version"), ParseFlexVaultHeadCommitId(OlderEnvelope, OlderHeadId));
 		TestEqual(TEXT("Head commit ID reflects older synced revision"), OlderHeadId, TEXT("main.7"));
+	}
+
+	return true;
+}
+
+// ── Broker Auth & Remote Status Parsing ───────────────────────────────────────
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultBrokerAuthParsingTest, "FlexVault.SourceControl.BrokerAuthParsing", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FFlexVaultBrokerAuthParsingTest::RunTest(const FString& Parameters)
+{
+	// 1. Broker workspace (authenticated, matching fxv-core StatusAuthJson)
+	{
+		const FString StatusJson =
+			TEXT("{\n")
+			TEXT("  \"message\": {\n")
+			TEXT("    \"kind\": \"status\",\n")
+			TEXT("    \"version\": \"2.2\",\n")
+			TEXT("    \"payload\": {\n")
+			TEXT("      \"current_branch\": \"main\",\n")
+			TEXT("      \"current_user\": \"matt\",\n")
+			TEXT("      \"remote\": { \"mode\": \"broker\", \"uri\": \"fxv://broker.fxv.dev/acme/game\", \"broker\": \"https://broker.fxv.dev/\", \"tenant\": \"acme\", \"repo\": \"game\" },\n")
+			TEXT("      \"auth\": { \"required\": true, \"state\": \"authenticated\", \"source\": \"keyring\" }\n")
+			TEXT("    }\n")
+			TEXT("  }\n")
+			TEXT("}");
+
+		TSharedPtr<FJsonObject> Envelope;
+		TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(StatusJson);
+		TestTrue(TEXT("Deserialize broker status JSON"), FJsonSerializer::Deserialize(Reader, Envelope));
+
+		FFlexVaultRemoteInfo Remote;
+		FFlexVaultAuthInfo Auth;
+		TestTrue(TEXT("ParseFlexVaultRemoteAndAuth succeeds"), ParseFlexVaultRemoteAndAuth(Envelope, Remote, Auth));
+		TestTrue(TEXT("Remote is broker"), Remote.IsBroker());
+		TestEqual(TEXT("Remote broker URL"), Remote.BrokerUrl, TEXT("https://broker.fxv.dev/"));
+		TestTrue(TEXT("Auth required is true"), Auth.bRequired);
+		TestEqual(TEXT("Auth state"), Auth.State, TEXT("authenticated"));
+		TestEqual(TEXT("Auth source"), Auth.Source, TEXT("keyring"));
+		TestFalse(TEXT("Authenticated does not need login"), Auth.NeedsLogin());
+	}
+
+	// 2. Broker workspace (missing_token and expired both need login; unverified does not)
+	{
+		const FString MissingJson =
+			TEXT("{ \"message\": { \"kind\": \"status\", \"version\": \"2.2\", \"payload\": { \"remote\": { \"mode\": \"broker\", \"broker\": \"https://staging.broker.fxv.dev/\" }, \"auth\": { \"required\": true, \"state\": \"missing_token\" } } } }");
+		TSharedPtr<FJsonObject> Envelope;
+		TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(MissingJson);
+		TestTrue(TEXT("Deserialize missing_token status JSON"), FJsonSerializer::Deserialize(Reader, Envelope));
+
+		FFlexVaultRemoteInfo Remote;
+		FFlexVaultAuthInfo Auth;
+		TestTrue(TEXT("ParseFlexVaultRemoteAndAuth succeeds for missing_token"), ParseFlexVaultRemoteAndAuth(Envelope, Remote, Auth));
+		TestTrue(TEXT("missing_token needs login"), Auth.NeedsLogin());
+
+		Auth.State = TEXT("expired");
+		TestTrue(TEXT("expired needs login"), Auth.NeedsLogin());
+
+		Auth.State = TEXT("unverified");
+		TestFalse(TEXT("unverified does not need login"), Auth.NeedsLogin());
+
+		Auth.State = TEXT("forbidden");
+		TestFalse(TEXT("forbidden does not need login"), Auth.NeedsLogin());
+	}
+
+	// 3. Legacy status JSON without remote/auth
+	{
+		const FString LegacyJson = TEXT("{ \"message\": { \"kind\": \"status\", \"payload\": { \"current_branch\": \"main\" } } }");
+		TSharedPtr<FJsonObject> Envelope;
+		TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(LegacyJson);
+		TestTrue(TEXT("Deserialize legacy status JSON"), FJsonSerializer::Deserialize(Reader, Envelope));
+
+		FFlexVaultRemoteInfo Remote;
+		FFlexVaultAuthInfo Auth;
+		TestFalse(TEXT("ParseFlexVaultRemoteAndAuth returns false when fields absent"), ParseFlexVaultRemoteAndAuth(Envelope, Remote, Auth));
+		TestFalse(TEXT("Legacy remote is not broker"), Remote.IsBroker());
+	}
+
+	// 4. Structured broker-error envelope with leading stderr lines (merged pipe)
+	{
+		TArray<FString> Lines = {
+			TEXT("To authenticate with FlexVault, open this URL in your browser:"),
+			TEXT("  https://broker.fxv.dev/device"),
+			TEXT("{ \"message\": { \"kind\": \"error\", \"version\": \"1.1\", \"payload\": { \"message\": \"Broker authentication failed or session has expired (HTTP 401 Unauthorized)\", \"exit_code\": 95, \"error_data\": { \"kind\": \"broker-error\", \"version\": \"1.0\", \"payload\": { \"reason\": \"token_expired\", \"broker\": \"https://broker.fxv.dev/\", \"tenant\": \"acme\", \"repo\": \"game\", \"http_status\": 401 } } } } }")
+		};
+		FFlexVaultBrokerError BrokerErr;
+		TestTrue(TEXT("ParseFlexVaultBrokerError parses JSON after stderr lines"), ParseFlexVaultBrokerError(Lines, BrokerErr));
+		TestEqual(TEXT("Reason is token_expired"), BrokerErr.Reason, TEXT("token_expired"));
+		TestTrue(TEXT("token_expired is auth required"), BrokerErr.IsAuthRequired());
+		TestTrue(TEXT("HttpStatus is set"), BrokerErr.HttpStatus.IsSet());
+		TestEqual(TEXT("HttpStatus is 401"), BrokerErr.HttpStatus.Get(0), 401);
+		TestEqual(TEXT("BrokerUrl matches"), BrokerErr.BrokerUrl, TEXT("https://broker.fxv.dev/"));
+		TestEqual(TEXT("Tenant matches"), BrokerErr.Tenant, TEXT("acme"));
+		TestEqual(TEXT("Repo matches"), BrokerErr.Repo, TEXT("game"));
+		TestTrue(TEXT("Outer error message captured"), BrokerErr.Message.Contains(TEXT("401 Unauthorized")));
+	}
+
+	// 5. Structured broker-error envelope (forbidden is NOT auth required)
+	{
+		TArray<FString> Lines = {
+			TEXT("{ \"message\": { \"kind\": \"error\", \"version\": \"1.1\", \"payload\": { \"message\": \"Permission denied by broker (HTTP 403 Forbidden).\", \"exit_code\": 1, \"error_data\": { \"kind\": \"broker-error\", \"version\": \"1.0\", \"payload\": { \"reason\": \"forbidden\", \"http_status\": 403 } } } } }")
+		};
+		FFlexVaultBrokerError BrokerErr;
+		TestTrue(TEXT("ParseFlexVaultBrokerError succeeds for forbidden"), ParseFlexVaultBrokerError(Lines, BrokerErr));
+		TestFalse(TEXT("forbidden is not auth required"), BrokerErr.IsAuthRequired());
+	}
+
+	// 6. Non-broker error envelope returns false
+	{
+		TArray<FString> Lines = {
+			TEXT("{ \"message\": { \"kind\": \"error\", \"payload\": { \"message\": \"Some other error\" } } }")
+		};
+		FFlexVaultBrokerError BrokerErr;
+		TestFalse(TEXT("ParseFlexVaultBrokerError ignores generic error"), ParseFlexVaultBrokerError(Lines, BrokerErr));
+	}
+
+	return true;
+}
+
+// ── Live CLI Broker Auth Integration Test (opt-in via env vars) ───────────────
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFlexVaultBrokerAuthLiveCliTest, "FlexVault.SourceControl.BrokerAuthLiveCli", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FFlexVaultBrokerAuthLiveCliTest::RunTest(const FString& Parameters)
+{
+	const FString BinaryPath = FPlatformMisc::GetEnvironmentVariable(TEXT("FXV_TEST_BINARY"));
+	const FString WorkspacePath = FPlatformMisc::GetEnvironmentVariable(TEXT("FXV_TEST_BROKER_WORKSPACE"));
+	if (BinaryPath.IsEmpty() || WorkspacePath.IsEmpty())
+	{
+		AddInfo(TEXT("Skipping live CLI broker auth test (set FXV_TEST_BINARY and FXV_TEST_BROKER_WORKSPACE to run)."));
+		return true;
+	}
+
+	// 1. Connect worker against real fxv binary + broker workspace
+	{
+		FFlexVaultSourceControlProvider Provider;
+		TSharedRef<FConnect, ESPMode::ThreadSafe> ConnectOp = ISourceControlOperation::Create<FConnect>();
+		TSharedRef<FFlexVaultConnectWorker, ESPMode::ThreadSafe> Worker = MakeShared<FFlexVaultConnectWorker, ESPMode::ThreadSafe>(Provider);
+		FFlexVaultSourceControlCommand Command(ConnectOp, Worker);
+		Command.BinaryPath = BinaryPath;
+		Command.WorkspacePath = WorkspacePath;
+
+		const bool bConnected = Worker->Execute(Command);
+		TestTrue(TEXT("ConnectWorker succeeded against real fxv binary"), bConnected);
+		if (bConnected)
+		{
+			Worker->UpdateStates();
+			TestTrue(TEXT("Provider recognizes broker workspace"), Provider.IsBrokerWorkspace());
+			TestFalse(TEXT("Broker URL populated from status"), Provider.GetRemoteInfo().BrokerUrl.IsEmpty());
+			TestFalse(TEXT("Auth state populated from status"), Provider.GetAuthInfo().State.IsEmpty());
+		}
+	}
+
+	// 2. Unattended login against real fxv binary -> exit code 95 + broker-error envelope
+	{
+		TArray<FString> Args = { TEXT("--unattended"), TEXT("--format"), TEXT("json"), TEXT("--no-color"), TEXT("login") };
+		TArray<FString> OutputLines;
+		FSourceControlResultInfo ResultInfo;
+		int32 ReturnCode = 0;
+
+		const bool bOk = RunFlexVaultCommand(BinaryPath, WorkspacePath, Args, OutputLines, ResultInfo, /*bIgnoreError=*/true, nullptr, 15.0, nullptr, &ReturnCode);
+		TestFalse(TEXT("Unattended broker login fails"), bOk);
+		TestEqual(TEXT("Exit code is 95 (AuthRequired)"), ReturnCode, FlexVaultExitCodes::AuthRequired);
+
+		FFlexVaultBrokerError BrokerErr;
+		TestTrue(TEXT("ParseFlexVaultBrokerError parses live CLI output"), ParseFlexVaultBrokerError(OutputLines, BrokerErr));
+		TestEqual(TEXT("Reason is not_authenticated"), BrokerErr.Reason, TEXT("not_authenticated"));
+		TestTrue(TEXT("IsAuthRequired is true"), BrokerErr.IsAuthRequired());
+		TestFalse(TEXT("BrokerUrl populated"), BrokerErr.BrokerUrl.IsEmpty());
+		TestFalse(TEXT("Error message populated"), BrokerErr.Message.IsEmpty());
 	}
 
 	return true;

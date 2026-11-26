@@ -352,7 +352,7 @@ void FFlexVaultAutoSnapshot::CheckPeriodicFetch()
 	LastFetchTime = Now;
 
 	const FString BinaryPath = Settings ? Settings->GetEffectiveBinaryPath() : TEXT("fxv");
-	const FString WorkspacePath = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
+	const FString WorkspacePath = FindFlexVaultWorkspaceRoot();
 	const double TimeoutSeconds = Settings ? Settings->CommandTimeoutSeconds : 60.0;
 
 	FetchCancelToken = MakeShared<TAtomic<bool>, ESPMode::ThreadSafe>(false);
@@ -381,6 +381,10 @@ void FFlexVaultAutoSnapshot::CheckPeriodicFetch()
 			bFetchInFlight = false;
 			if (bSuccess)
 			{
+				if (Provider)
+				{
+					Provider->ClearRemoteUnreachableError();
+				}
 				if (FetchResult.BytesDownloaded > 0 || FetchResult.RepairedFiles.Num() > 0)
 				{
 					if (Provider && Provider->IsAvailable() && !Provider->IsExecutingCommand() && !Provider->HasOperationInFlight(FlexVaultSourceControlConstants::UpdateStatus))
@@ -392,9 +396,19 @@ void FFlexVaultAutoSnapshot::CheckPeriodicFetch()
 			}
 			else
 			{
+				FText DetailError;
 				for (const FText& Err : ResultInfo.ErrorMessages)
 				{
-					UE_LOG(LogFlexVault, Verbose, TEXT("Periodic fetch error: %s"), *Err.ToString());
+					const FString ErrStr = Err.ToString();
+					UE_LOG(LogFlexVault, Verbose, TEXT("Periodic fetch error: %s"), *ErrStr);
+					if (DetailError.IsEmpty() || DetailError.ToString().StartsWith(TEXT("FlexVault CLI command failed")))
+					{
+						DetailError = Err;
+					}
+				}
+				if (Provider && !DetailError.IsEmpty())
+				{
+					Provider->SetRemoteUnreachableError(DetailError);
 				}
 			}
 		});
@@ -497,7 +511,7 @@ void FFlexVaultAutoSnapshot::RunSnapshotSyncForDelete(const FString& Description
 	{
 		return;
 	}
-	const FString WorkspacePath = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
+	const FString WorkspacePath = FindFlexVaultWorkspaceRoot();
 
 	// Deliberately skips bSnapshotInFlight/PendingSnapshotDescriptions (see RunSnapshotAsync):
 	// that flag only clears via an AsyncTask callback on the Game Thread, which can't run while
@@ -546,7 +560,7 @@ void FFlexVaultAutoSnapshot::LaunchSnapshotProcess(const FString& Description)
 		return;
 	}
 
-	const FString WorkspacePath = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
+	const FString WorkspacePath = FindFlexVaultWorkspaceRoot();
 	const double TimeoutSeconds = (Settings && Settings->CommandTimeoutSeconds > 0.0) ? Settings->CommandTimeoutSeconds : 60.0;
 
 	SnapshotCancelToken = MakeShared<TAtomic<bool>, ESPMode::ThreadSafe>(false);

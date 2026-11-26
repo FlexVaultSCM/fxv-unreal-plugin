@@ -37,6 +37,7 @@
 #include "Widgets/Notifications/SNotificationList.h"
 #include "Framework/Application/SlateApplication.h"
 #include "SFlexVaultLoginDialog.h"
+#include "SFlexVaultSettingsWidget.h"
 #endif
 
 
@@ -122,9 +123,139 @@ void FFlexVaultSourceControlProvider::Close()
 	bServerAvailable = false;
 	CurrentBranch.Empty();
 	CurrentUser.Empty();
+	RemoteInfo = FFlexVaultRemoteInfo();
+	AuthInfo = FFlexVaultAuthInfo();
 	LastConnectionError = FText::GetEmpty();
+	LastRemoteError = FText::GetEmpty();
 	PendingStatusUpdates.Empty();
 	bStatusUpdateDelayed = false;
+#if SOURCE_CONTROL_WITH_SLATE
+	ActiveAuthNotification.Reset();
+	ActiveRemoteErrorNotification.Reset();
+#endif
+}
+
+namespace
+{
+	FString FormatBrokerAuthStateForDisplay(const FString& State)
+	{
+		if (State.Equals(TEXT("authenticated"), ESearchCase::IgnoreCase))
+		{
+			return TEXT("Signed in");
+		}
+		if (State.Equals(TEXT("missing_token"), ESearchCase::IgnoreCase))
+		{
+			return TEXT("Sign-in required");
+		}
+		if (State.Equals(TEXT("expired"), ESearchCase::IgnoreCase))
+		{
+			return TEXT("Session expired");
+		}
+		if (State.Equals(TEXT("forbidden"), ESearchCase::IgnoreCase))
+		{
+			return TEXT("Access denied");
+		}
+		if (State.Equals(TEXT("offline"), ESearchCase::IgnoreCase))
+		{
+			return TEXT("Offline (broker unreachable)");
+		}
+		if (State.Equals(TEXT("unverified"), ESearchCase::IgnoreCase))
+		{
+			return TEXT("Unverified (local cache)");
+		}
+		return !State.IsEmpty() ? State : TEXT("Unknown");
+	}
+
+	FText SummarizeErrorForToast(const FText& FullError, const TOptional<FFlexVaultBrokerError>& BrokerError = TOptional<FFlexVaultBrokerError>())
+	{
+		if (BrokerError.IsSet() && BrokerError->IsNetworkUnreachable())
+		{
+			return LOCTEXT("FlexVaultRemoteUnreachableSummary", "Could not reach the remote repository. Check your network connection or VPN, then try again.");
+		}
+
+		FString Msg = FullError.ToString().TrimStartAndEnd();
+		if (Msg.IsEmpty())
+		{
+			return LOCTEXT("FlexVaultGenericErrorSummary", "Operation failed. See the Source Control log for details.");
+		}
+
+		if (Msg.Contains(TEXT("Failed to reach broker"), ESearchCase::IgnoreCase) ||
+			Msg.Contains(TEXT("network_unreachable"), ESearchCase::IgnoreCase) ||
+			Msg.Contains(TEXT("Reqwest error"), ESearchCase::IgnoreCase) ||
+			Msg.Contains(TEXT("error sending request"), ESearchCase::IgnoreCase) ||
+			Msg.Contains(TEXT("Could not read the FXV repository"), ESearchCase::IgnoreCase))
+		{
+			return LOCTEXT("FlexVaultRemoteUnreachableSummary", "Could not reach the remote repository. Check your network connection or VPN, then try again.");
+		}
+
+		// Strip to first line and cap length so toasts and tooltips stay readable; full details go to Message Log.
+		int32 NewlineIdx = INDEX_NONE;
+		if (Msg.FindChar(TEXT('\n'), NewlineIdx))
+		{
+			Msg = Msg.Left(NewlineIdx).TrimEnd();
+		}
+		constexpr int32 MaxToastLen = 140;
+		if (Msg.Len() > MaxToastLen)
+		{
+			Msg = Msg.Left(MaxToastLen).TrimEnd() + TEXT("...");
+		}
+		return FText::FromString(Msg);
+	}
+}
+
+void FFlexVaultSourceControlProvider::ApplyBrokerLoginSuccess(const FString& InUsername, const FString& InEmail)
+{
+	if (!InUsername.IsEmpty())
+	{
+		SetCurrentUser(InUsername);
+	}
+	AuthInfo.State = TEXT("authenticated");
+	if (!InEmail.IsEmpty())
+	{
+		AuthInfo.Identity = InEmail;
+	}
+	OutputStateChangedEvent();
+}
+
+void FFlexVaultSourceControlProvider::SetRemoteUnreachableError(const FText& InError)
+{
+	const bool bWasReachable = LastRemoteError.IsEmpty();
+	LastRemoteError = SummarizeErrorForToast(InError);
+
+#if SOURCE_CONTROL_WITH_SLATE
+	if (bWasReachable && !LastRemoteError.IsEmpty() && !IsRunningCommandlet())
+	{
+		if (!ActiveRemoteErrorNotification.IsValid())
+		{
+			FNotificationInfo Info(LOCTEXT("FlexVaultRemoteUnreachableTitle", "FlexVault: Remote repository unreachable"));
+			Info.SubText = LastRemoteError;
+			Info.bFireAndForget = true;
+			Info.FadeOutDuration = 1.0f;
+			Info.ExpireDuration = 8.0f;
+			Info.bUseThrobber = false;
+			Info.bUseSuccessFailIcons = true;
+
+			TSharedPtr<SNotificationItem> Notification = FSlateNotificationManager::Get().AddNotification(Info);
+			if (Notification.IsValid())
+			{
+				Notification->SetCompletionState(SNotificationItem::CS_Fail);
+				ActiveRemoteErrorNotification = Notification;
+			}
+		}
+	}
+#endif
+}
+
+void FFlexVaultSourceControlProvider::ClearRemoteUnreachableError()
+{
+	LastRemoteError = FText::GetEmpty();
+#if SOURCE_CONTROL_WITH_SLATE
+	if (TSharedPtr<SNotificationItem> Existing = ActiveRemoteErrorNotification.Pin())
+	{
+		Existing->Fadeout();
+	}
+	ActiveRemoteErrorNotification.Reset();
+#endif
 }
 
 FText FFlexVaultSourceControlProvider::GetStatusText() const
@@ -164,10 +295,28 @@ FText FFlexVaultSourceControlProvider::GetStatusText() const
 	Args.Add(TEXT("Branch"), FText::FromString(!CurrentBranch.IsEmpty() ? CurrentBranch : TEXT("-")));
 	Args.Add(TEXT("User"), UserDisplay);
 
-	return FText::Format(
+	TArray<FText> Lines;
+	Lines.Add(FText::Format(
 		LOCTEXT("StatusTextConnectedWithBranch", "FlexVault Source Control: {Status}\nBranch: {Branch}\nUser: {User}"),
 		Args
-	);
+	));
+
+	if (IsBrokerWorkspace())
+	{
+		FString AuthDisplay = FormatBrokerAuthStateForDisplay(AuthInfo.State);
+		if (!AuthInfo.Identity.IsEmpty())
+		{
+			AuthDisplay = FString::Printf(TEXT("%s (%s)"), *AuthDisplay, *AuthInfo.Identity);
+		}
+		Lines.Add(FText::Format(LOCTEXT("StatusTextBrokerAuthLine", "Broker Auth: {0}"), FText::FromString(AuthDisplay)));
+	}
+
+	if (!LastRemoteError.IsEmpty())
+	{
+		Lines.Add(FText::Format(LOCTEXT("StatusTextRemoteUnreachableLine", "Remote: Unreachable ({0})"), LastRemoteError));
+	}
+
+	return FText::Join(FText::FromString(TEXT("\n")), Lines);
 }
 
 TMap<ISourceControlProvider::EStatus, FString> FFlexVaultSourceControlProvider::GetStatus() const
@@ -175,7 +324,7 @@ TMap<ISourceControlProvider::EStatus, FString> FFlexVaultSourceControlProvider::
 	TMap<EStatus, FString> Result;
 	Result.Add(EStatus::Enabled, IsEnabled() ? TEXT("Yes") : TEXT("No"));
 	Result.Add(EStatus::Connected, (IsEnabled() && IsAvailable()) ? TEXT("Yes") : TEXT("No"));
-	Result.Add(EStatus::Repository, FPaths::ProjectDir());
+	Result.Add(EStatus::Repository, FindFlexVaultWorkspaceRoot());
 	if (!CurrentBranch.IsEmpty())
 	{
 		Result.Add(EStatus::Branch, CurrentBranch);
@@ -403,7 +552,7 @@ void FFlexVaultSourceControlProvider::Tick()
 #if SOURCE_CONTROL_WITH_SLATE
 TSharedRef<class SWidget> FFlexVaultSourceControlProvider::MakeSettingsWidget() const
 {
-	return SNullWidget::NullWidget;
+	return SNew(SFlexVaultSettingsWidget);
 }
 #endif
 
@@ -516,7 +665,7 @@ void FFlexVaultSourceControlProvider::OnConnectOperationComplete(bool bSuccess)
 		if (!bHasCheckedIgnoresThisSession)
 		{
 			bHasCheckedIgnoresThisSession = true;
-			FFlexVaultIgnoreChecker::EnsureDefaultIgnores(FPaths::ConvertRelativePathToFull(FPaths::ProjectDir()));
+			FFlexVaultIgnoreChecker::EnsureDefaultIgnores(FindFlexVaultWorkspaceRoot());
 		}
 	}
 
@@ -551,7 +700,7 @@ namespace
 					(*InNotificationHandle)->ExpireAndFadeout();
 				}
 			}),
-			SNotificationItem::CS_None));
+			SNotificationItem::CS_Fail));
 
 		InInfo.ButtonDetails.Add(FNotificationButtonInfo(
 			LOCTEXT("FlexVaultDismiss", "Dismiss"),
@@ -563,7 +712,7 @@ namespace
 					(*InNotificationHandle)->ExpireAndFadeout();
 				}
 			}),
-			SNotificationItem::CS_None));
+			SNotificationItem::CS_Fail));
 	}
 }
 #endif
@@ -587,6 +736,105 @@ void FFlexVaultSourceControlProvider::HandleCommandNotifications(const FFlexVaul
 		Info.ExpireDuration = 6.0f;
 		Info.bUseSuccessFailIcons = true;
 		FSlateNotificationManager::Get().AddNotification(Info);
+		return;
+	}
+
+	// Structured broker auth error (exit code 95 or `broker-error` envelope) across any operation
+	const bool bIsBrokerAuthRequired = (!InCommand.bCommandSuccessful && !InCommand.IsCanceled()) &&
+		(InCommand.LastExitCode == FlexVaultExitCodes::AuthRequired ||
+		 (InCommand.BrokerError.IsSet() && InCommand.BrokerError->IsAuthRequired()));
+
+	if (bIsBrokerAuthRequired)
+	{
+		// Deduplicate: if a broker sign-in notification is already visible, don't stack another one.
+		if (ActiveAuthNotification.IsValid())
+		{
+			return;
+		}
+
+		const FString BrokerUrl = (InCommand.BrokerError.IsSet() && !InCommand.BrokerError->BrokerUrl.IsEmpty())
+			? InCommand.BrokerError->BrokerUrl
+			: RemoteInfo.BrokerUrl;
+
+		const FText NotificationTitle = LOCTEXT("FlexVaultBrokerAuthRequiredTitle", "FlexVault: Broker sign-in required.");
+		FString SubTextStr;
+		if (InCommand.BrokerError.IsSet() && !InCommand.BrokerError->Message.IsEmpty())
+		{
+			SubTextStr = InCommand.BrokerError->Message;
+		}
+		else
+		{
+			SubTextStr = TEXT("Your FlexVault broker session is missing or expired. Sign in to continue.");
+		}
+
+		FNotificationInfo Info(NotificationTitle);
+		Info.SubText = FText::FromString(SubTextStr);
+		SetupErrorNotificationDefaults(Info);
+
+		TSharedRef<TSharedPtr<SNotificationItem>> NotificationHandle = MakeShared<TSharedPtr<SNotificationItem>>();
+		const FString BinaryPath = InCommand.BinaryPath;
+		const FString WorkspacePath = InCommand.WorkspacePath;
+
+		Info.ButtonDetails.Add(FNotificationButtonInfo(
+			LOCTEXT("FlexVaultBrokerSignInButton", "Sign In..."),
+			FText(),
+			FSimpleDelegate::CreateLambda([NotificationHandle, BinaryPath, WorkspacePath, BrokerUrl]()
+			{
+				FString LoggedInUser;
+				FString LoggedInEmail;
+				if (SFlexVaultLoginDialog::ShowModal(BinaryPath, WorkspacePath, LoggedInUser, /*bInIsBrokerWorkspace=*/true, BrokerUrl, &LoggedInEmail))
+				{
+					if (ISourceControlModule::Get().IsEnabled())
+					{
+						ISourceControlProvider& ActiveProvider = ISourceControlModule::Get().GetProvider();
+						if (ActiveProvider.GetName() == TEXT("FlexVault"))
+						{
+							FFlexVaultSourceControlProvider& FxvProvider = static_cast<FFlexVaultSourceControlProvider&>(ActiveProvider);
+							FxvProvider.ApplyBrokerLoginSuccess(LoggedInUser, LoggedInEmail);
+						}
+					}
+
+					if (NotificationHandle->IsValid())
+					{
+						(*NotificationHandle)->SetText(LOCTEXT("FlexVaultBrokerSignedInNotification", "Signed in to FlexVault Broker."));
+						(*NotificationHandle)->SetSubText(LOCTEXT("FlexVaultBrokerSignedInSub", "You can now retry your operation."));
+						(*NotificationHandle)->SetCompletionState(SNotificationItem::CS_Success);
+						(*NotificationHandle)->SetExpireDuration(3.0f);
+						(*NotificationHandle)->ExpireAndFadeout();
+					}
+				}
+			}),
+			SNotificationItem::CS_Fail));
+
+		Info.ButtonDetails.Add(FNotificationButtonInfo(
+			LOCTEXT("FlexVaultCopyBrokerLoginCommand", "Copy 'fxv login'"),
+			FText(),
+			FSimpleDelegate::CreateLambda([NotificationHandle]()
+			{
+				FPlatformApplicationMisc::ClipboardCopy(TEXT("fxv login"));
+				if (NotificationHandle->IsValid())
+				{
+					(*NotificationHandle)->SetText(LOCTEXT("FlexVaultCopiedBrokerLogin", "Copied 'fxv login' to clipboard."));
+					(*NotificationHandle)->SetSubText(LOCTEXT("FlexVaultCopiedBrokerLoginSub", "Run it in a terminal to sign in via your browser."));
+					(*NotificationHandle)->SetCompletionState(SNotificationItem::CS_Success);
+					(*NotificationHandle)->SetExpireDuration(3.0f);
+					(*NotificationHandle)->ExpireAndFadeout();
+				}
+			}),
+			SNotificationItem::CS_Fail));
+
+		AddStandardErrorNotificationButtons(Info, NotificationHandle);
+
+		*NotificationHandle = FSlateNotificationManager::Get().AddNotification(Info);
+		ActiveAuthNotification = *NotificationHandle;
+		if (NotificationHandle->IsValid())
+		{
+			(*NotificationHandle)->SetCompletionState(SNotificationItem::CS_Fail);
+		}
+
+		FMessageLog SourceControlLog("SourceControl");
+		SourceControlLog.Error(FText::Format(LOCTEXT("FlexVaultBrokerAuthLogEntry", "FlexVault SCM {0} failed: {1}"), FText::FromName(InCommand.Operation->GetName()), FText::FromString(SubTextStr)));
+		SourceControlLog.Open(EMessageSeverity::Error, true);
 		return;
 	}
 
@@ -672,7 +920,12 @@ void FFlexVaultSourceControlProvider::HandleCommandNotifications(const FFlexVaul
 		else
 		{
 			NotificationTitle = LOCTEXT("FlexVaultCheckInFailedTitle", "FlexVault: Check-in failed.");
-			NotificationSubText = ErrorText;
+			NotificationSubText = SummarizeErrorForToast(ErrorText, InCommand.BrokerError);
+			if (InCommand.BrokerError.IsSet() && InCommand.BrokerError->IsNetworkUnreachable())
+			{
+				LastRemoteError = NotificationSubText;
+				OutputStateChangedEvent();
+			}
 		}
 
 		FNotificationInfo Info(NotificationTitle);
@@ -719,7 +972,7 @@ void FFlexVaultSourceControlProvider::HandleCommandNotifications(const FFlexVaul
 						}
 					}
 				}),
-				SNotificationItem::CS_None));
+				SNotificationItem::CS_Fail));
 
 			Info.ButtonDetails.Add(FNotificationButtonInfo(
 				LOCTEXT("FlexVaultCopyLoginCommand", "Copy 'fxv login'"),
@@ -736,7 +989,7 @@ void FFlexVaultSourceControlProvider::HandleCommandNotifications(const FFlexVaul
 						(*NotificationHandle)->ExpireAndFadeout();
 					}
 				}),
-				SNotificationItem::CS_None));
+				SNotificationItem::CS_Fail));
 		}
 
 		AddStandardErrorNotificationButtons(Info, NotificationHandle);
@@ -762,7 +1015,7 @@ void FFlexVaultSourceControlProvider::HandleCommandNotifications(const FFlexVaul
 		{
 			FText ErrorText = InCommand.ResultInfo.ErrorMessages.Last();
 			FNotificationInfo Info(FText::Format(LOCTEXT("FlexVaultOperationFailedTitle", "FlexVault: {0} operation failed."), FText::FromName(InCommand.Operation->GetName())));
-			Info.SubText = ErrorText;
+			Info.SubText = SummarizeErrorForToast(ErrorText);
 			SetupErrorNotificationDefaults(Info);
 
 			TSharedRef<TSharedPtr<SNotificationItem>> NotificationHandle = MakeShared<TSharedPtr<SNotificationItem>>();
@@ -847,7 +1100,7 @@ ECommandResult::Type FFlexVaultSourceControlProvider::IssueCommand(TUniquePtr<FF
 {
 	UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault SCM: IssueCommand: %s, bSynchronous=%d"), *InCommand->Operation->GetName().ToString(), bSynchronous ? 1 : 0);
 	InCommand->BinaryPath = TEXT("fxv");
-	InCommand->WorkspacePath = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
+	InCommand->WorkspacePath = FindFlexVaultWorkspaceRoot();
 	if (UObjectInitialized())
 	{
 		if (const UFlexVaultSourceControlDeveloperSettings* Settings = GetDefault<UFlexVaultSourceControlDeveloperSettings>())
@@ -908,7 +1161,7 @@ ECommandResult::Type FFlexVaultSourceControlProvider::SwitchWorkspace(
 			BinaryPath = Settings->GetEffectiveBinaryPath();
 		}
 	}
-	const FString WorkspacePath = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
+	const FString WorkspacePath = FindFlexVaultWorkspaceRoot();
 	const FString TargetBranch(NewWorkspaceName);
 
 	TArray<FString> UpdatedFiles;
@@ -945,13 +1198,42 @@ ECommandResult::Type FFlexVaultSourceControlProvider::SwitchWorkspace(
 bool FFlexVaultSourceControlProvider::EnsureUserLoggedInBeforeCheckIn()
 {
 	FString BinaryPath = TEXT("fxv");
-	FString WorkspacePath = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
+	FString WorkspacePath = FindFlexVaultWorkspaceRoot();
 	if (UObjectInitialized())
 	{
 		if (const UFlexVaultSourceControlDeveloperSettings* Settings = GetDefault<UFlexVaultSourceControlDeveloperSettings>())
 		{
 			BinaryPath = Settings->GetEffectiveBinaryPath();
 		}
+	}
+
+	// For broker workspaces, never fall through to the legacy username dialog.
+	// If we already know auth is missing/expired, prompt for browser sign-in now;
+	// otherwise let CheckInWorker run `fxv publish` (which will exit 95 if the token expired).
+	if (IsBrokerWorkspace())
+	{
+		if (!AuthInfo.NeedsLogin())
+		{
+			return true;
+		}
+#if SOURCE_CONTROL_WITH_SLATE
+		if (FApp::IsUnattended() || !IsInGameThread() || !FSlateApplication::IsInitialized())
+		{
+			return true;
+		}
+
+		FString LoggedInUser;
+		FString LoggedInEmail;
+		if (SFlexVaultLoginDialog::ShowModal(BinaryPath, WorkspacePath, LoggedInUser, /*bInIsBrokerWorkspace=*/true, RemoteInfo.BrokerUrl, &LoggedInEmail))
+		{
+			ApplyBrokerLoginSuccess(LoggedInUser, LoggedInEmail);
+			return true;
+		}
+
+		return false;
+#else
+		return true;
+#endif
 	}
 
 	// In the common path where a user is already authenticated in this session, this is an instant

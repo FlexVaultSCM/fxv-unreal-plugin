@@ -14,15 +14,42 @@
 #include "Styling/AppStyle.h"
 #include "Framework/Application/SlateApplication.h"
 #include "Framework/Docking/TabManager.h"
+#include "Async/Async.h"
 #include "InputCoreTypes.h"
 
 #define LOCTEXT_NAMESPACE "FlexVaultSourceControl"
+
+SFlexVaultLoginDialog::~SFlexVaultLoginDialog()
+{
+	if (LoginCancelToken.IsValid())
+	{
+		LoginCancelToken->Store(true);
+	}
+}
 
 void SFlexVaultLoginDialog::Construct(const FArguments& InArgs)
 {
 	BinaryPath = InArgs._BinaryPath;
 	WorkspacePath = InArgs._WorkspacePath;
+	bIsBrokerWorkspace = InArgs._bIsBrokerWorkspace;
+	BrokerUrl = InArgs._BrokerUrl;
 	ParentWindow = InArgs._ParentWindow;
+
+	const FText HeaderText = bIsBrokerWorkspace
+		? LOCTEXT("FlexVaultBrokerLoginHeader", "FlexVault: Broker Sign-In Required")
+		: LOCTEXT("FlexVaultLoginHeader", "FlexVault: User Login Required");
+
+	const FText SubText = bIsBrokerWorkspace
+		? (BrokerUrl.IsEmpty()
+			? LOCTEXT("FlexVaultBrokerLoginSubTextNoUrl", "Your FlexVault broker session is missing or expired. Click 'Sign In with Browser' to authenticate.")
+			: FText::Format(
+				LOCTEXT("FlexVaultBrokerLoginSubText", "Your FlexVault session for {0} is missing or expired. Click 'Sign In with Browser' to authenticate."),
+				FText::FromString(BrokerUrl)))
+		: LOCTEXT("FlexVaultLoginSubText", "No user is logged in for this workspace. Enter your username to authenticate before submitting changes.");
+
+	const FText PrimaryButtonText = bIsBrokerWorkspace
+		? LOCTEXT("FlexVaultBrokerLoginSubmitBtn", "Sign In with Browser")
+		: LOCTEXT("FlexVaultLoginSubmitBtn", "Log In & Submit");
 
 	ChildSlot
 	[
@@ -40,7 +67,7 @@ void SFlexVaultLoginDialog::Construct(const FArguments& InArgs)
 				.Padding(0.0f, 0.0f, 0.0f, 10.0f)
 				[
 					SNew(STextBlock)
-					.Text(LOCTEXT("FlexVaultLoginHeader", "FlexVault: User Login Required"))
+					.Text(HeaderText)
 					.Font(FAppStyle::GetFontStyle("HeadingMedium"))
 					.AutoWrapText(true)
 				]
@@ -50,10 +77,10 @@ void SFlexVaultLoginDialog::Construct(const FArguments& InArgs)
 				.Padding(0.0f, 0.0f, 0.0f, 14.0f)
 				[
 					SNew(STextBlock)
-					.Text(LOCTEXT("FlexVaultLoginSubText", "No user is logged in for this workspace. Enter your username to authenticate before submitting changes."))
+					.Text(SubText)
 					.AutoWrapText(true)
 				]
-				// Username Label
+				// Username Label (non-broker workspaces only)
 				+ SVerticalBox::Slot()
 				.AutoHeight()
 				.Padding(0.0f, 0.0f, 0.0f, 4.0f)
@@ -61,8 +88,9 @@ void SFlexVaultLoginDialog::Construct(const FArguments& InArgs)
 					SNew(STextBlock)
 					.Text(LOCTEXT("FlexVaultUsernameLabel", "Username:"))
 					.Font(FAppStyle::GetFontStyle("Bold"))
+					.Visibility(bIsBrokerWorkspace ? EVisibility::Collapsed : EVisibility::Visible)
 				]
-				// Username Input
+				// Username Input (non-broker workspaces only)
 				+ SVerticalBox::Slot()
 				.AutoHeight()
 				.Padding(0.0f, 0.0f, 0.0f, 10.0f)
@@ -70,6 +98,7 @@ void SFlexVaultLoginDialog::Construct(const FArguments& InArgs)
 					SAssignNew(UsernameTextBox, SEditableTextBox)
 					.HintText(LOCTEXT("FlexVaultUsernameHint", "Enter username"))
 					.OnTextCommitted(this, &SFlexVaultLoginDialog::OnUsernameTextCommitted)
+					.Visibility(bIsBrokerWorkspace ? EVisibility::Collapsed : EVisibility::Visible)
 				]
 				// Error message block
 				+ SVerticalBox::Slot()
@@ -98,7 +127,8 @@ void SFlexVaultLoginDialog::Construct(const FArguments& InArgs)
 					[
 						SNew(SButton)
 						.HAlign(HAlign_Center)
-						.Text(LOCTEXT("FlexVaultLoginSubmitBtn", "Log In & Submit"))
+						.Text(PrimaryButtonText)
+						.IsEnabled_Lambda([this]() { return !bLoginInProgress; })
 						.OnClicked(this, &SFlexVaultLoginDialog::OnLoginClicked)
 					]
 					+ SHorizontalBox::Slot()
@@ -114,15 +144,18 @@ void SFlexVaultLoginDialog::Construct(const FArguments& InArgs)
 		]
 	];
 
-	// Focus the username text box when constructed
-	RegisterActiveTimer(0.0f, FWidgetActiveTimerDelegate::CreateLambda([this](double, float)
+	// Focus the username text box when constructed (non-broker workspaces only)
+	if (!bIsBrokerWorkspace)
 	{
-		if (UsernameTextBox.IsValid())
+		RegisterActiveTimer(0.0f, FWidgetActiveTimerDelegate::CreateLambda([this](double, float)
 		{
-			FSlateApplication::Get().SetKeyboardFocus(UsernameTextBox, EFocusCause::SetDirectly);
-		}
-		return EActiveTimerReturnType::Stop;
-	}));
+			if (UsernameTextBox.IsValid())
+			{
+				FSlateApplication::Get().SetKeyboardFocus(UsernameTextBox, EFocusCause::SetDirectly);
+			}
+			return EActiveTimerReturnType::Stop;
+		}));
+	}
 }
 
 FReply SFlexVaultLoginDialog::OnKeyDown(const FGeometry& MyGeometry, const FKeyEvent& InKeyEvent)
@@ -136,6 +169,88 @@ FReply SFlexVaultLoginDialog::OnKeyDown(const FGeometry& MyGeometry, const FKeyE
 
 FReply SFlexVaultLoginDialog::OnLoginClicked()
 {
+	if (bIsBrokerWorkspace)
+	{
+		if (bLoginInProgress)
+		{
+			return FReply::Handled();
+		}
+
+		bLoginInProgress = true;
+		LoginCancelToken = MakeShared<TAtomic<bool>, ESPMode::ThreadSafe>(false);
+
+		if (ErrorTextBlock.IsValid())
+		{
+			ErrorTextBlock->SetColorAndOpacity(FLinearColor(0.75f, 0.75f, 0.75f));
+			ErrorTextBlock->SetText(LOCTEXT("FlexVaultBrokerLoginWaiting", "Waiting for browser sign-in... Complete authentication in your browser or click Cancel."));
+			ErrorTextBlock->SetVisibility(EVisibility::Visible);
+		}
+
+		const FString CapturedBinary = BinaryPath;
+		const FString CapturedWorkspace = WorkspacePath;
+		TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> CancelToken = LoginCancelToken;
+		TWeakPtr<SFlexVaultLoginDialog> WeakSelf = SharedThis(this);
+
+		// Run interactive `fxv login` off the Game Thread so the Editor stays responsive and Cancel works.
+		Async(EAsyncExecution::ThreadPool, [WeakSelf, CapturedBinary, CapturedWorkspace, CancelToken]()
+		{
+			FSourceControlResultInfo ResultInfo;
+			FString ErrorMessage;
+			FString Username;
+			FString Email;
+			const bool bOk = RunFlexVaultBrokerLoginCommand(
+				CapturedBinary,
+				CapturedWorkspace,
+				ResultInfo,
+				&ErrorMessage,
+				&Username,
+				&Email,
+				CancelToken
+			);
+
+			AsyncTask(ENamedThreads::GameThread, [WeakSelf, bOk, ErrorMessage, Username, Email, CancelToken]()
+			{
+				TSharedPtr<SFlexVaultLoginDialog> Pinned = WeakSelf.Pin();
+				if (!Pinned.IsValid())
+				{
+					return;
+				}
+
+				Pinned->bLoginInProgress = false;
+
+				if (CancelToken.IsValid() && CancelToken->Load())
+				{
+					return;
+				}
+
+				if (bOk)
+				{
+					Pinned->bLoginSuccessful = true;
+					Pinned->LoggedInUser = Username;
+					Pinned->LoggedInEmail = Email;
+
+					if (TSharedPtr<SWindow> PinnedWindow = Pinned->ParentWindow.Pin())
+					{
+						PinnedWindow->RequestDestroyWindow();
+					}
+					return;
+				}
+
+				if (Pinned->ErrorTextBlock.IsValid())
+				{
+					Pinned->ErrorTextBlock->SetColorAndOpacity(FLinearColor(1.0f, 0.35f, 0.35f));
+					FString DisplayError = ErrorMessage.IsEmpty()
+						? TEXT("Broker sign-in failed. Run 'fxv login' in a terminal to see details.")
+						: ErrorMessage;
+					Pinned->ErrorTextBlock->SetText(FText::FromString(DisplayError));
+					Pinned->ErrorTextBlock->SetVisibility(EVisibility::Visible);
+				}
+			});
+		});
+
+		return FReply::Handled();
+	}
+
 	if (!UsernameTextBox.IsValid())
 	{
 		return FReply::Handled();
@@ -182,6 +297,11 @@ FReply SFlexVaultLoginDialog::OnLoginClicked()
 
 FReply SFlexVaultLoginDialog::OnCancelClicked()
 {
+	if (LoginCancelToken.IsValid())
+	{
+		LoginCancelToken->Store(true);
+	}
+	bLoginInProgress = false;
 	bLoginSuccessful = false;
 	if (TSharedPtr<SWindow> PinnedWindow = ParentWindow.Pin())
 	{
@@ -198,10 +318,19 @@ void SFlexVaultLoginDialog::OnUsernameTextCommitted(const FText& InText, ETextCo
 	}
 }
 
-bool SFlexVaultLoginDialog::ShowModal(const FString& InBinaryPath, const FString& InWorkspacePath, FString& OutLoggedInUser)
+bool SFlexVaultLoginDialog::ShowModal(
+	const FString& InBinaryPath,
+	const FString& InWorkspacePath,
+	FString& OutLoggedInUser,
+	bool bInIsBrokerWorkspace,
+	const FString& InBrokerUrl,
+	FString* OutLoggedInEmail
+)
 {
 	TSharedRef<SWindow> Window = SNew(SWindow)
-		.Title(LOCTEXT("FlexVaultLoginWindowTitle", "FlexVault Login"))
+		.Title(bInIsBrokerWorkspace
+			? LOCTEXT("FlexVaultBrokerLoginWindowTitle", "FlexVault Broker Sign-In")
+			: LOCTEXT("FlexVaultLoginWindowTitle", "FlexVault Login"))
 		.SizingRule(ESizingRule::Autosized)
 		.SupportsMaximize(false)
 		.SupportsMinimize(false);
@@ -209,6 +338,8 @@ bool SFlexVaultLoginDialog::ShowModal(const FString& InBinaryPath, const FString
 	TSharedRef<SFlexVaultLoginDialog> Dialog = SNew(SFlexVaultLoginDialog)
 		.BinaryPath(InBinaryPath)
 		.WorkspacePath(InWorkspacePath)
+		.bIsBrokerWorkspace(bInIsBrokerWorkspace)
+		.BrokerUrl(InBrokerUrl)
 		.ParentWindow(Window);
 
 	Window->SetContent(Dialog);
@@ -219,6 +350,10 @@ bool SFlexVaultLoginDialog::ShowModal(const FString& InBinaryPath, const FString
 	if (Dialog->bLoginSuccessful)
 	{
 		OutLoggedInUser = Dialog->LoggedInUser;
+		if (OutLoggedInEmail != nullptr)
+		{
+			*OutLoggedInEmail = Dialog->LoggedInEmail;
+		}
 		return true;
 	}
 

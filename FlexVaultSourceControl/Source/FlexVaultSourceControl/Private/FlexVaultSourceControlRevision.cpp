@@ -47,7 +47,7 @@ bool FFlexVaultSourceControlRevision::Get(FString& InOutFilename, EConcurrency::
 	// The plugin only ever opens a workspace rooted at the project directory (see
 	// FFlexVaultSourceControlProvider::IssueCommand), so this is the same working directory
 	// 'fxv cat' would be run from for any other command.
-	const FString WorkspacePath = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
+	const FString WorkspacePath = FindFlexVaultWorkspaceRoot();
 	const FString BinaryPath = GetDefault<UFlexVaultSourceControlDeveloperSettings>()->GetEffectiveBinaryPath();
 	FString EffectiveFileName = FileName;
 	if (FPaths::FileExists(EffectiveFileName))

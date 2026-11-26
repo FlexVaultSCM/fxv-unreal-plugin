@@ -3,6 +3,7 @@
 
 #include "CoreMinimal.h"
 #include "IFlexVaultSourceControlWorker.h"
+#include "FlexVaultSourceControlWorkerHelper.h"
 
 /**
  * Worker for FConnect operation.
@@ -22,5 +23,7 @@ public:
 private:
 	FString CurrentBranch;
 	FString CurrentUser;
+	FFlexVaultRemoteInfo RemoteInfo;
+	FFlexVaultAuthInfo AuthInfo;
 	FText LastConnectionError;
 };

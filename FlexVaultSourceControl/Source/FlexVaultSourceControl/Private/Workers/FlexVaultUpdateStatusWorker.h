@@ -4,6 +4,7 @@
 #include "CoreMinimal.h"
 #include "IFlexVaultSourceControlWorker.h"
 #include "FlexVaultSourceControlState.h"
+#include "FlexVaultSourceControlWorkerHelper.h"
 
 /**
  * Worker for FUpdateStatus operation.
@@ -38,6 +39,8 @@ private:
 	mutable FString CurrentBranch;
 	mutable FString CurrentUser;
 	mutable FString CurrentHeadCommit;
+	mutable FFlexVaultRemoteInfo RemoteInfo;
+	mutable FFlexVaultAuthInfo AuthInfo;
 	mutable FString WorkspacePath;
 	mutable TOptional<bool> bHasChangesToSync;
 

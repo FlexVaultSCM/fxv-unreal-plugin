@@ -58,6 +58,8 @@ bool FFlexVaultUpdateStatusWorker::Execute(FFlexVaultSourceControlCommand& InCom
 	CurrentBranch.Empty();
 	CurrentUser.Empty();
 	CurrentHeadCommit.Empty();
+	RemoteInfo = FFlexVaultRemoteInfo();
+	AuthInfo = FFlexVaultAuthInfo();
 	ModifiedFiles.Empty();
 	ConflictedFiles.Empty();
 	OutdatedFiles.Empty();
@@ -118,6 +120,7 @@ bool FFlexVaultUpdateStatusWorker::Execute(FFlexVaultSourceControlCommand& InCom
 	Payload->TryGetStringField(TEXT("current_branch"), CurrentBranch);
 	Payload->TryGetStringField(TEXT("current_user"), CurrentUser);
 	ParseFlexVaultHeadCommitId(Envelope, CurrentHeadCommit);
+	ParseFlexVaultRemoteAndAuth(Envelope, RemoteInfo, AuthInfo);
 
 	// ── Revision numbers from head_commit ──────────────────────────────────────────────────────────
 	const TSharedPtr<FJsonObject>* HeadCommitObj = nullptr;
@@ -321,11 +324,16 @@ bool FFlexVaultUpdateStatusWorker::UpdateStates() const
 	FFlexVaultSourceControlProvider& Provider = GetSCCProvider();
 	Provider.SetHasChangesToSync(bHasChangesToSync);
 
-	const bool bUserOrBranchChanged = (Provider.GetCurrentBranch() != CurrentBranch) || (Provider.GetCurrentUser() != CurrentUser);
+	const bool bUserOrBranchChanged = (Provider.GetCurrentBranch() != CurrentBranch) ||
+		(Provider.GetCurrentUser() != CurrentUser) ||
+		(Provider.GetRemoteInfo() != RemoteInfo) ||
+		(Provider.GetAuthInfo() != AuthInfo);
 	const bool bHeadChanged = (Provider.GetCurrentHeadCommit() != CurrentHeadCommit);
 	Provider.SetCurrentBranch(CurrentBranch);
 	Provider.SetCurrentUser(CurrentUser);
 	Provider.SetCurrentHeadCommit(CurrentHeadCommit);
+	Provider.SetRemoteInfo(RemoteInfo);
+	Provider.SetAuthInfo(AuthInfo);
 
 	// Ensure all modified/added/deleted files discovered by SCM status are present in the cache
 	for (const auto& Entry : ModifiedFiles)

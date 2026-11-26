@@ -67,6 +67,93 @@ TArray<FString> BuildFlexVaultSnapshotArgs(const FString& InDescription);
 FCriticalSection& GetFlexVaultSnapshotLock();
 
 /**
+ * Standard FlexVault CLI exit codes.
+ */
+namespace FlexVaultExitCodes
+{
+	/** Broker authentication is missing or expired (requires `fxv login`). */
+	constexpr int32 AuthRequired = 95;
+}
+
+/**
+ * Remote configuration extracted from `fxv status --format json` (v2.2+).
+ */
+struct FFlexVaultRemoteInfo
+{
+	/** "broker", "direct", or "local_only" (empty for older CLI versions). */
+	FString Mode;
+	FString BrokerUrl;
+
+	bool IsBroker() const { return Mode.Equals(TEXT("broker"), ESearchCase::IgnoreCase); }
+	bool operator==(const FFlexVaultRemoteInfo& Other) const
+	{
+		return Mode == Other.Mode && BrokerUrl == Other.BrokerUrl;
+	}
+	bool operator!=(const FFlexVaultRemoteInfo& Other) const { return !(*this == Other); }
+};
+
+/**
+ * Broker authentication state extracted from `fxv status --format json` (v2.2+).
+ * Matches fxv-core's StatusAuthJson (`{ required, state, source }`) plus optional
+ * in-session Identity populated after interactive `fxv login`.
+ */
+struct FFlexVaultAuthInfo
+{
+	bool bRequired = false;
+	/** "authenticated", "unverified", "missing_token", "expired", "forbidden", or "offline". */
+	FString State;
+	/** "env", "keyring", or empty. */
+	FString Source;
+	/** Account email populated in-session after interactive `fxv login`. */
+	FString Identity;
+
+	bool NeedsLogin() const
+	{
+		return State.Equals(TEXT("missing_token"), ESearchCase::IgnoreCase) ||
+			State.Equals(TEXT("expired"), ESearchCase::IgnoreCase);
+	}
+	bool operator==(const FFlexVaultAuthInfo& Other) const
+	{
+		return bRequired == Other.bRequired && State == Other.State && Source == Other.Source && Identity == Other.Identity;
+	}
+	bool operator!=(const FFlexVaultAuthInfo& Other) const { return !(*this == Other); }
+};
+
+/**
+ * Structured broker error extracted from an error envelope's `payload.error_data`
+ * (`kind: "broker-error"`).
+ */
+struct FFlexVaultBrokerError
+{
+	/** "not_authenticated", "token_expired", "forbidden", "network_unreachable", "invalid_broker_url". */
+	FString Reason;
+	FString BrokerUrl;
+	FString Tenant;
+	FString Repo;
+	TOptional<int32> HttpStatus;
+	/** Human-readable error message from outer `message.payload.message`. */
+	FString Message;
+
+	bool IsAuthRequired() const
+	{
+		return Reason.Equals(TEXT("not_authenticated"), ESearchCase::IgnoreCase) ||
+			Reason.Equals(TEXT("token_expired"), ESearchCase::IgnoreCase);
+	}
+
+	bool IsNetworkUnreachable() const
+	{
+		return Reason.Equals(TEXT("network_unreachable"), ESearchCase::IgnoreCase);
+	}
+};
+
+/**
+ * Walks up from StartDir (defaulting to FPaths::ProjectDir()) looking for a `.fxv_workspace` directory.
+ * Returns the normalized full path (with trailing slash) of the workspace root if found,
+ * or falls back to the full normalized StartDir if no `.fxv_workspace` ancestor exists.
+ */
+FString FindFlexVaultWorkspaceRoot(const FString& StartDir = FString());
+
+/**
  * Runs the FlexVault CLI as a child process and blocks the calling thread until it exits.
  * Cancellation support:
  *  - InCancelCommand: For provider-queued operations (FFlexVaultSourceControlCommand). Checks
@@ -74,6 +161,7 @@ FCriticalSection& GetFlexVaultSnapshotLock();
  *  - InCancelToken: For ad-hoc or background tasks outside the command queue (e.g. periodic
  *    fetch, auto-snapshot). A lightweight atomic flag that triggers immediate process termination.
  * If InTimeoutSeconds is > 0, the process is also terminated after that duration as a fallback.
+ * If OutReturnCode is non-null, it receives the process exit code (e.g. 95 for AuthRequired).
  */
 bool RunFlexVaultCommand(
 	const FString& InBinaryPath,
@@ -84,7 +172,8 @@ bool RunFlexVaultCommand(
 	bool bIgnoreError = false,
 	const FFlexVaultSourceControlCommand* InCancelCommand = nullptr,
 	double InTimeoutSeconds = 0.0,
-	TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> InCancelToken = nullptr
+	TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> InCancelToken = nullptr,
+	int32* OutReturnCode = nullptr
 );
 
 /**
@@ -106,7 +195,7 @@ namespace FlexVaultCliCompatibility
 {
 	// See fxv-core/CHANGELOG.md for the "Breaking Changes" entries that justify this range.
 	constexpr int32 MinMajor = 0, MinMinor = 11, MinPatch = 0;
-	constexpr int32 MaxMajor = 0, MaxMinor = 14, MaxPatch = 0;
+	constexpr int32 MaxMajor = 2, MaxMinor = 0, MaxPatch = 0;
 
 	inline FString GetMinVersionString()
 	{
@@ -286,6 +375,48 @@ bool EnsureFlexVaultLoggedIn(
 );
 
 /**
+ * Extracts the workspace's remote configuration and broker auth state (v2.2+) from an
+ * `fxv status --format json` envelope. Returns true if either `remote` or `auth` was present.
+ */
+bool ParseFlexVaultRemoteAndAuth(
+	const TSharedPtr<class FJsonObject>& InEnvelope,
+	FFlexVaultRemoteInfo& OutRemote,
+	FFlexVaultAuthInfo& OutAuth
+);
+
+/**
+ * Deserializes a FlexVault JSON envelope from CLI output lines, tolerating leading
+ * non-JSON stderr lines (e.g. interactive device-code instructions before stdout JSON).
+ */
+bool TryExtractFlexVaultJsonEnvelope(
+	const TArray<FString>& InOutputLines,
+	TSharedPtr<class FJsonObject>& OutEnvelope
+);
+
+/**
+ * Extracts a structured `broker-error` payload from CLI `--format json` output lines.
+ * Returns true if the output contains a `broker-error` envelope.
+ */
+bool ParseFlexVaultBrokerError(
+	const TArray<FString>& InOutputLines,
+	FFlexVaultBrokerError& OutBrokerError
+);
+
+/**
+ * Launches interactive browser login for a brokered workspace via `fxv login --format json --no-color`.
+ * Safe to call from a background thread; pass InCancelToken to allow cancelling the process.
+ */
+bool RunFlexVaultBrokerLoginCommand(
+	const FString& InBinaryPath,
+	const FString& InWorkspacePath,
+	FSourceControlResultInfo& OutResultInfo,
+	FString* OutErrorMessage = nullptr,
+	FString* OutUsername = nullptr,
+	FString* OutEmail = nullptr,
+	TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> InCancelToken = nullptr
+);
+
+/**
  * Logs in to the workspace as the given username via 'fxv login <InUsername> --format json'.
  * Returns true if login succeeded. If it failed, OutErrorMessage will contain the error details.
  */
@@ -429,6 +560,85 @@ bool ParseFlexVaultDiffChangedFiles(const TArray<FString>& InDiffOutputLines, TA
  * Checks if a given file path is a C++ source or project file (.h, .hpp, .inl, .cpp, .c, .cc, .cxx, .cs, .uproject, .uplugin).
  */
 bool IsFlexVaultSourceCodeFile(const FString& InFilePath);
+
+/**
+ * Broker authentication status returned by `fxv login --status --format json`.
+ */
+struct FFlexVaultAuthStatusResult
+{
+	bool bAuthenticated = false;
+	FString BrokerUrl;
+	FString Email;
+	FString Source;
+};
+
+/**
+ * One tenant returned by `fxv tenant list --format json`.
+ */
+struct FFlexVaultTenantItem
+{
+	FString TenantId;
+	FString Slug;
+	FString Name;
+	FString Role;
+};
+
+/**
+ * One repository returned by `fxv repository list --tenant <slug> --format json`.
+ */
+struct FFlexVaultRepoItem
+{
+	FString RepoId;
+	FString Name;
+	FString Role;
+	FString Uri;
+};
+
+/**
+ * Runs `fxv login --status --format json` to query the current broker authentication state.
+ */
+bool RunFlexVaultAuthStatus(
+	const FString& InBinaryPath,
+	const FString& InWorkingDir,
+	FFlexVaultAuthStatusResult& OutStatus,
+	FString* OutErrorMessage = nullptr,
+	TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> InCancelToken = nullptr
+);
+
+/**
+ * Runs `fxv tenant list --format json` to list organizations accessible to the signed-in account.
+ */
+bool RunFlexVaultTenantList(
+	const FString& InBinaryPath,
+	const FString& InWorkingDir,
+	TArray<FFlexVaultTenantItem>& OutTenants,
+	FString* OutErrorMessage = nullptr,
+	TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> InCancelToken = nullptr
+);
+
+/**
+ * Runs `fxv repository list --tenant <InTenantSlug> --format json` to list repositories in a tenant.
+ */
+bool RunFlexVaultRepoList(
+	const FString& InBinaryPath,
+	const FString& InWorkingDir,
+	const FString& InTenantSlug,
+	TArray<FFlexVaultRepoItem>& OutRepos,
+	FString* OutErrorMessage = nullptr,
+	TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> InCancelToken = nullptr
+);
+
+/**
+ * Runs `fxv init` to initialize a workspace in InTargetPath, either linked to InRepoUri or local-only.
+ */
+bool RunFlexVaultInitWorkspace(
+	const FString& InBinaryPath,
+	const FString& InTargetPath,
+	const FString& InRepoUri,
+	bool bLocalOnly,
+	FString* OutErrorMessage = nullptr,
+	TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> InCancelToken = nullptr
+);
 
 #if SOURCE_CONTROL_WITH_SLATE
 struct FFlexVaultHistoryCommitItem;

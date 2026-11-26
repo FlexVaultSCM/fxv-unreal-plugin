@@ -7,6 +7,7 @@
 #include "ISourceControlProvider.h"
 #include "ISourceControlState.h"
 #include "FlexVaultSourceControlState.h"
+#include "Workers/FlexVaultSourceControlWorkerHelper.h"
 
 namespace FlexVaultSourceControlConstants
 {
@@ -89,6 +90,13 @@ public:
 	const FString& GetCurrentHeadCommit() const { return CurrentHeadCommit; }
 	void SetCurrentHeadCommit(const FString& InHeadCommit) { CurrentHeadCommit = InHeadCommit; }
 
+	const FFlexVaultRemoteInfo& GetRemoteInfo() const { return RemoteInfo; }
+	void SetRemoteInfo(const FFlexVaultRemoteInfo& InRemoteInfo) { RemoteInfo = InRemoteInfo; }
+	const FFlexVaultAuthInfo& GetAuthInfo() const { return AuthInfo; }
+	void SetAuthInfo(const FFlexVaultAuthInfo& InAuthInfo) { AuthInfo = InAuthInfo; }
+	void ApplyBrokerLoginSuccess(const FString& InUsername, const FString& InEmail);
+	bool IsBrokerWorkspace() const { return RemoteInfo.IsBroker(); }
+
 	const TArray<FString>& GetLastSyncedFiles() const { return LastSyncedFiles; }
 	void SetLastSyncedFiles(const TArray<FString>& InFiles) { LastSyncedFiles = InFiles; }
 
@@ -121,6 +129,12 @@ public:
 	/** Returns true if an asynchronous command is currently queued or executing in the thread pool. */
 	bool IsExecutingCommand() const { return CommandQueue.Num() > 0; }
 
+	/** Records a remote reachability error (e.g. from periodic fetch) and notifies the user once on transition. */
+	void SetRemoteUnreachableError(const FText& InError);
+
+	/** Clears any recorded remote reachability error after a successful remote operation. */
+	void ClearRemoteUnreachableError();
+
 private:
 	virtual TUniquePtr<ISourceControlProvider> Create(const FStringView& OwnerName, const FSourceControlInitSettings& InInitialSettings) const override;
 
@@ -149,11 +163,20 @@ private:
 	/** Current workspace head commit change ID (e.g. 'main.7') */
 	FString CurrentHeadCommit;
 
+	/** Remote configuration from `fxv status --format json` (v2.2+) */
+	FFlexVaultRemoteInfo RemoteInfo;
+
+	/** Broker authentication state from `fxv status --format json` (v2.2+) */
+	FFlexVaultAuthInfo AuthInfo;
+
 	/** Files updated in the most recent sync operation */
 	TArray<FString> LastSyncedFiles;
 
 	/** Most recent connection error detail for tooltip / status text */
 	FText LastConnectionError;
+
+	/** Most recent remote reachability error (e.g. broker/network unreachable during background fetch) */
+	FText LastRemoteError;
 
 	/** Cached files state map */
 	TMap<FString, TSharedRef<FFlexVaultSourceControlState, ESPMode::ThreadSafe>> StateCache;
@@ -169,6 +192,14 @@ private:
 	TSet<FString> PendingStatusUpdates;
 	bool bStatusUpdateDelayed;
 	TOptional<bool> bHasChangesToSync;
+
+#if SOURCE_CONTROL_WITH_SLATE
+	/** Active broker auth-required notification, used to prevent duplicate toasts */
+	TWeakPtr<class SNotificationItem> ActiveAuthNotification;
+
+	/** Active remote-unreachable warning notification, used to prevent duplicate toasts */
+	TWeakPtr<class SNotificationItem> ActiveRemoteErrorNotification;
+#endif
 };
 
-DECLARE_LOG_CATEGORY_EXTERN(LogFlexVault, Verbose, All);
+DECLARE_LOG_CATEGORY_EXTERN(LogFlexVault, Log, All);
