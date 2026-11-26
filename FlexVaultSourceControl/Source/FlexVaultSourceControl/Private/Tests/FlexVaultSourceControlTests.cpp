@@ -172,8 +172,8 @@ bool FFlexVaultVersionCheckTest::RunTest(const FString& Parameters)
 	ResultInfo.ErrorMessages.Empty();
 	TestTrue(FString::Printf(TEXT("CLI version %s is compatible"), *PatchIncrementVersion), CheckFlexVaultVersion(WidenedEnv, ResultInfo));
 
-	// 3b. Compatible version within the pinned range (minor increment if range spans multiple minors)
-	if (FlexVaultCliCompatibility::MaxMinor > FlexVaultCliCompatibility::MinMinor + 1)
+	// 3b. Compatible version within the pinned range (minor increment if range spans multiple minors/majors)
+	if (FlexVaultCliCompatibility::MaxMajor > FlexVaultCliCompatibility::MinMajor || FlexVaultCliCompatibility::MaxMinor > FlexVaultCliCompatibility::MinMinor + 1)
 	{
 		const FString MidRangeVersion = FString::Printf(TEXT("%d.%d.0"), FlexVaultCliCompatibility::MinMajor, FlexVaultCliCompatibility::MinMinor + 1);
 		TSharedPtr<FJsonObject> EnvMid = MakeShared<FJsonObject>();
@@ -1096,7 +1096,7 @@ bool FFlexVaultCheckVersionTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("Extracted version matches"), ExtractedVersion, PatchVersion);
 		TestEqual(TEXT("No errors on success"), ResultInfo.ErrorMessages.Num(), 0);
 	}
-	if (FlexVaultCliCompatibility::MaxMinor > FlexVaultCliCompatibility::MinMinor + 1)
+	if (FlexVaultCliCompatibility::MaxMajor > FlexVaultCliCompatibility::MinMajor || FlexVaultCliCompatibility::MaxMinor > FlexVaultCliCompatibility::MinMinor + 1)
 	{
 		const FString MidVersion = FString::Printf(TEXT("%d.%d.0"), FlexVaultCliCompatibility::MinMajor, FlexVaultCliCompatibility::MinMinor + 1);
 		FSourceControlResultInfo ResultInfo;
@@ -1104,6 +1104,16 @@ bool FFlexVaultCheckVersionTest::RunTest(const FString& Parameters)
 		TSharedPtr<FJsonObject> Env = MakeEnvelope(MidVersion);
 		TestTrue(FString::Printf(TEXT("%s is compatible"), *MidVersion), CheckFlexVaultVersion(Env, ResultInfo, &ExtractedVersion));
 		TestEqual(TEXT("Extracted version matches"), ExtractedVersion, MidVersion);
+		TestEqual(TEXT("No errors on success"), ResultInfo.ErrorMessages.Num(), 0);
+	}
+	if (FlexVaultCliCompatibility::MaxMajor > FlexVaultCliCompatibility::MinMajor + 1)
+	{
+		const FString NextMajorVersion = FString::Printf(TEXT("%d.0.0"), FlexVaultCliCompatibility::MinMajor + 1);
+		FSourceControlResultInfo ResultInfo;
+		FString ExtractedVersion;
+		TSharedPtr<FJsonObject> Env = MakeEnvelope(NextMajorVersion);
+		TestTrue(FString::Printf(TEXT("%s is compatible"), *NextMajorVersion), CheckFlexVaultVersion(Env, ResultInfo, &ExtractedVersion));
+		TestEqual(TEXT("Extracted version matches"), ExtractedVersion, NextMajorVersion);
 		TestEqual(TEXT("No errors on success"), ResultInfo.ErrorMessages.Num(), 0);
 	}
 
