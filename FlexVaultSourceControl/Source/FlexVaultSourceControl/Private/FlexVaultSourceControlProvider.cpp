@@ -202,6 +202,20 @@ namespace
 	}
 }
 
+void FFlexVaultSourceControlProvider::ApplyBrokerLoginSuccess(const FString& InUsername, const FString& InEmail)
+{
+	if (!InUsername.IsEmpty())
+	{
+		SetCurrentUser(InUsername);
+	}
+	AuthInfo.State = TEXT("authenticated");
+	if (!InEmail.IsEmpty())
+	{
+		AuthInfo.Identity = InEmail;
+	}
+	OutputStateChangedEvent();
+}
+
 void FFlexVaultSourceControlProvider::SetRemoteUnreachableError(const FText& InError)
 {
 	const bool bWasReachable = LastRemoteError.IsEmpty();
@@ -280,6 +294,12 @@ FText FFlexVaultSourceControlProvider::GetStatusText() const
 	Args.Add(TEXT("Branch"), FText::FromString(!CurrentBranch.IsEmpty() ? CurrentBranch : TEXT("-")));
 	Args.Add(TEXT("User"), UserDisplay);
 
+	TArray<FText> Lines;
+	Lines.Add(FText::Format(
+		LOCTEXT("StatusTextConnectedWithBranch", "FlexVault Source Control: {Status}\nBranch: {Branch}\nUser: {User}"),
+		Args
+	));
+
 	if (IsBrokerWorkspace())
 	{
 		FString AuthDisplay = FormatBrokerAuthStateForDisplay(AuthInfo.State);
@@ -287,36 +307,15 @@ FText FFlexVaultSourceControlProvider::GetStatusText() const
 		{
 			AuthDisplay = FString::Printf(TEXT("%s (%s)"), *AuthDisplay, *AuthInfo.Identity);
 		}
-		Args.Add(TEXT("Auth"), FText::FromString(AuthDisplay));
-
-		if (!LastRemoteError.IsEmpty())
-		{
-			Args.Add(TEXT("RemoteError"), LastRemoteError);
-			return FText::Format(
-				LOCTEXT("StatusTextConnectedWithBrokerAuthAndRemoteError", "FlexVault Source Control: {Status}\nBranch: {Branch}\nUser: {User}\nBroker Auth: {Auth}\nRemote: Unreachable ({RemoteError})"),
-				Args
-			);
-		}
-
-		return FText::Format(
-			LOCTEXT("StatusTextConnectedWithBrokerAuth", "FlexVault Source Control: {Status}\nBranch: {Branch}\nUser: {User}\nBroker Auth: {Auth}"),
-			Args
-		);
+		Lines.Add(FText::Format(LOCTEXT("StatusTextBrokerAuthLine", "Broker Auth: {0}"), FText::FromString(AuthDisplay)));
 	}
 
 	if (!LastRemoteError.IsEmpty())
 	{
-		Args.Add(TEXT("RemoteError"), LastRemoteError);
-		return FText::Format(
-			LOCTEXT("StatusTextConnectedWithBranchAndRemoteError", "FlexVault Source Control: {Status}\nBranch: {Branch}\nUser: {User}\nRemote: Unreachable ({RemoteError})"),
-			Args
-		);
+		Lines.Add(FText::Format(LOCTEXT("StatusTextRemoteUnreachableLine", "Remote: Unreachable ({0})"), LastRemoteError));
 	}
 
-	return FText::Format(
-		LOCTEXT("StatusTextConnectedWithBranch", "FlexVault Source Control: {Status}\nBranch: {Branch}\nUser: {User}"),
-		Args
-	);
+	return FText::Join(FText::FromString(TEXT("\n")), Lines);
 }
 
 TMap<ISourceControlProvider::EStatus, FString> FFlexVaultSourceControlProvider::GetStatus() const
@@ -790,18 +789,7 @@ void FFlexVaultSourceControlProvider::HandleCommandNotifications(const FFlexVaul
 						if (ActiveProvider.GetName() == TEXT("FlexVault"))
 						{
 							FFlexVaultSourceControlProvider& FxvProvider = static_cast<FFlexVaultSourceControlProvider&>(ActiveProvider);
-							if (!LoggedInUser.IsEmpty())
-							{
-								FxvProvider.SetCurrentUser(LoggedInUser);
-							}
-							FFlexVaultAuthInfo UpdatedAuth = FxvProvider.GetAuthInfo();
-							UpdatedAuth.State = TEXT("authenticated");
-							if (!LoggedInEmail.IsEmpty())
-							{
-								UpdatedAuth.Identity = LoggedInEmail;
-							}
-							FxvProvider.SetAuthInfo(UpdatedAuth);
-							FxvProvider.OutputStateChangedEvent();
+							FxvProvider.ApplyBrokerLoginSuccess(LoggedInUser, LoggedInEmail);
 						}
 					}
 
@@ -1237,16 +1225,7 @@ bool FFlexVaultSourceControlProvider::EnsureUserLoggedInBeforeCheckIn()
 		FString LoggedInEmail;
 		if (SFlexVaultLoginDialog::ShowModal(BinaryPath, WorkspacePath, LoggedInUser, /*bInIsBrokerWorkspace=*/true, RemoteInfo.BrokerUrl, &LoggedInEmail))
 		{
-			if (!LoggedInUser.IsEmpty())
-			{
-				SetCurrentUser(LoggedInUser);
-			}
-			AuthInfo.State = TEXT("authenticated");
-			if (!LoggedInEmail.IsEmpty())
-			{
-				AuthInfo.Identity = LoggedInEmail;
-			}
-			OutputStateChangedEvent();
+			ApplyBrokerLoginSuccess(LoggedInUser, LoggedInEmail);
 			return true;
 		}
 

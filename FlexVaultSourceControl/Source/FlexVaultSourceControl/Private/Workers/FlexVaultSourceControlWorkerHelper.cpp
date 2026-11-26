@@ -1382,25 +1382,19 @@ bool RunFlexVaultBrokerLoginCommand(
 	bool bOk = RunFlexVaultCommand(InBinaryPath, InWorkspacePath, Args, OutputLines, OutResultInfo, false, nullptr, 120.0, InCancelToken);
 	if (!bOk)
 	{
-		FFlexVaultBrokerError BrokerErr;
-		if (ParseFlexVaultBrokerError(OutputLines, BrokerErr) && !BrokerErr.Message.IsEmpty())
+		if (OutErrorMessage != nullptr)
 		{
-			if (OutErrorMessage)
+			FFlexVaultBrokerError BrokerErr;
+			FString ParsedError;
+			if (ParseFlexVaultBrokerError(OutputLines, BrokerErr) && !BrokerErr.Message.IsEmpty())
 			{
 				*OutErrorMessage = BrokerErr.Message;
 			}
-		}
-		else
-		{
-			FString ParsedError;
-			if (ParseFlexVaultErrorMessage(OutputLines, ParsedError))
+			else if (ParseFlexVaultErrorMessage(OutputLines, ParsedError))
 			{
-				if (OutErrorMessage)
-				{
-					*OutErrorMessage = ParsedError;
-				}
+				*OutErrorMessage = ParsedError;
 			}
-			else if (OutResultInfo.ErrorMessages.Num() > 0 && OutErrorMessage)
+			else if (OutResultInfo.ErrorMessages.Num() > 0)
 			{
 				*OutErrorMessage = OutResultInfo.ErrorMessages.Last().ToString();
 			}

@@ -11,7 +11,6 @@
 class SWindow;
 class SEditableTextBox;
 class STextBlock;
-class SButton;
 
 class SFlexVaultLoginDialog : public SCompoundWidget
 {
@@ -58,7 +57,6 @@ private:
 
 	TSharedPtr<SEditableTextBox> UsernameTextBox;
 	TSharedPtr<STextBlock> ErrorTextBlock;
-	TSharedPtr<SButton> LoginButton;
 
 	TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> LoginCancelToken;
 	bool bLoginInProgress = false;

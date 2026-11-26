@@ -125,7 +125,7 @@ void SFlexVaultLoginDialog::Construct(const FArguments& InArgs)
 					.AutoWidth()
 					.Padding(0.0f, 0.0f, 8.0f, 0.0f)
 					[
-						SAssignNew(LoginButton, SButton)
+						SNew(SButton)
 						.HAlign(HAlign_Center)
 						.Text(PrimaryButtonText)
 						.IsEnabled_Lambda([this]() { return !bLoginInProgress; })

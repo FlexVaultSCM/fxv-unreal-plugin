@@ -94,6 +94,7 @@ public:
 	void SetRemoteInfo(const FFlexVaultRemoteInfo& InRemoteInfo) { RemoteInfo = InRemoteInfo; }
 	const FFlexVaultAuthInfo& GetAuthInfo() const { return AuthInfo; }
 	void SetAuthInfo(const FFlexVaultAuthInfo& InAuthInfo) { AuthInfo = InAuthInfo; }
+	void ApplyBrokerLoginSuccess(const FString& InUsername, const FString& InEmail);
 	bool IsBrokerWorkspace() const { return RemoteInfo.IsBroker(); }
 
 	const TArray<FString>& GetLastSyncedFiles() const { return LastSyncedFiles; }
