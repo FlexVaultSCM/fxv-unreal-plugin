@@ -2292,4 +2292,255 @@ void UpdateFlexVaultHistorySyncDisabledStates(
 }
 #endif
 
+bool RunFlexVaultAuthStatus(
+	const FString& InBinaryPath,
+	const FString& InWorkingDir,
+	FFlexVaultAuthStatusResult& OutStatus,
+	FString* OutErrorMessage,
+	TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> InCancelToken)
+{
+	OutStatus = FFlexVaultAuthStatusResult();
+
+	TArray<FString> Args = { TEXT("login"), TEXT("--status"), TEXT("--format"), TEXT("json"), TEXT("--no-color") };
+	TArray<FString> OutputLines;
+	FSourceControlResultInfo ResultInfo;
+	const bool bOk = RunFlexVaultCommand(
+		InBinaryPath,
+		InWorkingDir,
+		Args,
+		OutputLines,
+		ResultInfo,
+		/*bIgnoreError=*/true,
+		/*InCancelCommand=*/nullptr,
+		/*InTimeoutSeconds=*/15.0,
+		InCancelToken
+	);
+
+	TSharedPtr<FJsonObject> Envelope;
+	const FString JsonStr = FString::Join(OutputLines, TEXT("\n"));
+	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonStr);
+	if (FJsonSerializer::Deserialize(Reader, Envelope) && Envelope.IsValid())
+	{
+		const TSharedPtr<FJsonObject>* MessageObj = nullptr;
+		if (Envelope->TryGetObjectField(TEXT("message"), MessageObj) && MessageObj && MessageObj->IsValid())
+		{
+			FString Kind;
+			(*MessageObj)->TryGetStringField(TEXT("kind"), Kind);
+			const TSharedPtr<FJsonObject>* PayloadObj = nullptr;
+			if (Kind.Equals(TEXT("auth-status"), ESearchCase::IgnoreCase) &&
+				(*MessageObj)->TryGetObjectField(TEXT("payload"), PayloadObj) && PayloadObj && PayloadObj->IsValid())
+			{
+				(*PayloadObj)->TryGetBoolField(TEXT("authenticated"), OutStatus.bAuthenticated);
+				(*PayloadObj)->TryGetStringField(TEXT("broker"), OutStatus.BrokerUrl);
+				(*PayloadObj)->TryGetStringField(TEXT("email"), OutStatus.Email);
+				(*PayloadObj)->TryGetStringField(TEXT("source"), OutStatus.Source);
+				return true;
+			}
+		}
+	}
+
+	if (OutErrorMessage != nullptr)
+	{
+		if (!ParseFlexVaultErrorMessage(OutputLines, *OutErrorMessage) || OutErrorMessage->IsEmpty())
+		{
+			*OutErrorMessage = bOk ? TEXT("Unexpected response from fxv login --status.") : TEXT("Failed to check FlexVault authentication status.");
+		}
+	}
+	return false;
+}
+
+bool RunFlexVaultTenantList(
+	const FString& InBinaryPath,
+	const FString& InWorkingDir,
+	TArray<FFlexVaultTenantItem>& OutTenants,
+	FString* OutErrorMessage,
+	TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> InCancelToken)
+{
+	OutTenants.Empty();
+
+	TArray<FString> Args = { TEXT("tenant"), TEXT("list"), TEXT("--format"), TEXT("json"), TEXT("--no-color") };
+	TArray<FString> OutputLines;
+	FSourceControlResultInfo ResultInfo;
+	const bool bOk = RunFlexVaultCommand(
+		InBinaryPath,
+		InWorkingDir,
+		Args,
+		OutputLines,
+		ResultInfo,
+		/*bIgnoreError=*/true,
+		/*InCancelCommand=*/nullptr,
+		/*InTimeoutSeconds=*/20.0,
+		InCancelToken
+	);
+
+	TSharedPtr<FJsonObject> Envelope;
+	const FString JsonStr = FString::Join(OutputLines, TEXT("\n"));
+	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonStr);
+	if (bOk && FJsonSerializer::Deserialize(Reader, Envelope) && Envelope.IsValid())
+	{
+		const TSharedPtr<FJsonObject>* MessageObj = nullptr;
+		if (Envelope->TryGetObjectField(TEXT("message"), MessageObj) && MessageObj && MessageObj->IsValid())
+		{
+			const TSharedPtr<FJsonObject>* PayloadObj = nullptr;
+			if ((*MessageObj)->TryGetObjectField(TEXT("payload"), PayloadObj) && PayloadObj && PayloadObj->IsValid())
+			{
+				const TArray<TSharedPtr<FJsonValue>>* TenantsArray = nullptr;
+				if ((*PayloadObj)->TryGetArrayField(TEXT("tenants"), TenantsArray) && TenantsArray)
+				{
+					for (const TSharedPtr<FJsonValue>& Val : *TenantsArray)
+					{
+						const TSharedPtr<FJsonObject>* Obj = nullptr;
+						if (Val.IsValid() && Val->TryGetObject(Obj) && Obj && Obj->IsValid())
+						{
+							FFlexVaultTenantItem Item;
+							(*Obj)->TryGetStringField(TEXT("tenant_id"), Item.TenantId);
+							(*Obj)->TryGetStringField(TEXT("slug"), Item.Slug);
+							(*Obj)->TryGetStringField(TEXT("name"), Item.Name);
+							(*Obj)->TryGetStringField(TEXT("role"), Item.Role);
+							if (!Item.Slug.IsEmpty())
+							{
+								OutTenants.Add(MoveTemp(Item));
+							}
+						}
+					}
+					return true;
+				}
+			}
+		}
+	}
+
+	if (OutErrorMessage != nullptr)
+	{
+		if (!ParseFlexVaultErrorMessage(OutputLines, *OutErrorMessage) || OutErrorMessage->IsEmpty())
+		{
+			*OutErrorMessage = TEXT("Failed to list FlexVault organizations.");
+		}
+	}
+	return false;
+}
+
+bool RunFlexVaultRepoList(
+	const FString& InBinaryPath,
+	const FString& InWorkingDir,
+	const FString& InTenantSlug,
+	TArray<FFlexVaultRepoItem>& OutRepos,
+	FString* OutErrorMessage,
+	TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> InCancelToken)
+{
+	OutRepos.Empty();
+
+	TArray<FString> Args = { TEXT("repository"), TEXT("list"), TEXT("--tenant"), InTenantSlug, TEXT("--format"), TEXT("json"), TEXT("--no-color") };
+	TArray<FString> OutputLines;
+	FSourceControlResultInfo ResultInfo;
+	const bool bOk = RunFlexVaultCommand(
+		InBinaryPath,
+		InWorkingDir,
+		Args,
+		OutputLines,
+		ResultInfo,
+		/*bIgnoreError=*/true,
+		/*InCancelCommand=*/nullptr,
+		/*InTimeoutSeconds=*/20.0,
+		InCancelToken
+	);
+
+	TSharedPtr<FJsonObject> Envelope;
+	const FString JsonStr = FString::Join(OutputLines, TEXT("\n"));
+	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonStr);
+	if (bOk && FJsonSerializer::Deserialize(Reader, Envelope) && Envelope.IsValid())
+	{
+		const TSharedPtr<FJsonObject>* MessageObj = nullptr;
+		if (Envelope->TryGetObjectField(TEXT("message"), MessageObj) && MessageObj && MessageObj->IsValid())
+		{
+			const TSharedPtr<FJsonObject>* PayloadObj = nullptr;
+			if ((*MessageObj)->TryGetObjectField(TEXT("payload"), PayloadObj) && PayloadObj && PayloadObj->IsValid())
+			{
+				const TArray<TSharedPtr<FJsonValue>>* ReposArray = nullptr;
+				if ((*PayloadObj)->TryGetArrayField(TEXT("repos"), ReposArray) && ReposArray)
+				{
+					for (const TSharedPtr<FJsonValue>& Val : *ReposArray)
+					{
+						const TSharedPtr<FJsonObject>* Obj = nullptr;
+						if (Val.IsValid() && Val->TryGetObject(Obj) && Obj && Obj->IsValid())
+						{
+							FFlexVaultRepoItem Item;
+							(*Obj)->TryGetStringField(TEXT("repo_id"), Item.RepoId);
+							(*Obj)->TryGetStringField(TEXT("name"), Item.Name);
+							(*Obj)->TryGetStringField(TEXT("role"), Item.Role);
+							(*Obj)->TryGetStringField(TEXT("uri"), Item.Uri);
+							if (!Item.Uri.IsEmpty())
+							{
+								OutRepos.Add(MoveTemp(Item));
+							}
+						}
+					}
+					return true;
+				}
+			}
+		}
+	}
+
+	if (OutErrorMessage != nullptr)
+	{
+		if (!ParseFlexVaultErrorMessage(OutputLines, *OutErrorMessage) || OutErrorMessage->IsEmpty())
+		{
+			*OutErrorMessage = TEXT("Failed to list FlexVault repositories.");
+		}
+	}
+	return false;
+}
+
+bool RunFlexVaultInitWorkspace(
+	const FString& InBinaryPath,
+	const FString& InTargetPath,
+	const FString& InRepoUri,
+	bool bLocalOnly,
+	FString* OutErrorMessage,
+	TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> InCancelToken)
+{
+	TArray<FString> Args = { TEXT("init") };
+	if (bLocalOnly)
+	{
+		Args.Add(TEXT("--local-only"));
+	}
+	else if (!InRepoUri.IsEmpty())
+	{
+		Args.Add(InRepoUri);
+	}
+	Args.Add(TEXT("--path"));
+	Args.Add(InTargetPath);
+	Args.Add(TEXT("--unattended"));
+	Args.Add(TEXT("--format"));
+	Args.Add(TEXT("json"));
+	Args.Add(TEXT("--no-color"));
+
+	TArray<FString> OutputLines;
+	FSourceControlResultInfo ResultInfo;
+	const bool bOk = RunFlexVaultCommand(
+		InBinaryPath,
+		InTargetPath,
+		Args,
+		OutputLines,
+		ResultInfo,
+		/*bIgnoreError=*/true,
+		/*InCancelCommand=*/nullptr,
+		/*InTimeoutSeconds=*/60.0,
+		InCancelToken
+	);
+
+	if (bOk)
+	{
+		return true;
+	}
+
+	if (OutErrorMessage != nullptr)
+	{
+		if (!ParseFlexVaultErrorMessage(OutputLines, *OutErrorMessage) || OutErrorMessage->IsEmpty())
+		{
+			*OutErrorMessage = TEXT("Failed to initialize FlexVault workspace.");
+		}
+	}
+	return false;
+}
+
 #undef LOCTEXT_NAMESPACE

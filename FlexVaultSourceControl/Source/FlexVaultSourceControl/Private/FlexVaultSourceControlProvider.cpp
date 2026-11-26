@@ -37,6 +37,7 @@
 #include "Widgets/Notifications/SNotificationList.h"
 #include "Framework/Application/SlateApplication.h"
 #include "SFlexVaultLoginDialog.h"
+#include "SFlexVaultSettingsWidget.h"
 #endif
 
 
@@ -551,7 +552,7 @@ void FFlexVaultSourceControlProvider::Tick()
 #if SOURCE_CONTROL_WITH_SLATE
 TSharedRef<class SWidget> FFlexVaultSourceControlProvider::MakeSettingsWidget() const
 {
-	return SNullWidget::NullWidget;
+	return SNew(SFlexVaultSettingsWidget);
 }
 #endif
 

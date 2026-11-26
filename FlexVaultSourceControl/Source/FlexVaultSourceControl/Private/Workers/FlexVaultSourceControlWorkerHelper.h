@@ -561,6 +561,85 @@ bool ParseFlexVaultDiffChangedFiles(const TArray<FString>& InDiffOutputLines, TA
  */
 bool IsFlexVaultSourceCodeFile(const FString& InFilePath);
 
+/**
+ * Broker authentication status returned by `fxv login --status --format json`.
+ */
+struct FFlexVaultAuthStatusResult
+{
+	bool bAuthenticated = false;
+	FString BrokerUrl;
+	FString Email;
+	FString Source;
+};
+
+/**
+ * One tenant returned by `fxv tenant list --format json`.
+ */
+struct FFlexVaultTenantItem
+{
+	FString TenantId;
+	FString Slug;
+	FString Name;
+	FString Role;
+};
+
+/**
+ * One repository returned by `fxv repository list --tenant <slug> --format json`.
+ */
+struct FFlexVaultRepoItem
+{
+	FString RepoId;
+	FString Name;
+	FString Role;
+	FString Uri;
+};
+
+/**
+ * Runs `fxv login --status --format json` to query the current broker authentication state.
+ */
+bool RunFlexVaultAuthStatus(
+	const FString& InBinaryPath,
+	const FString& InWorkingDir,
+	FFlexVaultAuthStatusResult& OutStatus,
+	FString* OutErrorMessage = nullptr,
+	TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> InCancelToken = nullptr
+);
+
+/**
+ * Runs `fxv tenant list --format json` to list organizations accessible to the signed-in account.
+ */
+bool RunFlexVaultTenantList(
+	const FString& InBinaryPath,
+	const FString& InWorkingDir,
+	TArray<FFlexVaultTenantItem>& OutTenants,
+	FString* OutErrorMessage = nullptr,
+	TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> InCancelToken = nullptr
+);
+
+/**
+ * Runs `fxv repository list --tenant <InTenantSlug> --format json` to list repositories in a tenant.
+ */
+bool RunFlexVaultRepoList(
+	const FString& InBinaryPath,
+	const FString& InWorkingDir,
+	const FString& InTenantSlug,
+	TArray<FFlexVaultRepoItem>& OutRepos,
+	FString* OutErrorMessage = nullptr,
+	TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> InCancelToken = nullptr
+);
+
+/**
+ * Runs `fxv init` to initialize a workspace in InTargetPath, either linked to InRepoUri or local-only.
+ */
+bool RunFlexVaultInitWorkspace(
+	const FString& InBinaryPath,
+	const FString& InTargetPath,
+	const FString& InRepoUri,
+	bool bLocalOnly,
+	FString* OutErrorMessage = nullptr,
+	TSharedPtr<TAtomic<bool>, ESPMode::ThreadSafe> InCancelToken = nullptr
+);
+
 #if SOURCE_CONTROL_WITH_SLATE
 struct FFlexVaultHistoryCommitItem;
 
