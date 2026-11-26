@@ -189,4 +189,4 @@ private:
 #endif
 };
 
-DECLARE_LOG_CATEGORY_EXTERN(LogFlexVault, Verbose, All);
+DECLARE_LOG_CATEGORY_EXTERN(LogFlexVault, Log, All);
