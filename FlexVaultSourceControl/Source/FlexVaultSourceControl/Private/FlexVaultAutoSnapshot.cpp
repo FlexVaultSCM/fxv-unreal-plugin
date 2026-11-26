@@ -381,6 +381,10 @@ void FFlexVaultAutoSnapshot::CheckPeriodicFetch()
 			bFetchInFlight = false;
 			if (bSuccess)
 			{
+				if (Provider)
+				{
+					Provider->ClearRemoteUnreachableError();
+				}
 				if (FetchResult.BytesDownloaded > 0 || FetchResult.RepairedFiles.Num() > 0)
 				{
 					if (Provider && Provider->IsAvailable() && !Provider->IsExecutingCommand() && !Provider->HasOperationInFlight(FlexVaultSourceControlConstants::UpdateStatus))
@@ -392,9 +396,19 @@ void FFlexVaultAutoSnapshot::CheckPeriodicFetch()
 			}
 			else
 			{
+				FText DetailError;
 				for (const FText& Err : ResultInfo.ErrorMessages)
 				{
-					UE_LOG(LogFlexVault, Verbose, TEXT("Periodic fetch error: %s"), *Err.ToString());
+					const FString ErrStr = Err.ToString();
+					UE_LOG(LogFlexVault, Verbose, TEXT("Periodic fetch error: %s"), *ErrStr);
+					if (DetailError.IsEmpty() || DetailError.ToString().StartsWith(TEXT("FlexVault CLI command failed")))
+					{
+						DetailError = Err;
+					}
+				}
+				if (Provider && !DetailError.IsEmpty())
+				{
+					Provider->SetRemoteUnreachableError(DetailError);
 				}
 			}
 		});

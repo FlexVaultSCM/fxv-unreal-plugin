@@ -125,8 +125,86 @@ void FFlexVaultSourceControlProvider::Close()
 	RemoteInfo = FFlexVaultRemoteInfo();
 	AuthInfo = FFlexVaultAuthInfo();
 	LastConnectionError = FText::GetEmpty();
+	LastRemoteError = FText::GetEmpty();
 	PendingStatusUpdates.Empty();
 	bStatusUpdateDelayed = false;
+#if SOURCE_CONTROL_WITH_SLATE
+	ActiveAuthNotification.Reset();
+	ActiveRemoteErrorNotification.Reset();
+#endif
+}
+
+namespace
+{
+	FString FormatBrokerAuthStateForDisplay(const FString& State)
+	{
+		if (State.Equals(TEXT("authenticated"), ESearchCase::IgnoreCase))
+		{
+			return TEXT("Signed in");
+		}
+		if (State.Equals(TEXT("missing_token"), ESearchCase::IgnoreCase))
+		{
+			return TEXT("Sign-in required");
+		}
+		if (State.Equals(TEXT("expired"), ESearchCase::IgnoreCase))
+		{
+			return TEXT("Session expired");
+		}
+		if (State.Equals(TEXT("forbidden"), ESearchCase::IgnoreCase))
+		{
+			return TEXT("Access denied");
+		}
+		if (State.Equals(TEXT("offline"), ESearchCase::IgnoreCase))
+		{
+			return TEXT("Offline (broker unreachable)");
+		}
+		if (State.Equals(TEXT("unverified"), ESearchCase::IgnoreCase))
+		{
+			return TEXT("Unverified (local cache)");
+		}
+		return !State.IsEmpty() ? State : TEXT("Unknown");
+	}
+}
+
+void FFlexVaultSourceControlProvider::SetRemoteUnreachableError(const FText& InError)
+{
+	const bool bWasReachable = LastRemoteError.IsEmpty();
+	LastRemoteError = InError;
+
+#if SOURCE_CONTROL_WITH_SLATE
+	if (bWasReachable && !LastRemoteError.IsEmpty() && !IsRunningCommandlet())
+	{
+		if (!ActiveRemoteErrorNotification.IsValid())
+		{
+			FNotificationInfo Info(LOCTEXT("FlexVaultRemoteUnreachableTitle", "FlexVault: Remote repository unreachable"));
+			Info.SubText = LastRemoteError;
+			Info.bFireAndForget = true;
+			Info.FadeOutDuration = 1.0f;
+			Info.ExpireDuration = 8.0f;
+			Info.bUseThrobber = false;
+			Info.bUseSuccessFailIcons = true;
+
+			TSharedPtr<SNotificationItem> Notification = FSlateNotificationManager::Get().AddNotification(Info);
+			if (Notification.IsValid())
+			{
+				Notification->SetCompletionState(SNotificationItem::CS_Fail);
+				ActiveRemoteErrorNotification = Notification;
+			}
+		}
+	}
+#endif
+}
+
+void FFlexVaultSourceControlProvider::ClearRemoteUnreachableError()
+{
+	LastRemoteError = FText::GetEmpty();
+#if SOURCE_CONTROL_WITH_SLATE
+	if (TSharedPtr<SNotificationItem> Existing = ActiveRemoteErrorNotification.Pin())
+	{
+		Existing->Fadeout();
+	}
+	ActiveRemoteErrorNotification.Reset();
+#endif
 }
 
 FText FFlexVaultSourceControlProvider::GetStatusText() const
@@ -168,15 +246,33 @@ FText FFlexVaultSourceControlProvider::GetStatusText() const
 
 	if (IsBrokerWorkspace())
 	{
-		FString AuthDisplay = !AuthInfo.State.IsEmpty() ? AuthInfo.State : TEXT("unknown");
+		FString AuthDisplay = FormatBrokerAuthStateForDisplay(AuthInfo.State);
 		if (!AuthInfo.Identity.IsEmpty())
 		{
 			AuthDisplay = FString::Printf(TEXT("%s (%s)"), *AuthDisplay, *AuthInfo.Identity);
 		}
 		Args.Add(TEXT("Auth"), FText::FromString(AuthDisplay));
 
+		if (!LastRemoteError.IsEmpty())
+		{
+			Args.Add(TEXT("RemoteError"), LastRemoteError);
+			return FText::Format(
+				LOCTEXT("StatusTextConnectedWithBrokerAuthAndRemoteError", "FlexVault Source Control: {Status}\nBranch: {Branch}\nUser: {User}\nBroker Auth: {Auth}\nRemote: Unreachable ({RemoteError})"),
+				Args
+			);
+		}
+
 		return FText::Format(
 			LOCTEXT("StatusTextConnectedWithBrokerAuth", "FlexVault Source Control: {Status}\nBranch: {Branch}\nUser: {User}\nBroker Auth: {Auth}"),
+			Args
+		);
+	}
+
+	if (!LastRemoteError.IsEmpty())
+	{
+		Args.Add(TEXT("RemoteError"), LastRemoteError);
+		return FText::Format(
+			LOCTEXT("StatusTextConnectedWithBranchAndRemoteError", "FlexVault Source Control: {Status}\nBranch: {Branch}\nUser: {User}\nRemote: Unreachable ({RemoteError})"),
 			Args
 		);
 	}

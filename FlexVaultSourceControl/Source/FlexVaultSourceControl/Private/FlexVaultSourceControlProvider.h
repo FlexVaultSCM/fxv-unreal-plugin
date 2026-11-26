@@ -128,6 +128,12 @@ public:
 	/** Returns true if an asynchronous command is currently queued or executing in the thread pool. */
 	bool IsExecutingCommand() const { return CommandQueue.Num() > 0; }
 
+	/** Records a remote reachability error (e.g. from periodic fetch) and notifies the user once on transition. */
+	void SetRemoteUnreachableError(const FText& InError);
+
+	/** Clears any recorded remote reachability error after a successful remote operation. */
+	void ClearRemoteUnreachableError();
+
 private:
 	virtual TUniquePtr<ISourceControlProvider> Create(const FStringView& OwnerName, const FSourceControlInitSettings& InInitialSettings) const override;
 
@@ -168,6 +174,9 @@ private:
 	/** Most recent connection error detail for tooltip / status text */
 	FText LastConnectionError;
 
+	/** Most recent remote reachability error (e.g. broker/network unreachable during background fetch) */
+	FText LastRemoteError;
+
 	/** Cached files state map */
 	TMap<FString, TSharedRef<FFlexVaultSourceControlState, ESPMode::ThreadSafe>> StateCache;
 	mutable FRWLock StateCacheLock;
@@ -186,6 +195,9 @@ private:
 #if SOURCE_CONTROL_WITH_SLATE
 	/** Active broker auth-required notification, used to prevent duplicate toasts */
 	TWeakPtr<class SNotificationItem> ActiveAuthNotification;
+
+	/** Active remote-unreachable warning notification, used to prevent duplicate toasts */
+	TWeakPtr<class SNotificationItem> ActiveRemoteErrorNotification;
 #endif
 };
 
