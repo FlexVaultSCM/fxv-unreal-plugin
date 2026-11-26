@@ -271,7 +271,7 @@ FString SFlexVaultHistoryTab::GetEffectiveBinaryPath() const
 
 FString SFlexVaultHistoryTab::GetWorkspacePath() const
 {
-	return FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
+	return FindFlexVaultWorkspaceRoot();
 }
 
 void SFlexVaultHistoryTab::RequestRefreshHistory()

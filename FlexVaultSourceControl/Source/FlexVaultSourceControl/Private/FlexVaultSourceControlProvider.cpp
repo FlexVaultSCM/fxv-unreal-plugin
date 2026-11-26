@@ -288,7 +288,7 @@ TMap<ISourceControlProvider::EStatus, FString> FFlexVaultSourceControlProvider::
 	TMap<EStatus, FString> Result;
 	Result.Add(EStatus::Enabled, IsEnabled() ? TEXT("Yes") : TEXT("No"));
 	Result.Add(EStatus::Connected, (IsEnabled() && IsAvailable()) ? TEXT("Yes") : TEXT("No"));
-	Result.Add(EStatus::Repository, FPaths::ProjectDir());
+	Result.Add(EStatus::Repository, FindFlexVaultWorkspaceRoot());
 	if (!CurrentBranch.IsEmpty())
 	{
 		Result.Add(EStatus::Branch, CurrentBranch);
@@ -629,7 +629,7 @@ void FFlexVaultSourceControlProvider::OnConnectOperationComplete(bool bSuccess)
 		if (!bHasCheckedIgnoresThisSession)
 		{
 			bHasCheckedIgnoresThisSession = true;
-			FFlexVaultIgnoreChecker::EnsureDefaultIgnores(FPaths::ConvertRelativePathToFull(FPaths::ProjectDir()));
+			FFlexVaultIgnoreChecker::EnsureDefaultIgnores(FindFlexVaultWorkspaceRoot());
 		}
 	}
 
@@ -1070,7 +1070,7 @@ ECommandResult::Type FFlexVaultSourceControlProvider::IssueCommand(TUniquePtr<FF
 {
 	UE_LOG(LogFlexVault, Verbose, TEXT("FlexVault SCM: IssueCommand: %s, bSynchronous=%d"), *InCommand->Operation->GetName().ToString(), bSynchronous ? 1 : 0);
 	InCommand->BinaryPath = TEXT("fxv");
-	InCommand->WorkspacePath = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
+	InCommand->WorkspacePath = FindFlexVaultWorkspaceRoot();
 	if (UObjectInitialized())
 	{
 		if (const UFlexVaultSourceControlDeveloperSettings* Settings = GetDefault<UFlexVaultSourceControlDeveloperSettings>())
@@ -1131,7 +1131,7 @@ ECommandResult::Type FFlexVaultSourceControlProvider::SwitchWorkspace(
 			BinaryPath = Settings->GetEffectiveBinaryPath();
 		}
 	}
-	const FString WorkspacePath = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
+	const FString WorkspacePath = FindFlexVaultWorkspaceRoot();
 	const FString TargetBranch(NewWorkspaceName);
 
 	TArray<FString> UpdatedFiles;
@@ -1168,7 +1168,7 @@ ECommandResult::Type FFlexVaultSourceControlProvider::SwitchWorkspace(
 bool FFlexVaultSourceControlProvider::EnsureUserLoggedInBeforeCheckIn()
 {
 	FString BinaryPath = TEXT("fxv");
-	FString WorkspacePath = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
+	FString WorkspacePath = FindFlexVaultWorkspaceRoot();
 	if (UObjectInitialized())
 	{
 		if (const UFlexVaultSourceControlDeveloperSettings* Settings = GetDefault<UFlexVaultSourceControlDeveloperSettings>())

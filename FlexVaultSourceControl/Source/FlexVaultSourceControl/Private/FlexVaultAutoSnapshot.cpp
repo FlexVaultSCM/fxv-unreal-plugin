@@ -352,7 +352,7 @@ void FFlexVaultAutoSnapshot::CheckPeriodicFetch()
 	LastFetchTime = Now;
 
 	const FString BinaryPath = Settings ? Settings->GetEffectiveBinaryPath() : TEXT("fxv");
-	const FString WorkspacePath = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
+	const FString WorkspacePath = FindFlexVaultWorkspaceRoot();
 	const double TimeoutSeconds = Settings ? Settings->CommandTimeoutSeconds : 60.0;
 
 	FetchCancelToken = MakeShared<TAtomic<bool>, ESPMode::ThreadSafe>(false);
@@ -511,7 +511,7 @@ void FFlexVaultAutoSnapshot::RunSnapshotSyncForDelete(const FString& Description
 	{
 		return;
 	}
-	const FString WorkspacePath = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
+	const FString WorkspacePath = FindFlexVaultWorkspaceRoot();
 
 	// Deliberately skips bSnapshotInFlight/PendingSnapshotDescriptions (see RunSnapshotAsync):
 	// that flag only clears via an AsyncTask callback on the Game Thread, which can't run while
@@ -560,7 +560,7 @@ void FFlexVaultAutoSnapshot::LaunchSnapshotProcess(const FString& Description)
 		return;
 	}
 
-	const FString WorkspacePath = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
+	const FString WorkspacePath = FindFlexVaultWorkspaceRoot();
 	const double TimeoutSeconds = (Settings && Settings->CommandTimeoutSeconds > 0.0) ? Settings->CommandTimeoutSeconds : 60.0;
 
 	SnapshotCancelToken = MakeShared<TAtomic<bool>, ESPMode::ThreadSafe>(false);

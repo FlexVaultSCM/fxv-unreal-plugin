@@ -156,6 +156,31 @@ FCriticalSection& GetFlexVaultSnapshotLock()
 	return SnapshotLock;
 }
 
+FString FindFlexVaultWorkspaceRoot(const FString& StartDir)
+{
+	const FString BaseDir = StartDir.IsEmpty() ? FPaths::ProjectDir() : StartDir;
+	FString Dir = FPaths::ConvertRelativePathToFull(BaseDir);
+	FPaths::NormalizeDirectoryName(Dir);
+
+	while (!Dir.IsEmpty())
+	{
+		if (IFileManager::Get().DirectoryExists(*FPaths::Combine(Dir, TEXT(".fxv_workspace"))))
+		{
+			return Dir + TEXT("/");
+		}
+
+		FString Parent = FPaths::GetPath(Dir);
+		FPaths::NormalizeDirectoryName(Parent);
+		if (Parent.IsEmpty() || Parent == Dir)
+		{
+			break;
+		}
+		Dir = Parent;
+	}
+
+	return FPaths::ConvertRelativePathToFull(BaseDir);
+}
+
 bool RunFlexVaultCommand(
 	const FString& InBinaryPath,
 	const FString& InWorkspacePath,

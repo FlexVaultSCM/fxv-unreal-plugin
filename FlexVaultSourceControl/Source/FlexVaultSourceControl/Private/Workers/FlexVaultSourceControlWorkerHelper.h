@@ -142,6 +142,13 @@ struct FFlexVaultBrokerError
 };
 
 /**
+ * Walks up from StartDir (defaulting to FPaths::ProjectDir()) looking for a `.fxv_workspace` directory.
+ * Returns the normalized full path (with trailing slash) of the workspace root if found,
+ * or falls back to the full normalized StartDir if no `.fxv_workspace` ancestor exists.
+ */
+FString FindFlexVaultWorkspaceRoot(const FString& StartDir = FString());
+
+/**
  * Runs the FlexVault CLI as a child process and blocks the calling thread until it exits.
  * Cancellation support:
  *  - InCancelCommand: For provider-queued operations (FFlexVaultSourceControlCommand). Checks
