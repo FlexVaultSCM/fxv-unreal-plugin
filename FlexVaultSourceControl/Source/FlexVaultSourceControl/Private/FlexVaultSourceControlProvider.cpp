@@ -164,12 +164,42 @@ namespace
 		}
 		return !State.IsEmpty() ? State : TEXT("Unknown");
 	}
+
+	FText SummarizeErrorForToast(const FText& FullError)
+	{
+		FString Msg = FullError.ToString().TrimStartAndEnd();
+		if (Msg.IsEmpty())
+		{
+			return LOCTEXT("FlexVaultGenericErrorSummary", "Operation failed. See the Source Control log for details.");
+		}
+
+		if (Msg.Contains(TEXT("Reqwest error"), ESearchCase::IgnoreCase) ||
+			Msg.Contains(TEXT("error sending request"), ESearchCase::IgnoreCase) ||
+			Msg.Contains(TEXT("Could not read the FXV repository"), ESearchCase::IgnoreCase) ||
+			Msg.Contains(TEXT("broker_unreachable"), ESearchCase::IgnoreCase))
+		{
+			return LOCTEXT("FlexVaultRemoteUnreachableSummary", "Could not reach the remote repository. Check your network connection or VPN, then try again.");
+		}
+
+		// Strip to first line and cap length so toasts and tooltips stay readable; full details go to Message Log.
+		int32 NewlineIdx = INDEX_NONE;
+		if (Msg.FindChar(TEXT('\n'), NewlineIdx))
+		{
+			Msg = Msg.Left(NewlineIdx).TrimEnd();
+		}
+		constexpr int32 MaxToastLen = 140;
+		if (Msg.Len() > MaxToastLen)
+		{
+			Msg = Msg.Left(MaxToastLen).TrimEnd() + TEXT("...");
+		}
+		return FText::FromString(Msg);
+	}
 }
 
 void FFlexVaultSourceControlProvider::SetRemoteUnreachableError(const FText& InError)
 {
 	const bool bWasReachable = LastRemoteError.IsEmpty();
-	LastRemoteError = InError;
+	LastRemoteError = SummarizeErrorForToast(InError);
 
 #if SOURCE_CONTROL_WITH_SLATE
 	if (bWasReachable && !LastRemoteError.IsEmpty() && !IsRunningCommandlet())
@@ -664,7 +694,7 @@ namespace
 					(*InNotificationHandle)->ExpireAndFadeout();
 				}
 			}),
-			SNotificationItem::CS_None));
+			SNotificationItem::CS_Fail));
 
 		InInfo.ButtonDetails.Add(FNotificationButtonInfo(
 			LOCTEXT("FlexVaultDismiss", "Dismiss"),
@@ -676,7 +706,7 @@ namespace
 					(*InNotificationHandle)->ExpireAndFadeout();
 				}
 			}),
-			SNotificationItem::CS_None));
+			SNotificationItem::CS_Fail));
 	}
 }
 #endif
@@ -779,7 +809,7 @@ void FFlexVaultSourceControlProvider::HandleCommandNotifications(const FFlexVaul
 					}
 				}
 			}),
-			SNotificationItem::CS_None));
+			SNotificationItem::CS_Fail));
 
 		Info.ButtonDetails.Add(FNotificationButtonInfo(
 			LOCTEXT("FlexVaultCopyBrokerLoginCommand", "Copy 'fxv login'"),
@@ -796,7 +826,7 @@ void FFlexVaultSourceControlProvider::HandleCommandNotifications(const FFlexVaul
 					(*NotificationHandle)->ExpireAndFadeout();
 				}
 			}),
-			SNotificationItem::CS_None));
+			SNotificationItem::CS_Fail));
 
 		AddStandardErrorNotificationButtons(Info, NotificationHandle);
 
@@ -895,7 +925,7 @@ void FFlexVaultSourceControlProvider::HandleCommandNotifications(const FFlexVaul
 		else
 		{
 			NotificationTitle = LOCTEXT("FlexVaultCheckInFailedTitle", "FlexVault: Check-in failed.");
-			NotificationSubText = ErrorText;
+			NotificationSubText = SummarizeErrorForToast(ErrorText);
 		}
 
 		FNotificationInfo Info(NotificationTitle);
@@ -942,7 +972,7 @@ void FFlexVaultSourceControlProvider::HandleCommandNotifications(const FFlexVaul
 						}
 					}
 				}),
-				SNotificationItem::CS_None));
+				SNotificationItem::CS_Fail));
 
 			Info.ButtonDetails.Add(FNotificationButtonInfo(
 				LOCTEXT("FlexVaultCopyLoginCommand", "Copy 'fxv login'"),
@@ -959,7 +989,7 @@ void FFlexVaultSourceControlProvider::HandleCommandNotifications(const FFlexVaul
 						(*NotificationHandle)->ExpireAndFadeout();
 					}
 				}),
-				SNotificationItem::CS_None));
+				SNotificationItem::CS_Fail));
 		}
 
 		AddStandardErrorNotificationButtons(Info, NotificationHandle);
@@ -985,7 +1015,7 @@ void FFlexVaultSourceControlProvider::HandleCommandNotifications(const FFlexVaul
 		{
 			FText ErrorText = InCommand.ResultInfo.ErrorMessages.Last();
 			FNotificationInfo Info(FText::Format(LOCTEXT("FlexVaultOperationFailedTitle", "FlexVault: {0} operation failed."), FText::FromName(InCommand.Operation->GetName())));
-			Info.SubText = ErrorText;
+			Info.SubText = SummarizeErrorForToast(ErrorText);
 			SetupErrorNotificationDefaults(Info);
 
 			TSharedRef<TSharedPtr<SNotificationItem>> NotificationHandle = MakeShared<TSharedPtr<SNotificationItem>>();
